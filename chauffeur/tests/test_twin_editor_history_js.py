@@ -19,7 +19,7 @@ export function createSceneTools(options){
  let selection=null;
  function select(value){selection=value;cards.draw(value);}
  return {select,selected:()=>selection,selection:()=>({}),refresh(){cards.draw(selection);},refreshCard(){cards.draw(selection);},
-  drawFloors(){},delegate(){},dragging:()=>false,refreshLink:async()=>{},handles:()=>[]};
+  clipboard:globalThis.historyTestClipboard,drawFloors(){},delegate(){},dragging:()=>false,refreshLink:async()=>{},handles:()=>[]};
 }
 export const createDraw=()=>({cancel(){}});
 export const createLotTools=()=>({dragging:()=>false,handles:()=>[]});
@@ -75,6 +75,7 @@ try {
  const piece=id=>plan.buildings[0].solar_zones.concat(plan.buildings[0].openings).find(p=>p.id===id);
  globalThis.fetch=window.fetch=async(url,init={})=>{
   const path=String(url).split('api/house/')[1];
+  if(path==='editor/start-over'&&!config.case){plan={buildings:[],site:{}};rounds=[];record();return response(200,state());}
   if(path==='editor/sheets'){sheetReads++;if(failSheets)throw Error('Sheets temporarily unavailable');return response(200,{sources:[],page_roles:[],place:{buildings:[{id:'b'}]}});}
   if(path==='twin/kit/modern_farmhouse')return response(200,{});
   if(path==='editor/state')return response(200,state());
@@ -98,6 +99,8 @@ try {
   setTime(time){this.state.time=time;},setUnlit(on){this.state.unlit=on;},dispose(){},rebuild:async p=>{
   editorView.plan=p;if(holdRender){const gate=holdRender;holdRender=null;await gate.promise;}
  }};
+ const {createClipboard}=await import(file('static/twin/editor/clipboard.js'));
+ globalThis.historyTestClipboard=createClipboard({getPlan:()=>({buildings:[],site:{planting:[{id:'reset-plant',at:[20,20]}]}})});
  const stubs='data:text/javascript,'+encodeURIComponent(config.stubs.replace('CARDS_URL',file('static/twin/editor/cards.js')));
  registerHooks({resolve(spec,ctx,next){
   if(ctx.parentURL===file('static/twin/editor/editor.js')&&!['./api.js','./history.js','./lighting.js','./edit_queue.js','./local_ops.js','./icons.js','./dock.js','./dialog.js','./context_menu.js','./house_materials.js','./visibility.js'].includes(spec))return {url:stubs,shortCircuit:true};
@@ -178,6 +181,9 @@ try {
  await press(document.getElementById('rail-undo'));await wait(30);
  assert.equal(reverts.length,count);assert.equal(alerts.at(-1),CHANGED_SINCE);
  ok('external rounds still prevent undo from overwriting another edit');
+ historyTestClipboard.copy([{kind:'planting',pieceId:'reset-plant'}]);assert.ok(historyTestClipboard.contents());
+ await press(document.getElementById('menu-start-over'));await until(()=>historyTestClipboard.contents()===null);
+ ok('Fix round 1: Start over clears the real session clipboard');
  assert.deepEqual(domErrors,[]);assert.deepEqual(escaped,[]);
  window.dispatchEvent(new Event('pagehide'));
  console.log(`${passed}/${passed} mutation history checks passed`);process.exit(0);

@@ -3,6 +3,7 @@
 const el = id => document.getElementById(id);
 let current = null, installed = null, returnFocus = null, inert = [];
 const sharedPrompt = () => document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), #cc-alert-modal:not(.hidden)');
+export const dialogOpen = () => !!(sharedPrompt() || document.querySelector('[role="dialog"]:not([hidden]), dialog[open]'));
 const visible = node => {
   const folded = node?.closest('details:not([open])');
   return node?.isConnected && !node.closest('[hidden]') && (!folded || folded.querySelector('summary') === node);

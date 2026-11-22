@@ -96,6 +96,7 @@
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
           <button id="menu-start-over" type="button" disabled>Start over</button>
+          <div role="group" aria-label="Clipboard">{{ tool_button('copy', 'Copy') }}{{ tool_button('paste', 'Paste') }}</div>
 
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>
@@ -121,7 +122,6 @@
       </div>
       <div data-toolbar-group="measure">{{ tool_button('measure', 'Measure') }}</div>
       <div data-toolbar-group="delete">{{ tool_button('delete', 'Delete') }}</div>
-      <div data-toolbar-group="clipboard" role="group" aria-label="Clipboard">{{ tool_button('copy', 'Copy') }}{{ tool_button('paste', 'Paste') }}</div>
       <div data-toolbar-group="history" role="group" aria-label="Undo and redo">{{ tool_button('undo', 'Undo') }}{{ tool_button('redo', 'Redo') }}</div>
       <div data-toolbar-group="sheet" role="group" aria-label="Drawing and Library">{{ tool_button('sheet', 'Sheet') }}{{ tool_button('library', 'Library') }}</div>
     </nav>

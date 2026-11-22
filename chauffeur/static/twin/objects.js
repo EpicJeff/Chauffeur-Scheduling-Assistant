@@ -19,7 +19,7 @@ export const schema = () => window.twinObjectSchema;
 export const objectKind = (piece, collection) => piece.object_kind || (collection === 'planting' || ['tree', 'shrub'].includes(piece.kind) ? 'plant' : 'furniture');
 export function propertyFields(piece, collection) {
   const s = schema();
-  return { ...s.common, ...s.kinds[objectKind(piece, collection)] };
+  return { ...s.common, ...s.kinds[objectKind(piece, collection)], ...(collection === 'planting' ? s.kinds.plant : {}) };
 }
 export const propertyValue = (piece, field, collection) => piece[field] ?? propertyFields(piece, collection)[field]?.default;
 export const objectShown = (piece, editor) => (piece.visible_in || ['viewer', 'editor']).includes(editor ? 'editor' : 'viewer');

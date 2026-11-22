@@ -2,7 +2,7 @@ import { Vector3 } from 'three';
 import { groupRecord, deleteOperations } from './group_transform.js';
 import { findPiece } from './piece_operations.js';
 import { hostPoint } from '../twin_hosts.js';
-import { groundAt, buildingGround } from '../twin_ground.js';
+import { groundAt, buildingGround, inPolygon, segmentIntersection, edgeDistance } from '../twin_ground.js';
 import { contains } from '../twin_generator.js';
 import { sitePoints } from '../objects.js';
 import { shapeCentre } from './site_shapes.js';
@@ -13,6 +13,7 @@ import { wallFace } from './library.js';
 import { planes } from '../twin_roof.js';
 import { openingFloor } from '../twin_floors.js';
 import { pointAnchor } from './point_snap.js';
+import { pathSurfacePolygons } from '../path_shapes.js';
 
 const clone = value => structuredClone(value);
 const key = r => JSON.stringify([r.buildingId ?? null, r.pieceId]);
@@ -44,6 +45,23 @@ function freshId(kind) {
 const surfaceKinds = ['wall', 'room', 'porch', 'floor', 'roof', 'terraces', 'hardscape', 'beds', 'ground', 'pool', 'spa', 'ledge', 'steps', 'stair', 'item', 'fixture', 'anchor'];
 const footprintCentre = p => p.rect ? centre([p.rect.slice(0, 2), p.rect.slice(2)])
   : p.area ? centre(p.area) : shapeCentre(p);
+
+function inLot(lot, points) {
+  if (points.some(p => !inPolygon(lot, ...p))) return false;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i], intersections = [a, b];
+    for (let j = 0; j < lot.length; j++) {
+      const c = lot[j], d = lot[(j + 1) % lot.length], hit = segmentIntersection(a, b, c, d);
+      if (hit) intersections.push(hit);
+      if (edgeDistance(c, a, b) < 1e-8) intersections.push(c);
+    }
+    const axis = Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1]) ? 0 : 1;
+    intersections.sort((p, q) => p[axis] - q[axis]);
+    for (let j = 1; j < intersections.length; j++) if (!inPolygon(lot,
+      (intersections[j - 1][0] + intersections[j][0]) / 2, (intersections[j - 1][1] + intersections[j][1]) / 2)) return false;
+  }
+  return true;
+}
 
 function record(plan, ref) {
   return groupRecord(plan, ref) || findPiece(plan, ref.pieceId, ref.buildingId);
@@ -107,13 +125,14 @@ function hostedAt(b, host, at) {
 // and dock tabs. A page reload (or another browser tab) gets an empty instance.
 export function createClipboard({ getPlan = () => null, getModel = () => null, getKit = () => ({}), selection,
   applyBatch, canEdit = () => true, setStatus = () => {}, view, visibility, onChange = () => {} } = {}) {
-  let buffer = null, material = null, busy = false;
+  let buffer = null, material = null, busy = false, lastPaste = null;
+  const sameRefs = (a, b) => a.length === b.length && a.every(r => b.some(s => key(r) === key(s)));
+  const followsPaste = refs => lastPaste && (!refs.length || sameRefs(refs, lastPaste.refs));
   const say = reason => { setStatus(reason); return { ok: false, reason }; };
   const contents = () => buffer && clone(buffer);
   function capture(refs) {
     if (!refs?.length) throw new Error('Select pieces to copy.');
     const plan = getPlan();
-    const boxes = new Map((view?.selectionWorldBounds?.() || []).map(row => [key(row), row.box]));
     const visibilityState = visibility?.snapshot?.();
     const entries = refs.map(ref => {
       const r = record(plan, ref);
@@ -124,27 +143,22 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
       // Copy what the person sees, retaining canonical-only record fields.
       const piece = { ...clone(raw), ...clone(r.piece) };
       // A generated opening can inherit a different look on another building.
-      // Freeze its receiving parts. Imported models already carry their own
+      // Remember its receiving parts for a cross-building paste. Imported models carry their own
       // materials; only their authored overrides travel alongside the model.
-      if (r.kind === 'opening' && !piece.model) {
-        for (const slot of pieceMaterialSlots(plan, ref, getKit())) if (slot.resolved && Object.keys(slot.resolved).length)
-          (piece.materials ||= {})[slot.key] = clone(slot.resolved);
-      }
+      const inheritedMaterials = r.kind === 'opening' && !piece.model ? Object.fromEntries(
+        pieceMaterialSlots(plan, ref, getKit()).filter(s => s.resolved && Object.keys(s.resolved).length).map(s => [s.key, clone(s.resolved)])) : null;
       const points = pointsOf(r, plan);
-      const rendered = boxes.get(key(ref));
-      const bounds = rendered ? [[rendered.min.x / .3048, -rendered.max.z / .3048], [rendered.max.x / .3048, -rendered.min.z / .3048]] : null;
       const heights = r.fixture ? points.map(p => p[2] + fixtureReference(plan, r.piece, p) + (r.piece.offset_ft || 0)) : [];
       const height = heights.length ? (Math.min(...heights) + Math.max(...heights)) / 2 : null;
       const at = centre(points);
       const baseHeight = free.includes(r.kind) ? (r.kind === 'terraces' ? piece.height : groundAt(plan, ...at) + (piece.elevation || 0))
         : r.kind === 'item' ? (points[0][2] || 0) + (r.building.base || 0) + buildingGround(plan, r.building) + (piece.elevation || 0) : null;
-      return { ref: refOf(ref), kind: r.kind, piece, points, bounds, at, height, baseHeight,
+      return { ref: refOf(ref), kind: r.kind, piece, inheritedMaterials, points, at, height, baseHeight,
         building: r.building?.id, buildingRotation: r.building?.rotation || 0, pool: r.pool ? plan.site?.pool?.id : null,
         entity_id: r.entity_id, hidden: visibilityState ? visibilityState.hidden.includes(idOf(ref)) : !!visibility?.isHidden(idOf(ref), ref.kind),
         locked: visibilityState ? visibilityState.locked.includes(idOf(ref)) : !!visibility?.isLocked(idOf(ref), ref.kind) };
     });
-    // Placement follows record geometry even before the queued redraw lands;
-    // rendered bounds are retained separately for duplicate clearance.
+    // Placement follows record geometry even before the queued redraw lands.
     const origin = centre(entries.flatMap(e => e.points));
     const heights = entries.filter(e => e.height !== null).map(e => e.height);
     const bases = entries.filter(e => e.baseHeight !== null).map(e => e.baseHeight);
@@ -155,7 +169,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
   function copy(refs = selection?.members()) {
     if (busy) return say('Wait for the clipboard change to finish.');
     try {
-      buffer = capture(refs); onChange();
+      buffer = capture(refs); lastPaste = null; onChange();
       const binding = buffer.entries.some(e => e.kind === 'device' || e.kind === 'anchor' && e.piece.device);
       setStatus(binding ? 'Copied without the device binding. Light and effect fixture bindings are kept.' : `Copied ${refs.length} piece${refs.length === 1 ? '' : 's'}.`);
       return { ok: true };
@@ -167,7 +181,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     try {
       next = capture(refs); busy = true; onChange();
       await applyBatch(deleteOperations(getPlan(), refs, getModel()), { label: 'The cut pieces' });
-      buffer = { ...next, cut: true, firstPaste: true }; selection?.clear();
+      buffer = { ...next, cut: true, firstPaste: true }; lastPaste = null; selection?.clear();
       setStatus(`Cut ${refs.length} piece${refs.length === 1 ? '' : 's'}. Paste keeps their identity.`);
       return { ok: true };
     } catch (error) { return say(error.editorStatus || error.message); }
@@ -184,11 +198,11 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
   function accepts(e, t) {
     if (!t) return false;
     if (e.kind === 'opening') return t.kind === 'wall' && t.piece.kind !== 'separator';
-    if (e.kind === 'terraces') return ['ground', 'terraces'].includes(t.kind);
+    if (e.kind === 'terraces') return ['ground', 'terraces', 'beds'].includes(t.kind);
     if (e.pool) return t.kind === 'pool' && (t.piece.id || 'pool:0') === (e.pool || 'pool:0');
     if (e.kind.endsWith('_fixture')) return surfaceKinds.includes(t.kind) && !['pane', 'glass', 'shower_glass'].includes(t.surface?.slot || t.surface?.part);
     if (e.kind === 'anchor' || e.kind === 'device') return !!t.building && ['wall', 'room', 'porch'].includes(t.kind);
-    return ['room', 'porch', 'floor', 'terraces', 'hardscape', 'ground'].includes(t.kind);
+    return ['room', 'porch', 'floor', 'terraces', 'hardscape', 'beds', 'ground'].includes(t.kind);
   }
   function refusal(e) {
     return e.kind === 'opening' ? `A ${e.piece.kind === 'window' ? 'window' : 'door'} needs a wall.`
@@ -201,7 +215,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     let t = targetRecord(target);
     if (!target && mode !== 3) {
       const refs = selection?.members() || [], same = refs.length === buffer.entries.length && refs.every(r => buffer.entries.some(e => key(e.ref) === key(r)));
-      if (!same) t = refs.map(targetRecord).find(t => buffer.entries.some(e => accepts(e, t)));
+      if (!same && !followsPaste(refs)) t = refs.map(targetRecord).find(t => buffer.entries.some(e => accepts(e, t)));
     }
     if (target || t) {
       const invalid = buffer.entries.find(e => !accepts(e, t));
@@ -221,21 +235,6 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     const right = flat(a, [1, 0]), down = flat(b, flat(back, [0, -1])), by = right.map((v, i) => (v + down[i]) * SNAP.move_ft);
     return Math.hypot(...by) > 1e-8 ? by : right.map(v => v * SNAP.move_ft);
   }
-  function clearOffset(entries) {
-    const step = offset();
-    const bounds = entries.filter(e => e.kind !== 'opening').map(e => {
-      if (e.bounds) return e.bounds;
-      const lo = [0, 1].map(i => Math.min(...e.points.map(p => p[i]))), hi = [0, 1].map(i => Math.max(...e.points.map(p => p[i])));
-      const radius = e.piece.radius || 0;
-      return [lo.map(v => v - radius), hi.map(v => v + radius)];
-    });
-    for (let n = 1; n <= 10000; n++) {
-      const by = step.map(v => v * n);
-      if (!bounds.some(([lo, hi]) => bounds.some(([a, b]) => [0, 1].every(i =>
-        Math.min(hi[i] + by[i], b[i]) - Math.max(lo[i] + by[i], a[i]) > 1e-8)))) return by;
-    }
-    throw new Error('There is no clear grid offset beside the originals. Choose a paste surface.');
-  }
   function hostFor(t, at, original = {}) {
     const b = t.building, p = local(b, at);
     if (t.kind === 'wall') return hostedAt(b, { wall: t.piece.id, side: t.surface?.side || 'left', z: original.z || 0 }, p);
@@ -245,6 +244,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     const plan = getPlan(); let p = translated(e.piece, by), b = plan.buildings.find(b => b.id === e.building);
     if (e.kind === 'opening') {
       b = mode === 3 ? b : t.building;
+      if (b.id !== e.building && e.inheritedMaterials) p.materials = { ...e.inheritedMaterials, ...p.materials };
       const wallId = mode === 3 ? e.piece.wall : t.piece.id;
       return { ...without(p, ['id', 'src', 'state', 'level', 'height', 'floor_reference_ft']), op: 'add_opening', building: b.id, id, wall: wallId, at: openingAt };
     }
@@ -356,7 +356,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
       if (!mode && target) mode = point ? 1 : 2;
       if (!mode) {
         const selected = selection?.members() || [], same = selected.length === entries.length && selected.every(r => entries.some(e => key(e.ref) === key(r)));
-        if (!selected.length || same) mode = 3;
+        if (!selected.length || same || followsPaste(selected)) mode = 3;
         else {
           t = selected.map(targetRecord).find(t => entries.some(e => accepts(e, t)));
           mode = t ? 2 : 3; fallback = !t;
@@ -380,7 +380,17 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
             : t.building ? world(t.building, footprintCentre(p)) : footprintCentre(p);
         if (!destination) throw new Error('Choose a ground point for Paste.');
       }
-      const by = mode === 3 ? clearOffset(entries) : destination.map((v, i) => v - (buffer.centre[i] || 0)).slice(0, 2);
+      const firstCut = buffer.cut && buffer.firstPaste;
+      const step = mode === 3 ? firstCut ? 0 : (lastPaste?.step || 0) + 1 : 0;
+      const by = mode === 3 ? offset().map(v => v * step) : destination.map((v, i) => v - (buffer.centre[i] || 0)).slice(0, 2);
+      const lot = plan.site?.lot;
+      if (lot?.length) for (const e of entries.filter(e => e.kind !== 'opening')) {
+        const polygons = e.piece.kind === 'path' ? pathSurfacePolygons(e.piece)
+          : e.kind === 'fire_pit' && !e.piece.polygon ? [Array.from({ length: 64 }, (_, i) => [0, 1].map(a =>
+            e.at[a] + (e.piece.radius || 2) * (a ? Math.sin : Math.cos)(i * Math.PI / 32)))] : [e.points];
+        if (polygons.some(points => !inLot(lot, [...points, ...(points.length > 2 ? [points[0]] : [])].map(p => [p[0] + by[0], p[1] + by[1]]))))
+          throw new Error('The pasted pieces would extend outside the lot. Choose a point inside the lot.');
+      }
       if (t?.piece.polygon) for (const e of entries.filter(e => free.includes(e.kind))) {
         if (e.points.some(p => !contains(t.piece.polygon, t.building ? local(t.building, p.map((v, i) => v + (by[i] || 0))) : p.map((v, i) => v + (by[i] || 0)))))
           throw new Error('The copied set does not fit on that surface. Choose a larger pad or floor.');
@@ -392,8 +402,8 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         const w = b?.walls.find(w => w.id === (mode === 3 ? e.piece.wall : t.piece.id) && w.state !== 'ghost');
         if (!w) throw new Error('The original opening’s wall is gone. A window needs a wall.');
         const length = Math.hypot(...w.to.map((v, i) => v - w.from[i]));
-        const p = e.piece, width = p.width, existing = [...b.openings, ...pending.filter(o => o.building === b.id),
-          ...(mode === 3 ? openings.filter(o => o.building === b.id).map(o => o.piece) : [])];
+        const p = e.piece, width = p.width, existing = [...b.openings, ...(mode === 3 ? lastPaste?.placed || [] : []).filter(o => o.building === b.id), ...pending.filter(o => o.building === b.id),
+          ...(mode === 3 && !firstCut ? openings.filter(o => o.building === b.id).map(o => o.piece) : [])];
         const clear = at => {
           if (at - width / 2 < -1e-8 || at + width / 2 > length + 1e-8) return false;
           const height = openingFloor(b, w, at).offset;
@@ -405,11 +415,14 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
           });
         };
         let at;
-        if (mode === 3) {
+        if (mode === 3 && firstCut) {
+          at = p.at;
+          if (!clear(at)) throw new Error('The cut opening no longer fits on its original wall.');
+        } else if (mode === 3) {
           // Search in grid steps, including the original still in the model.
           for (const direction of [1, -1]) {
             for (let n = 1; n * SNAP.move_ft <= length + 1e-8; n++) {
-              const candidate = p.at + direction * n * SNAP.move_ft;
+              const candidate = (lastPaste?.openings?.[key(e.ref)] ?? p.at) + direction * n * SNAP.move_ft;
               if (clear(candidate)) { at = candidate; break; }
             }
             if (at !== undefined) break;
@@ -424,30 +437,39 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         }
         placements.set(e, at); pending.push({ ...p, at, wall: w.id, building: b.id, floor_reference_ft: openingFloor(b, w, at).offset });
       }
-      const keep = buffer.cut && buffer.firstPaste;
-      if (keep && entries.some(e => record(plan, e.ref))) throw new Error('The cut originals already exist (perhaps restored by Undo). Copy them to make new pieces.');
-      const ids = entries.map(e => keep ? e.piece.id : freshId(e.kind === 'light_fixture' ? 'fixture' : e.kind === 'effect_fixture' ? 'effect' : e.kind));
-      const ops = entries.map((e, i) => create(e, ids[i], by, t, mode, placements.get(e), keep, destination));
+      const owner = e => mode === 3 ? e.building : ['opening', 'item', 'anchor', 'device', 'furniture'].includes(e.kind) ? t?.building?.id : undefined;
+      const keep = entries.map(e => firstCut && owner(e) === e.building && !record(plan, e.ref));
+      const ids = entries.map((e, i) => keep[i] ? e.piece.id : freshId(e.kind === 'light_fixture' ? 'fixture' : e.kind === 'effect_fixture' ? 'effect' : e.kind));
+      const ops = entries.map((e, i) => create(e, ids[i], by, t, mode, placements.get(e), keep[i], destination));
       busy = true; onChange();
       await applyBatch(ops, { label: 'The pasted pieces' });
-      if (keep) {
+      if (firstCut) {
         buffer.firstPaste = false;
-        for (const e of entries) {
+        for (const e of entries.filter((e, i) => keep[i])) {
           // Kind filters are independent of this piece's stored flags. Restoring
           // a visible piece must never show/unlock every other piece of its kind.
           visibility?.[e.hidden ? 'hide' : 'show']?.(e.ref.pieceId);
           visibility?.[e.locked ? 'lock' : 'unlock']?.(e.ref.pieceId);
         }
       }
-      selection?.set(entries.map((e, i) => ({ kind: ['add_anchor', 'add_equipment'].includes(ops[i].op) ? 'anchor' : ops[i].op === 'add_item' ? 'item' : ops[i].list || e.kind, pieceId: ids[i],
-        ...(ops[i].building || ops[i].fixture?.building ? { buildingId: ops[i].building || ops[i].fixture.building } : {}) })));
-      setStatus(`${fallback ? 'No valid host selected; pasted beside the originals. ' : ''}Pasted ${entries.length} piece${entries.length === 1 ? '' : 's'}.${!keep && entries.some(e => e.kind === 'device' || e.piece.device) ? ' Device binding omitted.' : ''}`);
+      const refs = entries.map((e, i) => ({ kind: ['add_anchor', 'add_equipment'].includes(ops[i].op) ? 'anchor' : ops[i].op === 'add_item' ? 'item' : ops[i].list || e.kind, pieceId: ids[i],
+        ...(ops[i].building || ops[i].fixture?.building ? { buildingId: ops[i].building || ops[i].fixture.building } : {}) }));
+      lastPaste = { refs, step, placed: [...(lastPaste?.placed || []), ...pending], openings: Object.fromEntries(openings.map(e => [key(e.ref), placements.get(e)])) };
+      selection?.set(refs);
+      setStatus(`${fallback ? 'No valid host selected; pasted beside the originals. ' : ''}Pasted ${entries.length} piece${entries.length === 1 ? '' : 's'}.${firstCut && keep.some(k => !k) ? ' The piece got a new identity in its receiving owner.' : ''}${entries.some((e, i) => !keep[i] && (e.kind === 'device' || e.piece.device)) ? ' Device binding omitted.' : ''}`);
       return { ok: true };
     } catch (error) { return say(error.editorStatus || error.message); }
     finally { busy = false; onChange(); }
   }
   async function duplicate(refs = selection?.members()) {
-    const result = copy(refs); return result.ok ? paste({ mode: 3 }) : result;
+    if (busy || !canEdit()) return say('The editor is not ready to duplicate.');
+    // Use the same placement path with a private, short-lived buffer. The
+    // person's object and material clipboards remain intact during the save.
+    const temporary = createClipboard({ getPlan, getModel, getKit, selection, applyBatch, canEdit, setStatus, view, visibility });
+    busy = true; onChange();
+    try { const result = temporary.copy(refs); return result.ok ? await temporary.paste({ mode: 3 }) : result; }
+    catch (error) { return say(error.message); }
+    finally { busy = false; onChange(); }
   }
   function slotFor(surface) {
     if (!surface) return null;
@@ -478,7 +500,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     finally { busy = false; onChange(); }
   }
   return { copy, cut, paste, duplicate, canPaste, contents, copyMaterial, pasteMaterial, slotFor,
-    clear() { if (!busy) { buffer = material = null; onChange(); } },
+    clear() { if (!busy) { buffer = material = lastPaste = null; onChange(); } },
     hasMaterial: () => !!material, canCopy(refs = selection?.members()) {
       if (busy) return { ok: false, reason: 'Wait for the clipboard change to finish.' };
       try { capture(refs); return { ok: true, reason: '' }; } catch (e) { return { ok: false, reason: e.message }; }
@@ -486,6 +508,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
 }
 
 export function clipboardKey(event, clipboard, { dialogOpen = false, canEdit = true } = {}) {
+  if (event.shiftKey) return false;
   const duplicate = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'd';
   if (event.defaultPrevented || !(event.ctrlKey || event.metaKey) || event.altKey || dialogOpen
     || event.target?.isContentEditable || event.target?.closest?.('input, textarea, select, [contenteditable]')) {
@@ -494,8 +517,10 @@ export function clipboardKey(event, clipboard, { dialogOpen = false, canEdit = t
   }
   const action = { c: 'copy', x: 'cut', v: 'paste', d: 'duplicate' }[event.key.toLowerCase()];
   if (!action) return false;
+  if (['copy', 'cut'].includes(action) && globalThis.getSelection?.()?.isCollapsed === false) return false;
   // Always consume Ctrl+D here: an unavailable duplicate must not bookmark.
   event.preventDefault();
+  if (event.repeat && ['paste', 'duplicate'].includes(action)) return false;
   if (canEdit || action === 'copy') return clipboard[action]();
   return false;
 }

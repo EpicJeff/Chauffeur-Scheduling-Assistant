@@ -758,6 +758,7 @@ export async function boot() {
         'This clears the house, its history and the uploaded drawings and photos. The spend total stays.',
         'Start over', 'Keep it')) return;
       await history.perform(() => request('start-over', 'POST', {}));
+      tools?.clipboard?.clear();
       queue = createEditQueue(queueOptions);
       snapshot = { plan: null, rounds: [], cost: snapshot.cost, build: null };
       loadVisibility('current', emptyPlan());
@@ -868,6 +869,7 @@ export async function boot() {
       edit, op: applyOp, applyBatch, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ dock, dialogs, createMenu: createContextMenu, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
       op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
+    library.materialMenu = (...args) => slotLibrary.materialMenu?.(...args);
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
       onReview: item => checks?.show(item) });

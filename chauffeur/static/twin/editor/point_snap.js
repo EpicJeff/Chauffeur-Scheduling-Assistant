@@ -9,7 +9,8 @@ const scratch = new THREE.Vector3(), end = new THREE.Vector3(), projected = new 
 const terrainCache = new WeakMap(), triangleA = new THREE.Vector3(), triangleB = new THREE.Vector3(), triangleC = new THREE.Vector3();
 const key = p => p.toArray().map(v => Math.round(v * 1e4)).join(',');
 const edgeKey = (a, b) => a < b ? `${a}/${b}` : `${b}/${a}`;
-const lot = p => [p.x / FT, -p.z / FT, p.y / FT];
+export const lotPoint = p => Array.isArray(p) ? [p[0] / FT, -p[2] / FT, p[1] / FT] : [p.x / FT, -p.z / FT, p.y / FT];
+const lot = lotPoint;
 const lists = {wall:'walls',roof:'roofs',floor:'levels',room:'rooms',porch:'porches',stair:'stairs',opening:'openings',item:'items',fixture:'fixtures',light:'lights',anchor:'anchors',solar_zone:'solar_zones'};
 const siteLists = {retaining_wall:'terraces',terrace:'terraces',hardscape:'hardscape',fence:'fence'};
 const pieces = v => Array.isArray(v) ? v : v ? [v] : [];

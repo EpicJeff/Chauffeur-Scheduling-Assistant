@@ -230,7 +230,7 @@ def room_from_feature(name, piece, feature=None):
             'polygon': deepcopy(polygon), **({'feature': {'list': name, 'id': piece['id']}} if piece.get('id') else {})}
 
 
-def create(name, values, lot):
+def create(name, values, lot, *, require_inside=False):
     if name not in KINDS:
         raise ValueError('Choose a ground feature.')
     path = values.get('kind') == 'path'
@@ -290,7 +290,7 @@ def create(name, values, lot):
         raise ValueError('Choose an existing kit material role.')
     validate(name, piece)
     key = 'at' if name == 'fire_pit' and piece['shape'] == 'round' else 'polyline' if name == 'fence' else 'points' if path else 'polygon'
-    words = update(name, piece, {key: piece[key]}, lot)
+    words = update(name, piece, {key: piece[key]}, lot, require_inside=require_inside)
     return piece, words.replace('Changed', 'Added', 1)
 
 
@@ -368,11 +368,14 @@ def validate(name, piece, *, legacy_height=False):
     return points
 
 
-def update(name, piece, change, lot):
+def update(name, piece, change, lot, *, require_inside=False):
     if name not in KINDS:
         raise ValueError('Choose a yard shape.')
     geometry = next((k for k in ('polygon', 'points', 'polyline') if k in piece), None)
     allowed = {geometry, 'rotation'} if geometry else {'rotation'}
+    allowed.add('elevation')
+    if 'elevation' in change and not terrain.number(change['elevation']):
+        raise ValueError('Choose a finite height above surface.')
     if name == 'yard_rooms':
         allowed |= {'name', 'ha_area'}
     if name in ('beds', 'hardscape', 'edges', 'pool'):
@@ -463,4 +466,6 @@ def update(name, piece, change, lot):
             # Include the width, not only the centre-line endpoints, in the warning.
             radius = piece.get('width', 3)/2 + (.5 if piece.get('edging') == 'curb' else 0)
             outside |= any(not inside(lot, [p[0]+radius*math.cos(a*math.pi/8), p[1]+radius*math.sin(a*math.pi/8)]) for p in points for a in range(16))
+    if outside and require_inside:
+        raise ValueError('The yard shape must stay inside the lot.')
     return 'Changed the yard shape.' + (' Warning: this shape extends outside the lot.' if outside else '')

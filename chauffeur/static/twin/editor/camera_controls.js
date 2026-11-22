@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { groundAt } from '../twin_ground.js';
+import { dialogOpen } from './dialog.js';
 
 const FT = .3048, EASE = .1;
 const LOOK_RADIANS = .15 * Math.PI / 180, LOOK_PITCH = 89 * Math.PI / 180;
@@ -33,7 +34,7 @@ export function mountEditorCamera(view, host) {
 
   function blocked(target = document.activeElement) {
     return !!(target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
-      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-alert-modal:not(.hidden), #cc-choice-modal:not(.hidden), [role="dialog"]:not([hidden]), dialog[open]'));
+      || dialogOpen());
   }
   function stop() { keys.clear(); vx = vy = vz = 0; previous = null; }
   function reset() { held = false; pointer = null; pendingMenu = null; ignoreRepeats = false; stop(); }

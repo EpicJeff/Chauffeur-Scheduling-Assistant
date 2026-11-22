@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tempfile
 from twin_editor_dom import PRELUDE, run_node
+from twin_clipboard_fix1 import FIX_DRIVER, INTEGRATION as FIX_INTEGRATION, server_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -114,7 +115,7 @@ await test('cut_identity_hide_lock_binding_first_paste_only_and_undo_clipboard_u
  // Model refresh after the delete; Undo puts this record back. Neither read
  // touches the session clipboard.
  pb.anchors=[];rb.anchors=[];pb.anchors.push(structuredClone(p));assert.deepEqual(r.c.contents(),frozen);
- const n=r.posts.length;assert.equal((await r.c.paste({mode:3})).ok,false);assert.equal(r.posts.length,n);pb.anchors=[];
+ assert.equal(r.posts.length,1,'Undo did not send clipboard operations');pb.anchors=[];
  assert.equal((await r.c.paste({mode:3})).ok,true,r.status());const restored=r.posts[1].ops[0];assert.equal(restored.id,p.id);assert.equal(restored.device,p.device);assert.ok(r.visibility.isHidden(p.id));assert.ok(r.visibility.isLocked(p.id));
  assert.equal((await r.c.paste({mode:3})).ok,true,r.status());assert.notEqual(r.posts[2].ops[0].id,p.id);assert.equal(r.posts[2].ops[0].device,undefined);
  // HTTP replay starts with the original anchor, then delete + first and later paste.
@@ -176,7 +177,7 @@ await test('mode3_uses_captured_footprint_after_floor_switch_and_lan_uuid_fallba
  const r=rig(),p={id:'copy-box',asset:'chair',at:[20,20]};r.plan.site.furniture=[p];r.raw.site.furniture=[structuredClone(p)];
  let boxes=[{kind:'furniture',pieceId:p.id,box:{min:{x:19*.3048,z:-21*.3048},max:{x:21*.3048,z:-19*.3048}}}],ops=[];
  const c=createClipboard({getPlan:()=>r.plan,getModel:()=>r.raw,view:{selectionWorldBounds:()=>boxes},applyBatch:async batch=>ops.push(batch)});
- c.copy([ref('furniture',p.id)]);boxes=[];assert.equal((await c.paste({mode:3})).ok,true);assert.ok(ops[0][0].at[0]-20>=2||20-ops[0][0].at[1]>=2);
+ c.copy([ref('furniture',p.id)]);boxes=[];assert.equal((await c.paste({mode:3})).ok,true);assert.deepEqual(ops[0][0].at,[20.5,19.5],'large footprints still move exactly one step');
  const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto'),crypto=globalThis.crypto;
  try {Object.defineProperty(globalThis,'crypto',{configurable:true,value:{getRandomValues:crypto.getRandomValues.bind(crypto)}});assert.equal((await c.paste({mode:3})).ok,true);assert.match(ops[1][0].id,/^furniture:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);}
  finally{Object.defineProperty(globalThis,'crypto',descriptor);}
@@ -254,7 +255,7 @@ def main():
         payload = {'root': ROOT.as_posix(), 'plan': twin_store.current(), 'model': twin_store.current_model(),
                    'kit': twin_library.kit('modern_farmhouse'),
                    'objectSchema': json.loads((ROOT/'static/twin/object_schema.json').read_text(encoding='utf8')), 'models': models}
-        code, output = run_node(DRIVER, payload, timeout=180)
+        code, output = run_node(DRIVER.replace("console.log('CASES '", FIX_DRIVER + "console.log('CASES '"), payload, timeout=180)
         print('\n'.join(line for line in output.splitlines() if not line.startswith('CASES ')))
         assert code == 0, chr(10).join(line for line in output.splitlines() if not line.startswith('CASES '))
         cases = json.loads(next(line[6:] for line in output.splitlines() if line.startswith('CASES ')))
@@ -313,13 +314,15 @@ def main():
             answer = client.post('/api/house/editor/op', headers=headers, json={'op': {'op': 'batch', 'ops': [op, op]}})
             assert answer.status_code == 400 and answer.json()['member'] == 1, answer.text
             assert twin_store.current_model() == before and len(twin_store.rounds()) == count
+            server_checks(client, headers, payload['model'])
             print(f'PASS {passed} HTTP create/material/cut batches, one undo each; duplicate-id refusal atomic')
         from test_twin_selection_js import DRIVER as SCENE_DRIVER
         scene = SCENE_DRIVER.rsplit('finish();', 1)[0].replace('await test(', 'await skipPriorScenario(')
         scene = scene.replace('let library = null, terrain = null, devices = null;',
             "let library = null, terrain = null, devices = null; const slotLibrary={selected:()=>library?.selected()||null,onSelect:fn=>library?.onSelect(fn)||(()=>{}),reveal:(...args)=>library?.reveal(...args)};")
         scene = scene.replace('siteHits: (x, y) =>', 'library: slotLibrary, surfaceAt: (event,target)=>library?.contextSurfaceAt(event,target), groundPoint:event=>library?.ground(event), siteHits: (x, y) =>')
-        code, output = run_node('const skipPriorScenario=async()=>{};\n' + scene + INTEGRATION,
+        scene = scene.replace('terrain = createTerrainTools(', 'library.materialMenu=(...args)=>slotLibrary.materialMenu?.(...args); terrain = createTerrainTools(')
+        code, output = run_node('const skipPriorScenario=async()=>{};\n' + scene + INTEGRATION.replace('finish();', FIX_INTEGRATION + 'finish();'),
                                 {**payload, 'flat': payload['plan']}, timeout=180)
         print(output)
         assert code == 0, output

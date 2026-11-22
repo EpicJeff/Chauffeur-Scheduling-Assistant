@@ -19,7 +19,8 @@ def kind(piece, collection=None):
 
 def fields(piece, collection=None):
     name = kind(piece, collection)
-    return {**SCHEMA['common'], **SCHEMA['kinds'].get(name if isinstance(name, str) else '', {})}
+    return {**SCHEMA['common'], **SCHEMA['kinds'].get(name if isinstance(name, str) else '', {}),
+            **(SCHEMA['kinds']['plant'] if collection == 'planting' else {})}
 
 
 def defaults(piece, collection=None):
@@ -33,7 +34,7 @@ def validate(field, value, spec):
     if t == 'text':
         valid = isinstance(value, str) and len(value) <= spec['max']
     elif t == 'number':
-        valid = number(value) and spec['min'] <= value <= spec['max']
+        valid = number(value) and spec['min'] <= value <= spec['max'] and (not spec.get('positive') or value > 0)
     elif t == 'angle':
         valid = number(value)
     elif t == 'axes':

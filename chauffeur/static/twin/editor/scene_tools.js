@@ -24,6 +24,8 @@ import { createLayers } from './dock.js';
 import { shapeOperation, shapeCentre, transformShape } from './site_shapes.js';
 import { deleteOperations, groupTransform, transformOperations } from './group_transform.js';
 import { createClipboard, clipboardKey } from './clipboard.js';
+import { dialogOpen } from './dialog.js';
+import { contextPoint } from './library.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
@@ -485,7 +487,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (target.slotSurface) return [
       { label: 'Copy material', disabled: !slot, run: () => clipboard.copyMaterial(surface) },
       { label: 'Paste material', disabled: !slot || !clipboard.hasMaterial() || !canEdit(), reason: 'Copy a material first.', run: () => clipboard.pasteMaterial(surface) }];
-    const eligible = clipboard.canCopy(refs), landing = { ...target, ...(target.materialSurface || {}) };
+    const eligible = clipboard.canCopy(refs), landing = { ...target, ...(!target.materialSurface && target.point ? {
+      point: contextPoint(getPlan(), getPlan()?.buildings?.find(b => b.id === (target.building || target.buildingId)), target.point)
+    } : {}), ...(target.materialSurface || {}) };
     const readiness = clipboard.canPaste(target.empty ? { kind: 'ground' } : landing);
     return [
       { label: 'Copy', disabled: !eligible.ok, reason: eligible.reason, run: () => clipboard.copy(refs) },
@@ -971,12 +975,12 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   listen(canvas, 'pointerleave', () => { if (!pointers.size) roomSelection.hover(null); });
   listen(canvas.parentElement, 'twinerror', event => report(event.detail));
   listen(document, 'keydown', event => {
-    clipboardKey(event, clipboard, { canEdit: canEdit(), dialogOpen: ownsGesture || !!document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), #cc-choice-modal:not(.hidden), dialog[open], [role="dialog"]:not([hidden])') });
+    clipboardKey(event, clipboard, { canEdit: canEdit(), dialogOpen: ownsGesture || dialogOpen() });
   });
   listen(document, 'keydown', event => {
     if (event.defaultPrevented || !canEdit() || event.ctrlKey || event.metaKey || event.altKey
       || event.target.closest?.('input, textarea, select, [contenteditable="true"]')
-      || document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), [role="dialog"]:not([hidden])')) return;
+      || dialogOpen()) return;
     if (visibility && event.key.toLowerCase() === 'h') {
       if (ownsGesture || event.target.isContentEditable) return;
       const selected = delegate?.visibilitySelection?.() || selection;
@@ -1022,7 +1026,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   });
   const canEscape = event => event.key === 'Escape' && !event.defaultPrevented
     && !event.target.closest?.('input, textarea, select, [contenteditable="true"]')
-    && !document.querySelector('#cc-confirm-modal:not(.hidden), #cc-input-modal:not(.hidden), dialog[open]');
+    && !dialogOpen();
   // Cancel the owner before a card's capture listener can close it or change
   // selection. Idle Escape stays in bubble, after the card's own close action.
   listen(document, 'keydown', event => {

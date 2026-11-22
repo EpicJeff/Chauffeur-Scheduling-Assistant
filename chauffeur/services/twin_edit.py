@@ -904,6 +904,7 @@ def save(edit, actor_id, reason=''):
     if any(isinstance(member, dict) and (
             member.get('op') == 'set' and member.get('field') == 'ha_area'
             or member.get('op') == 'place_device'
+            or member.get('op') in ('add_anchor', 'add_equipment') and member.get('device')
             or member.get('list') == 'yard_rooms' and 'ha_area' in member) for member in members):
         from services import twin_ha
         ha_catalogue = twin_ha.safe_catalogue()

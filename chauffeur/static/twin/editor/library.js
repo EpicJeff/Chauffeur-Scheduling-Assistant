@@ -15,12 +15,22 @@ import { mountImports } from './imports.js';
 import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
+import { lotPoint } from './point_snap.js';
 
 import { materialName, describeMaterial, readLibraryCatalog, surfaceDescription } from './material_catalog.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
 import { planes } from '../twin_roof.js';
 export { materialName } from './material_catalog.js';
 export const libraryMaterialHref = id => (window.chfBase ?? '../') + 'house/library?material=' + encodeURIComponent(id);
+
+export function contextPoint(plan, building, point) {
+  const at = lotPoint(point);
+  if (!building) return at;
+  const angle = -(building.rotation || 0) * Math.PI / 180;
+  const x = at[0] - (building.position?.[0] || 0), y = at[1] - (building.position?.[1] || 0);
+  return [x * Math.cos(angle) - y * Math.sin(angle), x * Math.sin(angle) + y * Math.cos(angle),
+    at[2] - (building.base || 0) - buildingGround(plan, building)];
+}
 
 export function wallFace(building, wall, side) {
   const [a, b] = [wall.from, wall.to], length = Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -56,13 +66,7 @@ export function contextSurfaceForHit(plan, hit) {
   const material = Array.isArray(object.material) ? object.material[hit.face?.materialIndex || 0] : object.material;
   const renderedMaterialId = material?.userData?.materialId || material?.userData?.bakeMaterialId;
   const point = hit.point?.toArray ? hit.point.toArray() : hit.point;
-  let localPoint = point;
-  if (building && point) {
-    const angle = -(building.rotation || 0) * Math.PI / 180;
-    const x = point[0] / FT - (building.position?.[0] || 0), y = -point[2] / FT - (building.position?.[1] || 0);
-    localPoint = [x * Math.cos(angle) - y * Math.sin(angle), x * Math.sin(angle) + y * Math.cos(angle),
-      point[1] / FT - (building.base || 0) - buildingGround(plan, building)];
-  }
+  const localPoint = point && contextPoint(plan, building, point);
   let slot = data.bakePart || data.part || '';
   if (kind === 'terraces') {
     const match = slot.match(/^edge:(\d+):(face|cap|riser|tread|rail)$/);

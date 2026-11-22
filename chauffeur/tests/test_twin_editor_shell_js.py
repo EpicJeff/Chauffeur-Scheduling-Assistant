@@ -68,7 +68,9 @@ def test_homes(p):
         assert node['attrs'].get('aria-label', node['text'].strip()) == name, tool
         assert node['attrs'].get('title') == name, tool
     groups = [n['attrs']['data-toolbar-group'] for n in p.nodes if 'data-toolbar-group' in n['attrs']]
-    assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'clipboard', 'history', 'sheet', 'floor', 'view'], groups
+    assert groups == ['menu', 'house', 'save', 'select', 'structure', 'yard', 'fixtures', 'measure', 'delete', 'history', 'sheet', 'floor', 'view'], groups
+    for tool in ('copy', 'paste'):
+        assert p.inside(p.by_id('rail-' + tool), 'editor-menu'), 'Clipboard uses the existing overflow menu'
     porch = p.by_id('rail-add-porch')
     parent = p.nodes[porch['parent']]
     assert parent['attrs'].get('data-toolbar-group') == 'structure'
@@ -180,6 +182,7 @@ def test_toolbar_width(p):
         text_widths[id] = px(text['max-width'])
         assert text['overflow'] == 'hidden' and text['text-overflow'] == 'ellipsis'
         assert text.get('display') == 'block', 'ellipsis must apply to a text block, not a flex container'
+    assert text_widths == {'editor-house-name': 120, 'editor-toolbar-save-state': 80}, 'Keep the original title and save widths'
 
     def width(node):
         attrs = node['attrs']
