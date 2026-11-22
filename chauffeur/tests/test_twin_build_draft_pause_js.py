@@ -158,18 +158,45 @@ export const createStatusChip = () => ({ update() {} });
 // The editor now mounts the step strip and checks; this driver tests preview ownership.
 export const createSteps = () => ({ render() {}, open() {}, close() {} });
 export const createChecks = () => ({ sync() {}, show() {}, dismiss() {} });
+export const createEditQueue = () => ({ base: () => true, shown: () => null,
+  state: () => ({ saved: true, unsaved: 0, saving: 0 }), pending: () => false,
+  push: () => ({ saved: Promise.resolve({}) }), resume() {} });
+export class LocalMissing extends Error {}
+export const applyLocal = () => { throw new LocalMissing(); };
+export const mountIcons = () => {};
+export const createDock = () => ({ onResize() {}, dispose() {}, properties: { render() {}, clear() {} } });
+export const mountDialogs = () => {
+  let open = null;
+  return {
+    current: () => open,
+    openDialog(id) {
+      if (open && open !== id) document.getElementById(open).hidden = true;
+      open = id; document.getElementById(id).hidden = false;
+    },
+    closeDialog(id) {
+      if (!open || (id && open !== id)) return;
+      document.getElementById(open).hidden = true; open = null;
+    },
+  };
+};
+export const createContextMenu = () => ({ open() {}, close() {}, dispose() {} });
+export const houseMaterialsShelf = () => {};
+export const createVisibility = () => ({ subscribe: () => () => {},
+  snapshot: () => ({ hidden: [], hiddenKinds: [] }), forHouse() {}, isPickable: () => true });
+export const keepEdit = () => {};
 '''
 
 EDITOR_DRIVER = r'''
 import assert from 'node:assert/strict';
 import { boot } from './editor.mjs';
 const elements = new Map();
-const node = () => ({ hidden: false, dataset: {}, style: {}, children: [],
+const node = () => ({ hidden: false, dataset: {}, style: { setProperty() {} }, children: [],
   textContent: '', addEventListener() {}, querySelector: () => node(), querySelectorAll: () => [],
+  getBoundingClientRect: () => ({ bottom: 0, height: 0, left: 0 }),
   append() {}, setAttribute() {}, replaceChildren() {} });
 globalThis.document = { getElementById: id => {
   if (!elements.has(id)) elements.set(id, node()); return elements.get(id);
-}, addEventListener() {}, createElement: node };
+}, addEventListener() {}, createElement: node, querySelector: () => node(), querySelectorAll: () => [] };
 globalThis.window = { addEventListener() {} };
 globalThis.location = { search: '' };
 globalThis.sheets = { sources: [], page_roles: [], place: { buildings: [{ id: 'pool-house' }] } };

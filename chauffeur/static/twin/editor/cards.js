@@ -205,7 +205,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         current: () => material.current, detail: () => material.text, inherited: () => material.inherited,
         accepts: entry => entry.kind === 'material',
         // Clear only where something is set here; an inherited slot has nothing to clear.
-        apply: entry => save({id:entry.id}), clear: material.clear ? () => save(null) : null,
+        apply: entry => save({id:entry.id}), clear: { enabled: () => material.clear, run: () => save(null) },
         tint: { value:() => material.current?.color || '#b8b0a4', hasOverride:() => !!material.ref?.color,
           set:color => patch({color}), clear:() => patch({color:undefined}) },
         offset: { value:() => material.ref?.uv, effective:() => material.resolved.uv,

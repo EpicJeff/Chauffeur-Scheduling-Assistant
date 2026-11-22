@@ -12,7 +12,8 @@ await test('water_default_reaches_pool_and_spa',async()=>{
  const g=await yard(p),water=all(g).filter(o=>o.material.name==='water');
  assert.ok(water.length);assert.ok(water.every(o=>o.material.userData.materialId==='blend'));
  const ys=water.flatMap(o=>Array.from(o.geometry.attributes.position.array).filter((_,i)=>i%3===1));
- assert.ok(ys.some(y=>Math.abs(y+.25)<1e-5),'pool');
+ // Pool with coping seats POOL_SEAT (0.12 ft) below ground (v2.499.897): water at -0.12 - 0.25 = -0.37 ft.
+ assert.ok(ys.some(y=>Math.abs(y+.37)<1e-5),'pool');
  assert.ok(ys.some(y=>y>1),'raised spa');
  assert.equal(new Set(water.map(o=>o.material)).size,1);
 });

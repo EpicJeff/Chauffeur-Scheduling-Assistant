@@ -93,7 +93,13 @@ const mapping=atlas=>({rooms:atlas.room.rooms,charts:atlas.room.charts.map(({mes
  attributes:covered(atlas===a?low:high).filter(m=>!m.geometry.userData.bakeHeightfield).map(m=>Object.fromEntries(['uv3','lmRoom','lmLightPage'].map(k=>[k,[...m.geometry.attributes[k].array]])))});
 assert.deepEqual(mapping(a),mapping(b),'identical chart IDs, packing and every lightmap UV');
 const groundUV=mesh=>{const p=mesh.geometry.attributes.position,u=mesh.geometry.attributes.uv3,r=mesh.geometry.attributes.lmRoom,m=new Map();
- for(let i=0;i<p.count;i++)if(r.getX(i)>=0)m.set([p.getX(i),p.getY(i),p.getZ(i)].map(v=>v.toFixed(3)).join(),[u.getX(i),u.getY(i)]);return m;};
+ for(let i=0;i<p.count;i++){const room=r.getX(i);if(room<0)continue;
+  const key=[p.getX(i),p.getY(i),p.getZ(i)].map(v=>(Math.abs(v)<5e-4?0:v).toFixed(3)).join();
+  let list=m.get(key);if(!list){list=[];m.set(key,list);}
+  const uv=[u.getX(i),u.getY(i)];
+  if(!list.some(e=>e[0]===room&&Math.abs(e[1]-uv[0])<1e-6&&Math.abs(e[2]-uv[1])<1e-6))list.push([room,uv[0],uv[1]]);}
+ for(const list of m.values())list.sort((a,b)=>a[0]-b[0]||a[1]-b[1]||a[2]-b[2]);
+ return m;};
 // A heightfield chart's face list indexes its own tier's grid; keys, addresses and ownership do not.
 const layoutData=atlas=>JSON.parse(JSON.stringify(bakeLayout(atlas,options,[lamp]),(key,value)=>key==='mesh'?undefined:
  value&&value.heightfield&&value.faces?{...value,faces:undefined}:value));
@@ -200,11 +206,14 @@ const excluded=new THREE.Mesh(new THREE.BoxGeometry(),material);excluded.geometr
 mixed.add(excluded,new THREE.Mesh(new THREE.BoxGeometry(),material));mergeStatic(mixed);mergeStatic(mixed);
 assert.equal(covered(mixed).length,1,'merging cannot mix render-only and baked receivers');
 console.log('Passed: tier fingerprint, key, UVs, slots, cache application, authored invalidation and LOD invariance');
-// Retain this cross-tier ground check verbatim, after the independent contract
-// checks so its known main failure does not hide material/geometry regressions.
+// Compare every shared ground point's full sorted (room, uv) list across tiers,
+// so tile-seam vertices shared by two adjacent 64 ft heightfield charts verify both tiles.
 const lowUV=groundUV(field(low)),highUV=groundUV(field(high));let shared=0;
-for(const [key,uv] of lowUV) {const other=highUV.get(key);if(!other)continue;shared++;
- assert.ok(Math.abs(uv[0]-other[0])<1e-6&&Math.abs(uv[1]-other[1])<1e-6,`ground point ${key} maps to the same lightmap texel on both tiers`);}
+for(const [key,entries] of lowUV) {const other=highUV.get(key);if(!other)continue;shared++;
+ assert.equal(entries.length,other.length,`ground point ${key} maps to the same tile set on both tiers`);
+ entries.forEach(([room,u,v],i)=>{const [oroom,ou,ov]=other[i];
+  assert.equal(room,oroom,`ground point ${key} maps to the same room on both tiers`);
+  assert.ok(Math.abs(u-ou)<1e-6&&Math.abs(v-ov)<1e-6,`ground point ${key} maps to the same lightmap texel on both tiers`);});}
 assert.ok(shared>10,`shared ground points compared: ${shared}`);
 """
 

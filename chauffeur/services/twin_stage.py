@@ -1,5 +1,6 @@
 """Stage display preference, outside house rounds and scheduler settings."""
 import math
+import os
 
 from services import storage, twin_store
 
@@ -11,6 +12,7 @@ PROBE_CLOUD_CHOICES = (4, 10, 30, 60)
 MIN_RADIUS = 30
 MAX_RADIUS = 1000
 LOT_MARGIN = 120
+_DEFAULT_CACHE = None
 
 
 def default_stage(plan):
@@ -35,8 +37,19 @@ def default_stage(plan):
             'default_radius': radius, 'radius_override': None}
 
 
-def read(plan=None):
-    result = default_stage(twin_store.current() if plan is None else plan)
+def read(plan=None, round_id=None):
+    global _DEFAULT_CACHE
+    cache_key = ((os.path.abspath(twin_store.DATA_DIR), twin_store.generation(), twin_store.read_epoch(), round_id)
+                 if round_id is not None else None)
+    if plan is None and cache_key is not None and _DEFAULT_CACHE and _DEFAULT_CACHE[0] == cache_key:
+        cached = _DEFAULT_CACHE[1]
+        result = {'centre': list(cached['centre']), 'radius': cached['radius'],
+                  'default_radius': cached['default_radius'], 'radius_override': None}
+    else:
+        result = default_stage(twin_store.current() if plan is None else plan)
+        if cache_key is not None:
+            _DEFAULT_CACHE = (cache_key, {'centre': list(result['centre']), 'radius': result['radius'],
+                                          'default_radius': result['default_radius']})
     hz = storage.get_app_state(MIRROR_KEY)
     result['mirror_still_hz'] = hz if type(hz) in (int, float) and hz in MIRROR_CHOICES else 10
     seconds = storage.get_app_state(PROBE_CLOUD_KEY)

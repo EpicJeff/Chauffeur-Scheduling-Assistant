@@ -151,10 +151,12 @@ await test('random_offset_reaches_roof_floor_and_yard_surfaces',async()=>{
  for(const role of ['siding','roof','floor','trim'])assert.ok(house.has(role),'house '+role+' '+[...house]);
  const site=moved(off.y,on.y);
  for(const role of ['paving','fence','mulch','lawn','base','granite','patio_concrete'])assert.ok(site.has(role),'yard '+role+' '+[...site]);
- // Two patios in one material keep one material instance and their own origins; the
- // pool's walls share one origin.
+ // Two patios and path in one material keep one material instance and their own origins;
+ // the pool's underwater shell shares one underwater-wrapped instance (v2.499.902) and one wall origin.
  const paving=pairs(off.y,on.y,'paving');
- assert.equal(new Set(paving.map(([,m])=>m.material)).size,1);
+ const dry=paving.filter(([,m])=>!m.material.userData?.underwater), wet=paving.filter(([,m])=>!!m.material.userData?.underwater);
+ assert.equal(new Set(dry.map(([,m])=>m.material)).size,1,'hardscape paving shares one material instance');
+ assert.equal(new Set(wet.map(([,m])=>m.material)).size,1,'pool underwater paving shares one material instance');
  const used=seedsOf(paving,['h1','h2','p1','pool:floor','pool:coping','pool:walls']);
  assert.ok(used.has('h1')&&used.has('h2')&&used.has('pool:walls'),[...used].join());
  // The retaining wall and the fire pit body share 'base'; each keeps its own seed.

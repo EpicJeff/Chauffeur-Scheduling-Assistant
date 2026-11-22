@@ -9,7 +9,7 @@ import tempfile
 
 os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='twin_roof_ends_'))
 
-from test_twin_joints_js import plan, building, run, check, TWIN  # noqa: E402
+from test_twin_joints_js import plan, building, run, check, TWIN, VENDOR  # noqa: E402
 from test_twin_roof_issues import _one_level, issues_of  # noqa: E402
 from test_twin_roof_js import Node  # noqa: E402
 from services import twin_edit, twin_plan, twin_roof_issues  # noqa: E402
@@ -67,19 +67,37 @@ def test_cards_set_both_ends_without_losing_queued_changes():
     # Minimal DOM, real cards.js and asynchronous save callbacks under node.
     driver = r"""
 import { pathToFileURL } from 'node:url';
+import { registerHooks } from 'node:module';
+registerHooks({resolve(spec, ctx, next) {
+  if (ctx.parentURL === pathToFileURL(process.argv[2]).href && /^\.\.?\//.test(spec))
+    return {url: pathToFileURL(process.argv[3] + (spec.startsWith('../') ? '/' + spec.slice(3) : '/editor/' + spec.slice(2))).href, shortCircuit: true};
+  if (spec === 'three') return {url: pathToFileURL(process.argv[4] + '/three.module.js').href, shortCircuit: true};
+  if (spec.startsWith('three/addons/')) return {url: pathToFileURL(process.argv[4] + '/addons/' + spec.slice(13)).href, shortCircuit: true};
+  return next(spec, ctx);
+}, load(url, ctx, next) {
+  return url.startsWith('file:') && url.endsWith('.js') ? {...next(url, {...ctx, format: 'module'}), format: 'module'} : next(url, ctx);
+}});
 class Element {
-  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren() { this.children = []; }
+  constructor(tag) { this.tag = tag; this.children = []; this.listeners = {}; this.value = ''; this.dataset = {}; this.style = {}; this.parentElement = null;
+    this.classList = { toggle() {}, add() {}, remove() {}, contains: () => false }; }
+  append(...nodes) { for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = this; this.children.push(n); } }
+  insertBefore(node, ref) { const i = this.children.indexOf(ref); if (node && typeof node === 'object') node.parentElement = this;
+    if (i < 0) this.children.push(node); else this.children.splice(i, 0, node); return node; }
+  after(...nodes) { const p = this.parentElement; if (!p) return; const i = p.children.indexOf(this) + 1;
+    for (const n of nodes) { if (n && typeof n === 'object') n.parentElement = p; p.children.splice(i, 0, n); } }
+  remove() { const p = this.parentElement; if (!p) return; const i = p.children.indexOf(this); if (i >= 0) p.children.splice(i, 1); this.parentElement = null; }
+  replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   setAttribute() {}
+  closest() { return null; }
   addEventListener(name, fn) { this.listeners[name] = fn; }
-  querySelectorAll(tag) { return this.children.flatMap(c => [ ...(c.tag === tag ? [c] : []), ...c.querySelectorAll(tag)]); }
+  dispatchEvent() {}
+  querySelectorAll(tag) { return this.children.flatMap(c => [ ...(c?.tag === tag ? [c] : []), ...(c?.querySelectorAll ? c.querySelectorAll(tag) : [])]); }
 }
 const host = new Element('aside');
 globalThis.document = { getElementById: () => host, createElement: tag => new Element(tag), activeElement: null };
 globalThis.window = { showGlobalAlert: message => { throw new Error(message); } };
 const { createCards } = await import(pathToFileURL(process.argv[2]).href);
-const section = { id: 'r', kind: 'hip', ridge: 'x', pitch: 8, plate: 10, overhang: 1 };
+const section = { id: 'r', kind: 'hip', ridge: 'x', rect: [0, 0, 40, 20], pitch: 8, plate: 10, overhang: 1 };
 const plan = { buildings: [{ id: 'b', roof: { sections: [section] } }] };
 let editable = true;
 const edits = [];
@@ -110,7 +128,7 @@ console.log('card end controls passed');
         path = os.path.join(tmp, 'driver.mjs')
         with open(path, 'w', encoding='utf-8') as file:
             file.write(driver)
-        result = subprocess.run(['node', path, module], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(['node', path, module, TWIN, VENDOR], capture_output=True, text=True, timeout=30)
         check(result.returncode == 0, result.stderr)
 
 

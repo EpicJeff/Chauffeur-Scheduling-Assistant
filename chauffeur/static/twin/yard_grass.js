@@ -94,18 +94,20 @@ function prepared(polygon, margin) {
   const rectangle = polygon.length === 4 && polygon.every((p,i) => {
     const q=polygon[(i+1)%4];return p[0]===q[0] || p[1]===q[1];
   });
-  return {polygon, margin, rectangle, x0:Math.min(...xs)-margin, x1:Math.max(...xs)+margin,
+  return {polygon, margin, marginSq: margin*margin, rectangle, x0:Math.min(...xs)-margin, x1:Math.max(...xs)+margin,
     y0:Math.min(...ys)-margin, y1:Math.max(...ys)+margin};
 }
 function contains(p, x, y, border = true) {
   if (x < p.x0 || x > p.x1 || y < p.y0 || y > p.y1) return false;
   if (p.rectangle && border) return true;
   let inside = false;
-  for (let i = 0, j = p.polygon.length-1; i < p.polygon.length; j = i++) {
-    const a = p.polygon[j], b = p.polygon[i], dx = b[0]-a[0], dy = b[1]-a[1];
-    if (border && p.margin) {
+  const poly = p.polygon, len = poly.length, checkMargin = border && p.margin > 0, mSq = p.marginSq;
+  for (let i = 0, j = len-1; i < len; j = i++) {
+    const a = poly[j], b = poly[i], dx = b[0]-a[0], dy = b[1]-a[1];
+    if (checkMargin) {
       const t = Math.max(0, Math.min(1, ((x-a[0])*dx+(y-a[1])*dy)/(dx*dx+dy*dy || 1)));
-      if ((x-a[0]-t*dx)**2+(y-a[1]-t*dy)**2 < p.margin*p.margin) return true;
+      const qx = x-a[0]-t*dx, qy = y-a[1]-t*dy;
+      if (qx*qx+qy*qy < mSq) return true;
     }
     if ((a[1]>y)!==(b[1]>y) && x < dx*(y-a[1])/dy+a[0]) inside = !inside;
   }
@@ -137,9 +139,9 @@ const FT = .3048;
 
 // Match the shader's local-root hash with float32 intermediates. The extra
 // seed margin keeps the CPU prefix conservative across small sin differences.
+const FROUND = Math.fround, SEED_X = FROUND(12.9898), SEED_Z = FROUND(78.233), SEED_M = FROUND(43758.5453);
 export function grassSeed(x,z) {
-  const f=Math.fround;
-  const n=f(f(Math.sin(f(f(f(x)*f(12.9898))+f(f(z)*f(78.233)))))*f(43758.5453));
+  const n=FROUND(FROUND(Math.sin(FROUND(FROUND(FROUND(x)*SEED_X)+FROUND(FROUND(z)*SEED_Z))))*SEED_M);
   return n-Math.floor(n);
 }
 export function grassKeep(distance) {
@@ -161,7 +163,7 @@ export function splitGrassTiles(matrices,lotArea) {
   const seeds=new Float32Array(count);
   for(let i=0;i<count;i++){
     const x=matrices[i*16+12],z=matrices[i*16+14];
-    x0=Math.min(x0,x);x1=Math.max(x1,x);z0=Math.min(z0,z);z1=Math.max(z1,z);
+    if(x<x0)x0=x;if(x>x1)x1=x;if(z<z0)z0=z;if(z>z1)z1=z;
     seeds[i]=grassSeed(x,z);
   }
   let size=Math.max(GRASS_TILE_MIN_METRES/FT,Math.sqrt(lotArea/GRASS_TILE_TARGET));
@@ -179,10 +181,10 @@ export function splitGrassTiles(matrices,lotArea) {
     for(let i=0;i<count;i++){const index=order[i];scratch[buckets[(bits[index]>>>shift)&65535]++]=index;}
     [order,scratch]=[scratch,order];
   }
-  const nz=Math.floor((z1-z0)/size)+1,nx=Math.floor((x1-x0)/size)+1;
+  const invSize=1/size,nz=Math.floor((z1-z0)*invSize)+1,nx=Math.floor((x1-x0)*invSize)+1;
   const ids=new Uint16Array(count),sizes=new Uint32Array(nx*nz);
   for(let i=0;i<count;i++){
-    const key=Math.floor((matrices[i*16+12]-x0)/size)*nz+Math.floor((matrices[i*16+14]-z0)/size);
+    const key=Math.floor((matrices[i*16+12]-x0)*invSize)*nz+Math.floor((matrices[i*16+14]-z0)*invSize);
     ids[i]=key;sizes[key]++;
   }
   const bins=Array.from(sizes,n=>new Uint32Array(n));sizes.fill(0);
@@ -403,6 +405,7 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
       for(let bx=bx0;bx<=bx1;bx++)for(let by=by0;by<=by1;by++)bins[bx*16+by].push(p);
     }
   };
+  const invW = 16 / w, invH = 16 / h;
   // Share of full blade height a root at this point grows to; 0 where none grows.
   const grows = (x,y) => {
     let rim = 1;
@@ -417,11 +420,12 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
       if (d >= SKIRT) return 0;
       rim = 1-d/SKIRT;
     }
-    const nearby=bins[Math.min(15,Math.floor((x-lot.x0)*16/w))*16+Math.min(15,Math.floor((y-lot.y0)*16/h))];
-    for (const p of nearby) if (contains(p,x,y)) return 0;
+    const bx = Math.floor((x-lot.x0)*invW), by = Math.floor((y-lot.y0)*invH);
+    const nearby=bins[(bx<15?bx:15)*16+(by<15?by:15)];
+    for (let i=0;i<nearby.length;i++) if (contains(nearby[i],x,y)) return 0;
     // The ground goes on past the skirt bare, so the blades shorten across it
     // rather than stopping as a wall.
-    return .35+.65*rim*rim*(3-2*rim);
+    return rim === 1 ? 1 : .35+.65*rim*rim*(3-2*rim);
   };
   // The budget is what grows, not the lot's bounding box: a coarse sample finds
   // the open share, rounded up to sixteenths so that moving a feature within the
@@ -442,15 +446,33 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
   const joints = jointClumps(plan,spread,budget,raw), jointCount = joints.length/16, fieldBudget = budget-jointCount;
   let seed = 0;
   for (const p of polygon) for (const n of p) seed = (Math.imul(seed,31)+Math.round(n*100))|0;
-  const matrices = new Float32Array((Math.min(nx*ny,fieldBudget)+jointCount)*16), pads = (plan.site.terraces || []).map(p => prepared(p.polygon,p.blend ?? 6));
+  const matrices = new Float32Array((Math.min(nx*ny,fieldBudget)+jointCount)*16);
+  const pads = (plan.site.terraces || []).map(p => {
+    const prep = prepared(p.polygon, p.blend ?? 6);
+    return { ...prep, height: p.height, rx0: prep.x0 + prep.margin, rx1: prep.x1 - prep.margin,
+      ry0: prep.y0 + prep.margin, ry1: prep.y1 - prep.margin };
+  });
+  const padCount = pads.length, singleRectPad = padCount === 1 && pads[0].rectangle ? pads[0] : null;
+  const stepX = w / nx, stepY = h / ny;
   let count = 0;
   for (let ix = 0; ix < nx && count < fieldBudget; ix++) for (let iy = 0; iy < ny && count < fieldBudget; iy++) {
     const id = (Math.imul(ix,73856093)^Math.imul(iy,19349663)^seed)|0;
     const r = hash(id), s = hash(id+1);
-    const x = lot.x0+(ix+.2+.6*r)*w/nx, y = lot.y0+(iy+.2+.6*s)*h/ny;
+    const x = lot.x0+(ix+.2+.6*r)*stepX, y = lot.y0+(iy+.2+.6*s)*stepY;
     const short = grows(x,y);
     if (!short) continue;
-    const height = pads.some(p => x>=p.x0&&x<=p.x1&&y>=p.y0&&y<=p.y1) ? groundAt(plan,x,y) : 0;
+    let height = 0;
+    if (singleRectPad) {
+      if (x>=singleRectPad.x0&&x<=singleRectPad.x1&&y>=singleRectPad.y0&&y<=singleRectPad.y1) {
+        height = x>=singleRectPad.rx0&&x<=singleRectPad.rx1&&y>=singleRectPad.ry0&&y<=singleRectPad.ry1
+          ? singleRectPad.height : groundAt(plan,x,y);
+      }
+    } else if (padCount) {
+      for (let pi=0;pi<padCount;pi++) {
+        const p=pads[pi];
+        if (x>=p.x0&&x<=p.x1&&y>=p.y0&&y<=p.y1) { height = groundAt(plan,x,y); break; }
+      }
+    }
     const a = r*Math.PI*2, c = Math.cos(a)*spread, sn = Math.sin(a)*spread, scale = (.68+.42*s)*short, k = count++*16;
     matrices[k]=c; matrices[k+2]=-sn; matrices[k+5]=scale; matrices[k+8]=sn; matrices[k+10]=c;
     matrices[k+12]=x; matrices[k+13]=height-.04; matrices[k+14]=-y; matrices[k+15]=1;
@@ -467,10 +489,13 @@ export function buildGrass(plan, kit, tier, source, fringeCount = 0) {
     const tile=new THREE.InstancedMesh(geometry,material,0),packed=new Float32Array(indices.length*16),flags=new Float32Array(indices.length*3);
     let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity,z0=Infinity,z1=-Infinity;
     for(let j=0;j<indices.length;j++){
-      const i=indices[j];for(let k=0;k<16;k++)packed[j*16+k]=matrices[i*16+k];
+      const i=indices[j],s=i*16,d=j*16;
+      packed[d]=matrices[s];packed[d+2]=matrices[s+2];packed[d+5]=matrices[s+5];
+      packed[d+8]=matrices[s+8];packed[d+10]=matrices[s+10];
+      const x=matrices[s+12],y=matrices[s+13],z=matrices[s+14];
+      packed[d+12]=x;packed[d+13]=y;packed[d+14]=z;packed[d+15]=matrices[s+15];
       flags[j*3]=1;flags[j*3+1]=seeds[j];flags[j*3+2]=i<fieldCount?1:0;
-      const x=matrices[i*16+12],y=matrices[i*16+13],z=matrices[i*16+14];
-      x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);z0=Math.min(z0,z);z1=Math.max(z1,z);
+      if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;if(z<z0)z0=z;if(z>z1)z1=z;
     }
     tile.instanceMatrix=new THREE.InstancedBufferAttribute(packed,16);tile.count=indices.length;
     tile.instanceColor=new THREE.InstancedBufferAttribute(flags,3);

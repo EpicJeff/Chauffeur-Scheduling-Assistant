@@ -236,11 +236,40 @@ def test_op_and_state_responses_identical_with_cache():
     old = json.loads(gzip.decompress(GOLDEN.read_bytes()))
     new, _ = capture()
     assert len(old) == len(new) >= 8
+    round1_model = new[-1]['state']['model']  # corpus()[-1] reverts to round 1
+    round1_plan = new[-1]['state']['plan']
     for expected, actual in zip(old, new):
-        # The sole intentional full-state API extension; all old fields and
-        # their serialized order/float/Unicode representation remain identical.
+        # Intentional post-v2.499.850 API extensions; all old fields and their
+        # serialized order/float/Unicode representation remain identical.
         current_round = actual['state'].pop('current_round')
         assert current_round == actual['state']['rounds'][-1]['id']
+        stage = actual['state'].pop('stage')  # faaae672 (v2.499.914)
+        assert isinstance(stage, dict) and 'centre' in stage and 'radius' in stage
+        actual['state']['site'].pop('front_bearing_source', None)  # 3a89f573 (v2.499.908)
+        for container in (actual['op'], actual['state']):
+            plan = container.get('plan')
+            if isinstance(plan, dict):
+                for b in plan.get('buildings', []):
+                    for sec in (b.get('roof') or {}).get('sections', []):
+                        sec.pop('plane_edges', None)  # c21296c9 (v2.499.948)
+        if actual['kind'] == 'set_material':
+            # 8389a950 (v2.499.948): material-only edits preserve Round 1 room polygons so bake charts stay fresh.
+            assert actual['state']['model'] == actual['op']['model']
+            assert actual['state']['plan'] == actual['op']['plan']
+            for b_act, b_r1 in zip(actual['op']['model']['buildings'], round1_model['buildings']):
+                assert [r['polygon'] for r in b_act['rooms']] == [r['polygon'] for r in b_r1['rooms']]
+            for b_act, b_r1 in zip(actual['op']['plan']['buildings'], round1_plan['buildings']):
+                assert [r['polygon'] for r in b_act['rooms']] == [r['polygon'] for r in b_r1['rooms']]
+                assert [p['polygon'] for p in b_act.get('porches', [])] == [p['polygon'] for p in b_r1.get('porches', [])]
+            for container_a, container_e in ((actual['op'], expected['op']), (actual['state'], expected['state'])):
+                for ba, be in zip(container_a['model']['buildings'], container_e['model']['buildings']):
+                    for ra, re_ in zip(ba['rooms'], be['rooms']):
+                        ra['polygon'] = re_['polygon']
+                for ba, be in zip(container_a['plan']['buildings'], container_e['plan']['buildings']):
+                    for ra, re_ in zip(ba['rooms'], be['rooms']):
+                        ra['polygon'] = re_['polygon']
+                    for pa, pe in zip(ba.get('porches', []), be.get('porches', [])):
+                        pa['polygon'] = pe['polygon']
         assert encoded(actual) == encoded(expected), actual['kind']
 
 
@@ -375,6 +404,29 @@ def test_lean_state_omits_plan_model_only_when_round_matches():
         ts.start_over()
         empty = c.client.get(STATE, params={'have_round': rid}, headers=c.mum).json()
         assert empty['current_round'] is None and empty['plan'] is None and empty['model'] is None
+
+
+def test_lean_state_stage_updates_after_edit():
+    from services import twin_stage
+    with house() as c:
+        before = c.client.get(STATE, headers=c.mum).json()
+        building = before['model']['buildings'][0]
+        moved = c.client.post(OP, headers=c.mum, json={'op': {
+            'op': 'move_building', 'building': building['id'], 'to': [250, -180]}}).json()
+        new_round = moved['round']
+        assert new_round != before['current_round']
+        # A lean poll immediately after the edit (before any full state fetch on the new round)
+        # must return the new round's stage, never the cached pre-edit stage.
+        lean = c.client.get(STATE, params={'have_round': new_round}, headers=c.mum).json()
+        expected = twin_stage.default_stage(ts.current())
+        assert 'plan' not in lean and 'model' not in lean
+        assert lean['stage']['centre'] == expected['centre'] and lean['stage']['radius'] == expected['radius']
+        assert lean['stage']['centre'] != before['stage']['centre']
+        # Subsequent lean polls on the same round hit the cache without re-reading the house.
+        with counted() as counts:
+            lean_again = c.client.get(STATE, params={'have_round': new_round}, headers=c.mum).json()
+        assert lean_again['stage'] == lean['stage']
+        assert counts['current'] == counts['current_model'] == 0, counts
 
 
 if __name__ == '__main__':
