@@ -15,16 +15,16 @@ _SINGLE = frozenset(('roof', 'porch', 'pool', 'fire_pit', 'fence'))
 # display strings. geometry_key.js also removes name/label/notes; reach.js reads
 # positions, dimensions and physical materials, not display text.
 _DISPLAY = frozenset(('name', 'label', 'notes'))
-# editor/visibility.js keeps hide/lock in localStorage; twin_view.js's detached
-# bake source is viewer-shaped and excludes editor visibility/selection. These
-# flags on authored records likewise have no generator/bake consumer. Do NOT
-# drop ha_display: hiding a HA light can change the live light catalogue.
-_EDITOR = frozenset(('hidden', 'locked'))
+# hidden/locked are deliberately NOT excluded. Editor hide/lock lives in
+# localStorage (editor/visibility.js) and never reaches a round, so excluding
+# them guards nothing today; a future model flag of that name could remove
+# geometry, and then a silent exclusion would say "up to date" wrongly.
+# Do NOT drop ha_display either: hiding a HA light can change the live lights.
 # src is drafting/person provenance. flatten() uses src.person to mirror roof
 # choices for legacy cards; active sections supply geometry, and atlas authored
 # identity explicitly excludes those mirrored choices. Neither generator nor
 # reach reads src. A rename also marks its record person-owned via twin_edit.
-_NEUTRAL = _DISPLAY | _EDITOR | {'src'}
+_NEUTRAL = _DISPLAY | {'src'}
 _CHILDREN = _PIECES | _SINGLE
 _CONTEXTS = {
     'model': {'buildings': 'building', 'site': 'site'},

@@ -16,8 +16,12 @@ def test_content():
     model = json.loads(FIXTURE.read_text(encoding='utf8'))
     original = deepcopy(model)
     baked = fingerprint(model)
+    for field in ('hidden', 'locked'):
+        changed = deepcopy(model)
+        changed['buildings'][0]['walls'][0][field] = True
+        assert fingerprint(changed) != baked, ('a model flag of this name could remove geometry', field)
     for field, value in [('name', 'Renamed'), ('label', 'Display label'), ('notes', ['A note']),
-                         ('hidden', True), ('locked', True), ('src', {'person': True})]:
+                         ('src', {'person': True})]:
         changed = deepcopy(model)
         changed['buildings'][0][field] = value
         assert fingerprint(changed) == baked, field
@@ -96,6 +100,24 @@ def test_rounds_and_http():
                                      'reg': {'offset': [100, 200], 'rotation': 90}}]
             ts._save(row)
         assert fingerprint(ts.current_model()) == baked
+        # Relevance on the stored (schema-3) model shape, not only the flat fixture.
+        stored = ts.current_model()
+        b0 = stored['buildings'][0]
+        real = {
+            'joint': lambda m: m['buildings'][0]['joints'][0]['at'].__setitem__(0, m['buildings'][0]['joints'][0]['at'][0] + 1),
+            'opening width': lambda m: next(o for b in m['buildings'] for o in b.get('openings') or []).__setitem__(
+                'width', next(o for b in m['buildings'] for o in b.get('openings') or []).get('width', 3) + 1),
+            'roof pitch': lambda m: (lambda r: r.__setitem__('pitch', (r.get('pitch') or 6) + 1))(next(r for b in m['buildings'] for r in b.get('roofs') or [])),
+            'terrace': lambda m: m['site'].setdefault('terraces', []).append(
+                {'id': 't-new', 'polygon': [[0, 0], [5, 0], [5, 5]], 'height': 2}),
+            'wall material': lambda m: m['buildings'][0]['walls'][0].__setitem__('material', {'id': 'other-siding'}),
+            'building material': lambda m: m['buildings'][0].__setitem__('materials', {'siding': {'id': 'other'}}),
+        }
+        assert b0.get('joints') and b0.get('walls'), sorted(b0)
+        for label, mutate in real.items():
+            changed = deepcopy(stored)
+            mutate(changed)
+            assert fingerprint(changed) != baked, ('stored model', label)
         changed = ts.current_model()
         changed['buildings'][0]['joints'][0]['at'][0] += 1
         moved = ts.update_model(lambda _: changed)
