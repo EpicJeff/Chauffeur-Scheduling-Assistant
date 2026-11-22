@@ -1,6 +1,7 @@
 """Tool arbitration through real scene tools, library, lot, handles and CPU rays.
 
-No browser is started; OrbitControls is the existing CPU harness double.
+No browser is started; eight camera-binding cases use vendored OrbitControls,
+and the other cases keep the existing CPU harness double.
 """
 import json
 import os
@@ -21,6 +22,7 @@ const {createSceneTools} = await import(file('static/twin/editor/scene_tools.js'
 const {createLibrary} = await import(file('static/twin/editor/library.js'));
 const {createTerrainTools} = await import(file('static/twin/editor/terrain_tools.js'));
 const {createLotTools} = await import(file('static/twin/editor/lot_tools.js'));
+const {OrbitControls: RealOrbitControls} = await import(file('static/vendor/three-r187/addons/controls/OrbitControls.js'));
 const nodes = new Map(), doc = new Element();
 const shell = new Element(), descendants = n => n.children.flatMap(c=>[c,...descendants(c)]);
 Element.prototype.getAttribute = function(k) { return this[k]; };
@@ -111,6 +113,59 @@ async function test(name, body) {
   catch(error){failed++;console.error('  FAIL '+name+'\n'+error.stack);}
   finally {abort.abort();delete flat.site.terraces;await tick();view.dispose();}
 }
+// Opt in only the eight cases whose former left-navigation assertions changed.
+// Keep the other 38 cases and their controls double untouched. The real controls
+// consume the production editor's mouse map and enabled/target state. This small
+// EventTarget DOM has no bubbling, so explicitly forward mouse moves to document.
+async function cameraBindings({view,tools,fire,ops}, body) {
+  const canvas=view.renderer3.domElement, controls=view.controls, owner=canvas.ownerDocument;
+  canvas.ownerDocument=doc;
+  const real=new RealOrbitControls(view.camera,canvas);
+  real.target=controls.target;real.mouseButtons=controls.mouseButtons;
+  real.maxPolarAngle=controls.maxPolarAngle;real.enableDamping=false;
+  Object.defineProperty(real,'enabled',{get:()=>controls.enabled});real.update();
+  function mouse(type,p,button=0) {
+    const extra={pointerType:'mouse',button:type==='pointermove'?-1:button,
+      buttons:type==='pointerup'?0:button===2?2:button===1?4:1};
+    fire(type,p,button,extra);
+    if(type==='pointermove') {
+      const event=new Event(type);Object.assign(event,{pointerId:1,clientX:p[0],clientY:p[1],...extra});doc.dispatchEvent(event);
+    }
+  }
+  async function navigate(p,button=2) {
+    const position=view.camera.position.clone(),target=controls.target.clone(),rotation=view.camera.quaternion.clone();
+    const members=tools.selectionStore.members(),count=ops.length;
+    mouse('pointerdown',p,button);assert.equal(controls.enabled,true);
+    mouse('pointermove',[p[0]+40,p[1]],button);mouse('pointerup',[p[0]+40,p[1]],button);await tick();
+    assert.ok(view.camera.position.distanceTo(position)>1e-5,'navigation actually moves the camera');
+    if(button===2) {
+      assert.ok(view.camera.quaternion.angleTo(rotation)>1e-5,'right-drag actually orbits');
+      assert.ok(controls.target.distanceTo(target)<1e-8,'right-drag retains its pivot');
+    } else {
+      assert.ok(view.camera.quaternion.angleTo(rotation)<1e-7,'middle-drag pans without rotating');
+      assert.ok(view.camera.position.clone().sub(position).distanceTo(controls.target.clone().sub(target))<1e-8,'middle-drag carries the pivot');
+    }
+    assert.deepEqual(tools.selectionStore.members(),members,'navigation retains selection');assert.equal(ops.length,count);
+    // Restore the camera so the next gesture addresses the same body pixel.
+    view.setCameraState({position:position.toArray(),target:target.toArray()});real.update();
+  }
+  async function marquee(p) {
+    const position=view.camera.position.clone(),target=controls.target.clone(),rotation=view.camera.quaternion.clone();
+    const before=JSON.stringify(flat),count=ops.length;
+    mouse('pointerdown',p);mouse('pointermove',[p[0]+40,p[1]]);
+    assert.equal(controls.enabled,false,'left drag belongs to the marquee');
+    assert.ok(doc.getElementById('editor-drag-outline').getAttribute('points'),'left drag draws the marquee');
+    mouse('pointerup',[p[0]+40,p[1]]);await tick();
+    assert.ok(view.camera.position.distanceTo(position)<1e-8,'left never translates the camera');
+    assert.ok(controls.target.distanceTo(target)<1e-8,'left never pans the pivot');
+    assert.ok(view.camera.quaternion.angleTo(rotation)<1e-7,'left never rotates the camera');
+    assert.deepEqual(tools.selectionStore.members(),[],'a zero-height marquee replaces selection with its empty result');
+    assert.equal(doc.getElementById('editor-drag-outline').getAttribute('points'),'');
+    assert.equal(controls.enabled,true);assert.equal(ops.length,count);assert.equal(JSON.stringify(flat),before);
+  }
+  try {await body({orbit:p=>navigate(p),pan:p=>navigate(p,1),marquee});}
+  finally {real.dispose();canvas.ownerDocument=owner;}
+}
 await test('pad_corner_wins_over_tree',async({view,tools,library,terrain,ops,look,fire,ordinaryPresses})=>{
   flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
   look([200,200,0]);terrain.choose('terraces','pad:gesture');
@@ -192,11 +247,13 @@ await test('armed_modes_then_first_handle_source_own_the_press',async({view,tool
 });
 await test('unselected_press_navigates',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   look([200,200,0]);const p=pixel([200,200,0]), before=JSON.stringify(flat);
-  fire('pointerdown',p);assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
-  fire('pointermove',[p[0]+40,p[1]]);assert.equal(view.controls.enabled,true);
-  fire('pointerup',[p[0]+40,p[1]]);await tick();
-  assert.equal(ops.length,0);assert.equal(tools.selection().id,null);
-  assert.ok(controlStates.every(Boolean));assert.equal(JSON.stringify(flat),before);
+  await cameraBindings({view,tools,fire,ops},async({orbit,pan,marquee})=>{
+    await orbit(p);assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
+    await pan(p);assert.equal(view.controls.enabled,true);
+    assert.equal(ops.length,0);assert.equal(tools.selection().id,null);
+    assert.ok(controlStates.every(Boolean));assert.equal(JSON.stringify(flat),before);
+    await marquee(p);
+  });
 });
 await test('jitter_under_threshold_is_a_click',async({tools,ops,look,pixel,fire})=>{
   look([200,200,0]);const p=pixel([200,200,0]);
@@ -209,9 +266,12 @@ await test('selected_wall_body_does_not_move_with_select_tool',async({view,tools
   const p=pixel([...point,0],building);
   assert.equal(view.pick(...p)?.id,W,'press is on the actual wall');
   assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false,'body press is outside the drawn end and middle handles');
-  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);await tick();
-  assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(view.controls.enabled,true);
-  assert.equal(tools.selection().id,W);
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);
+    assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(view.controls.enabled,true);
+    assert.equal(tools.selection().id,W);
+    await marquee(p);
+  });
 });
 await test('selected_wall_handle_still_moves',async({view,tools,ops,look,pixel,fire,ready})=>{
   view.setView(B+':L1');tools.select({kind:'wall',id:W,building:B});await ready();
@@ -274,10 +334,12 @@ await test('yard_click_refreshes_its_selection_outline',async({view,look,pixel,c
 });
 await test('move_tool_unselected_press_navigates',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   look([200,200,0]);tools.setTool('move');const p=pixel([200,200,0]),before=JSON.stringify(flat);
-  fire('pointerdown',p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
-  fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);await tick();
-  assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
-  assert.equal(JSON.stringify(flat),before);
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
+    assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
+    assert.equal(JSON.stringify(flat),before);
+    await marquee(p);
+  });
 });
 await test('move_tool_click_then_drag_moves',async({view,tools,ops,look,pixel,fire,click})=>{
   look([200,200,0]);tools.setTool('move');const p=pixel([200,200,0]);
@@ -388,17 +450,22 @@ await test('rotate_tool_needs_selection_first',async({view,tools,ops,controlStat
   view.setView('ext');tools.setTool('rotate');
   const point=wall.from.map((v,i)=>v*.8+wall.to[i]*.2);look([...point,0],building,40);
   const p=pixel([...point,0],building),before=JSON.stringify(flat);assert.equal(view.pick(...p)?.building,B);
-  fire('pointerdown',p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
-  fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);await tick();
-  assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
-  assert.equal(JSON.stringify(flat),before);
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
+    assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
+    assert.equal(JSON.stringify(flat),before);
+    await marquee(p);
+  });
 });
 await test('move_tool_other_selection_does_not_grab_tree',async({view,tools,ops,controlStates,look,pixel,fire,click})=>{
   tools.select({kind:'building',id:B,building:B});tools.setTool('move');look([200,200,0]);
   const p=pixel([200,200,0]);
-  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);
-  assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
-  click(p);assert.equal(tools.selection().id,'tree:gesture');assert.equal(view.controls.enabled,true);
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);
+    assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
+    await marquee(p);
+    click(p);assert.equal(tools.selection().id,'tree:gesture');assert.equal(view.controls.enabled,true);
+  });
 });
 await test('move_and_rotate_do_not_grab_a_building_through_an_unselected_tree',async({view,tools,library,ops,controlStates,look,pixel,fire})=>{
   view.setView('ext');tools.select({kind:'building',id:B,building:B});
@@ -408,20 +475,28 @@ await test('move_and_rotate_do_not_grab_a_building_through_an_unselected_tree',a
   flat.site.planting.push({id:'tree:in-front',kind:'tree',at:[hit.point[0]/.3048,-hit.point[2]/.3048],height:hit.point[1]/.3048+2});
   try {
     assert.equal(library.pickSite(...p)?.id,'tree:in-front','real tree box is in front of the building body');
-    for(const tool of ['move','rotate']) {
-      tools.setTool(tool);fire('pointerdown',p);
-      assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,B);
-      fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);
-      assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
-    }
+    await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+      for(const tool of ['move','rotate']) {
+        tools.setTool(tool);
+        assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,B);
+        await orbit(p);
+        assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
+      }
+      for(const tool of ['move','rotate']) {
+        tools.setTool(tool);await marquee(p);
+      }
+    });
   } finally {flat.site.planting.pop();}
 });
 await test('rotate_tool_yard_body_selects_but_never_moves',async({view,tools,ops,controlStates,look,pixel,fire,click})=>{
   tools.setTool('rotate');look([200,200,0]);const p=pixel([200,200,0]);
   click(p);assert.equal(tools.selection().id,'tree:gesture');
   assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false);
-  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);
-  assert.equal(ops.length,0);assert.equal(tools.selection().id,'tree:gesture');assert.ok(controlStates.every(Boolean));
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);
+    assert.equal(ops.length,0);assert.equal(tools.selection().id,'tree:gesture');assert.ok(controlStates.every(Boolean));
+    await marquee(p);
+  });
 });
 await test('move_tool_jitter_selects_then_body_jitter_sends_nothing',async({view,tools,ops,look,pixel,fire})=>{
   tools.setTool('move');look([200,200,0]);const p=pixel([200,200,0]);
@@ -438,8 +513,11 @@ await test('selected_room_body_does_not_move_with_select_tool',async({view,tools
   const ps=room.polygon.flatMap(vertex=>[.3,.5,.7].map(t=>vertex.map((v,i)=>v*(1-t)+centre[i]*t)));
   const p=ps.map(point=>pixel([...point,0],building)).find(p=>view.pick(...p)?.id===room.id&&!tools.handleAt({clientX:p[0],clientY:p[1]}));
   assert.ok(p,'actual room floor away from drawn handles exists');
-  fire('pointerdown',p);fire('pointermove',[p[0]+40,p[1]]);fire('pointerup',[p[0]+40,p[1]]);await tick();
-  assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(tools.selection().id,room.id);
+  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await orbit(p);
+    assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(tools.selection().id,room.id);
+    await marquee(p);
+  });
 });
 await test('site_source_keeps_occluded_hits_but_legacy_wrapper_respects_the_house',async({view,tools,library,look,pixel})=>{
   const mid=wall.from.map((v,i)=>(v+wall.to[i])/2), a=(building.rotation||0)*Math.PI/180, pos=building.position||[0,0];

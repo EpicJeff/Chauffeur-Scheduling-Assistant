@@ -1,6 +1,7 @@
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mountEditorCamera } from './editor/camera_controls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles } from './twin_generator.js';
 import { span as editSpan } from './edit_timing.js';
@@ -1623,6 +1624,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
       renderer3.setAnimationLoop(null); view.looping = false; observer.disconnect(); controls.dispose();
+      view.editorCamera?.dispose();
       clearSheet(); sheetSpec = null;
       restoreSelection();
       restoreFloors();
@@ -1842,6 +1844,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     levelVisibility() { return Object.fromEntries(Object.entries(twin?.groups.levels || {}).map(([key, group]) => [key, group.visible])); },
   });
   window.__twin = view;
+  if (editor) view.editorCamera = mountEditorCamera(view, el);
   resize();
   try {
     await view.rebuild(plan);
@@ -1878,7 +1881,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       if (view.idle?.active()) view.idle.frame(now);
-      else if (!view.cameraTransition) controls.update();
+      else if (!view.cameraTransition) {
+        view.editorCamera?.frame(now);
+        controls.update();
+      }
       const drawn = view.meter ? performance.now() : 0;
       render();
       // Captures belong only to animation frames, never synchronous editor

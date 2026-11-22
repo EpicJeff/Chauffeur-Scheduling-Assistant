@@ -692,9 +692,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       gesture = { x: event.clientX, y: event.clientY, pointerId, marquee: true, enabled: controlsBeforePress };
       ownsGesture = true; event.stopImmediatePropagation(); return;
     }
-    // Unselected bodies are passive presses with every scene tool: release
-    // selects, crossing the threshold leaves the gesture to OrbitControls.
-    gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true };
+    // A passive piece press still clicks/selects. In the editor a mouse drag
+    // starts a marquee at the threshold point; touch keeps its camera path.
+    gesture = { x: event.clientX, y: event.clientY, pointerId, selecting: true, enabled: controlsBeforePress };
     if (!body?.building) return;
     onInteract?.();
     const anchor = pieceAnchor(body); if (!anchor) return;
@@ -717,7 +717,14 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!gesture?.dragging && delegate?.pointerMove?.(event)) return;
     if (!gesture || gesture.delegated) return;
     if (gesture.selecting) {
-      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) gesture.moved = true;
+      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) >= DRAG_THRESHOLD_PX) {
+        gesture.moved = true;
+        if (view.editorCamera && event.pointerType !== 'touch' && !gesture.measuring && !gesture.addRoom
+          && marquee.pointerDown(event, { fromPiece: true })) {
+          gesture.enabled = controlsBeforePress;
+          gesture.marquee = true; ownsGesture = true; event.stopImmediatePropagation();
+        }
+      }
       return;
     }
     if (gesture.dragging) {

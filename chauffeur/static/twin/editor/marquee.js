@@ -62,10 +62,11 @@ export function createMarquee({ view, selection, visibility, getPlan, isEmpty = 
     return matched;
   }
 
-  function pointerDown(event) {
-    if (!event || event.pointerType === 'touch' || (event.button !== undefined && event.button !== 0)) return false;
+  function pointerDown(event, { fromPiece = false } = {}) {
+    // A piece hands off on pointermove, whose button is -1 in browsers.
+    if (!event || event.pointerType === 'touch' || (!fromPiece && event.button !== undefined && event.button !== 0)) return false;
     if (press) cancel();
-    if (typeof isEmpty === 'function' && !isEmpty(event)) return false;
+    if (!fromPiece && typeof isEmpty === 'function' && !isEmpty(event)) return false;
     press = {
       x: event.clientX,
       y: event.clientY,
@@ -74,10 +75,11 @@ export function createMarquee({ view, selection, visibility, getPlan, isEmpty = 
       pointerId: event.pointerId ?? null,
       add: !!(event.ctrlKey || event.metaKey),
       remove: !!event.altKey,
-      active: false,
+      active: fromPiece,
       controlsEnabled: view?.controls?.enabled ?? true,
     };
     if (view?.controls) view.controls.enabled = false;
+    if (fromPiece) drawOverlay(event.clientX, event.clientY, event.clientX, event.clientY);
     if (press.pointerId !== null && canvas?.setPointerCapture) {
       try { canvas.setPointerCapture(press.pointerId); } catch { /* Detached canvas in unit test. */ }
     }
