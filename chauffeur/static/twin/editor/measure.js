@@ -78,6 +78,7 @@ export function createMeasure({ view, getPlan, layer }) {
     return snapped.point;
   }
   function down(event) {
+    if (view.editorCamera && event.pointerType !== 'touch' && event.altKey) return;
     if (!armed || event.button !== 0 || points.length === 2) return;
     if (press && press.id !== event.pointerId) { press = null; pinching = true; return; }
     if (!pinching) press = { x: event.clientX, y: event.clientY, id: event.pointerId, moved: false };

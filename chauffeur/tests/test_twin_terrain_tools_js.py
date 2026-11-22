@@ -300,7 +300,7 @@ tools.delegate({handleSources:[terrain],pointerArmedDown:event=>terrain.pointerA
   pointerDown:terrain.pointerDown,pointerMove:terrain.pointerMove,pointerUp:terrain.pointerUp});
 const tick=()=>new Promise(r=>setTimeout(r,0)),canvas=view.renderer3.domElement;
 const pixel=(p,height=0)=>{const v=new THREE.Vector3(p[0]*.3048,height*.3048,-p[1]*.3048).project(view.camera);return [(v.x+1)*720,(1-v.y)*450];};
-const fire=(type,p)=>{const e=new Event(type);Object.assign(e,{button:0,pointerId:1,clientX:p[0],clientY:p[1],buttons:type==='pointerdown'?1:0});canvas.dispatchEvent(e);};
+const fire=(type,p,extra={})=>{const e=new Event(type);Object.assign(e,{button:0,pointerId:1,clientX:p[0],clientY:p[1],buttons:type==='pointerdown'?1:0,...extra});canvas.dispatchEvent(e);};
 let passed=0,failed=0;
 async function test(name,body){try{terrain.cancel();tools.select(null);await body();passed++;console.log('  ok '+name);}catch(error){failed++;console.error('  FAIL '+name+'\n'+error.stack);}finally{fire('pointercancel',[0,0]);}}
 plan.site.terraces=[{id:'pick-pad',polygon:[[15,15],[25,15],[25,25],[15,25]],height:2,blend:0}];
@@ -328,6 +328,15 @@ await test('armed_pad_drawing_keeps_its_press',async()=>{
   terrain.startDrawing('terraces');const p=pixel([30,30]);fire('pointerdown',p);
   assert.equal(view.controls.enabled,false);fire('pointerup',p);assert.equal(view.controls.enabled,true);
   assert.equal(terrain.handles().length,0);assert.equal(ops.length,0);
+});
+await test('alt_pad_drag_navigates_but_alt_click_still_removes_a_corner',async()=>{
+  terrain.choose('terraces','pick-pad');let p=terrain.handles()[0].screen;const before=ops.length,shape=structuredClone(plan.site.terraces[0]);
+  fire('pointerdown',p,{altKey:true});assert.equal(view.controls.enabled,true);
+  fire('pointermove',[p[0]+20,p[1]],{altKey:true});fire('pointermove',p,{altKey:true});fire('pointerup',p,{altKey:true});await tick();
+  assert.equal(ops.length,before);assert.deepEqual(plan.site.terraces[0],shape);
+  p=terrain.handles()[0].screen;fire('pointerdown',p,{altKey:true});assert.equal(ops.length,before,'removal waits for a click release');
+  fire('pointerup',p,{altKey:true});await tick();assert.equal(ops.length,before+1);assert.equal(ops.at(-1).op,'update_pad');
+  assert.equal(plan.site.terraces[0].polygon.length,3);assert.equal(view.controls.enabled,true);
 });
 abort.abort();view.dispose();console.log(`${passed}/${passed+failed} pad picking tests passed`);if(failed)process.exitCode=1;
 """
