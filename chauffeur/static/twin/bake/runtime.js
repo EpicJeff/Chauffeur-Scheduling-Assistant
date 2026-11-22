@@ -7,14 +7,15 @@ import { loadAtlas, lightmapUniforms, applyChartIndices, chartLightmapUniforms, 
 import { lightSource } from './reach.js';
 import { resolveEmitters, emitterSignature, lightMarkers } from '../live/emitters.js';
 import { kindOf, exactRects } from './fixture_terms.js';
-import { createBaker, bakeLayout } from './baker.js';
+import { createBaker, bakeLayout, realtimeReason } from './baker.js';
 import { mayBake, bakeHTTPError } from './bake_lock.js';
 import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
 import { releaseBakeSource, bakeReceiverRoots } from './source.js';
-import { matchesEntry, pageDamage, cheapSignatures } from './freshness.js';
+import { matchesEntry, pageDamage, cheapSignatures, realtimeCurrent } from './freshness.js';
+import { keyInputs, sameKeyInputs } from './key_inputs.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -604,14 +605,16 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   function editorFreshness(m) {
     const cheap = cheapSignatures(lights, m?.ownership, m?.lights);
     editedRound = !!m && m.round !== (view.round ?? null);
+    const currentInputs = !editedRound && !materialDirty && sameKeyInputs(m?.keyInputs, keyInputs(view));
     fresh.clear();
     for (const l of lights) {
       const e = m?.lights?.[l.device];
-      if (!editedRound && !materialDirty && e?.cheap === cheap[l.device] && (l.kind !== 3 || e.scale > 0) &&
+      if (currentInputs && e?.cheap === cheap[l.device] && (l.kind !== 3 || e.scale > 0) &&
           (e.pages || [e.page]).every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m?.forceRound;
-    stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
+    stale = lights.filter(l => !(currentInputs && !m?.lights?.[l.device] && realtimeCurrent(m, l.device, cheap[l.device])) &&
+      (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
     if (!running) progress = { done: lights.length - stale.length, total: lights.length };
     showProgress();
   }
@@ -689,12 +692,15 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     // An unchanged manifest and every page 304: nothing to rebuild, upload or redraw (I2).
     if (!changed || !valid()) return;
     const previous = [...fresh]; fresh.clear();
+    const currentInputs = !m.keyInputs || sameKeyInputs(m.keyInputs, keyInputs(view));
+    const cheap = cheapSignatures(lights, m.ownership, m.lights);
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
-      if (e && (l.kind !== 3 || e.scale > 0) && matchesEntry(e, stored) && e.pages.every(p => present.has(p))) fresh.add(l.device);
+      if (currentInputs && e && (l.kind !== 3 || e.scale > 0) && matchesEntry(e, stored) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m.forceRound;
-    stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
+    stale = lights.filter(l => !(currentInputs && !packed.entries[l.device] && realtimeCurrent(m, l.device, cheap[l.device], realtimeReason(packed, l.device))) &&
+      (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
     if (mode === 'manual' && !running) progress = { done: lights.length - stale.length, total: lights.length };
     showProgress();
     pageManifest=m;

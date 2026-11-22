@@ -6,7 +6,7 @@ import { bakeSource, bakeReceiverRoots } from './source.js';
 import { bindReceivers } from './bindings.js';
 export { fingerprint } from './geometry_key.js';
 
-const VERSION = 'reach-atlas-12'; // 12: outdoor surfaces at 4/ft (v2.499.964)
+import { ATLAS_VERSION as VERSION } from './key_inputs.js';
 const EPS = 1e-6;
 const prepared = new WeakMap();
 const bankPacking = new WeakMap();

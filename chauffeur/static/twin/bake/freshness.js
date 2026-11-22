@@ -27,3 +27,9 @@ export function cheapSignatures(lights, ownership, entries = {}) {
     return [l.device, h.key()];
   }));
 }
+
+// Current by design, but never a baked light: keep its live pool slot.
+export function realtimeCurrent(manifest, id, cheap, reason = null) {
+  const e = manifest?.realtime?.[id];
+  return !!e && e.cheap === cheap && ['fallback', 'no reach'].includes(e.reason) && (!reason || e.reason === reason);
+}

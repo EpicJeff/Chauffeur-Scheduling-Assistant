@@ -3,6 +3,7 @@ import { packBanks, fingerprint, atlasMesh, heightfieldExtent, prepareReceivers 
 import { authoredGeometry } from './geometry_key.js';
 import { bakeSource, bakeReceiverRoots } from './source.js';
 import { bindReceivers } from './bindings.js';
+import { ATLAS_WORKER_VERSION } from './key_inputs.js';
 
 export function covered(root) {
   const meshes = [];
@@ -39,7 +40,7 @@ export function atlasJob(root, plan, layout) {
   });
   const hash = fingerprint(), uvs = fingerprint();
   // Geometry and room outlines drive the cache. Device movement does not.
-  hash.add('atlas-worker-reach-12'); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify(layout));
+  hash.add(ATLAS_WORKER_VERSION); hash.add(authoredGeometry(plan)); hash.add(JSON.stringify(layout));
   for (const m of meshes) {
     hash.add(JSON.stringify([m.matrix, m.name, m.buildingId]));
     // Graded terrain's grid is tiered; its shape is authored (lot, terraces): one key per house.

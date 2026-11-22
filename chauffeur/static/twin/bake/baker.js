@@ -4,6 +4,7 @@ import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 import { matchesEntry, cheapSignatures } from './freshness.js';
+import { keyInputs, sameKeyInputs } from './key_inputs.js';
 
 export { encodePage, decodePage } from './codec.js';
 
@@ -73,6 +74,12 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     densities: { room: layout.room.density } };
 }
 
+export function realtimeReason(packed, id) {
+  if (packed.entries[id]) return null;
+  const light = packed.lights.find(l => l.device === id);
+  return light ? light.receivingCharts?.length ? 'fallback' : 'no reach' : null;
+}
+
 // Whether a stored page exists, without downloading it (M5): If-None-Match: * answers
 // 304 for any stored page. Only a 404 is "missing"; any other failure throws (I7).
 async function exists(api, url) {
@@ -86,6 +93,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   round = view.round ?? null, owner = null, damaged = [], inspectLegacy = false }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
   const inputLights = lights; // reachLights adds derived, metre-valued ranges.
+  const inputs = keyInputs(view);
   const bakeView = Object.create(view); bakeView.plan = plan;
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
@@ -109,15 +117,31 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   const damagedPages = new Set(damaged);
   const legacyPages = new Map();
   const signatures = m => cheapSignatures(inputLights, m.ownership, m.lights);
-  const signed = m => {
+  const realtime = m => {
     const cheap = signatures(m);
-    return { ...m, lights: Object.fromEntries(Object.entries(m.lights).map(([id, e]) =>
+    return Object.fromEntries(packed.lights.filter(l => !packed.entries[l.device]).map(l =>
+      [l.device, {cheap: cheap[l.device], reason: realtimeReason(packed, l.device)}]));
+  };
+  const signed = m => {
+    m = {...m, lights: Object.fromEntries(Object.entries(m.lights).filter(([id]) => !realtimeReason(packed, id)))};
+    const cheap = signatures(m);
+    return { ...m, keyInputs: inputs, realtime: realtime(m), lights: Object.fromEntries(Object.entries(m.lights).map(([id, e]) =>
       [id, matchesEntry(packed.entries[id], e) ? { ...e, cheap: cheap[id] } : e])) };
   };
   const unsigned = m => {
     const cheap = signatures(m);
-    return lights.some(l => packed.entries[l.device] && m.lights[l.device]?.cheap !== cheap[l.device]);
+    return !sameKeyInputs(m.keyInputs, inputs) || JSON.stringify(m.realtime || {}) !== JSON.stringify(realtime(m)) ||
+      lights.some(l => packed.entries[l.device] && m.lights[l.device]?.cheap !== cheap[l.device]);
   };
+  // Legacy bytes were read before the lease. Only migrate the exact version
+  // inspected then; a newer desk's page/receipt always wins under this lease.
+  async function legacyUpload(page, legacy, latest) {
+    if (latest?.pageIntegrity?.[page] || !legacy.etag) return false;
+    const r = await api(`${path}/${page}.png`, {headers: {'If-None-Match': legacy.etag}});
+    if (r.status === 304) return true;
+    if (r.ok || r.status === 404) return false;
+    throw new Error(`Could not read the lightmap (HTTP ${r.status}).`);
+  }
   // Re-bake all lighting re-bakes every light, but each keeps its stored entry
   // (same key) until its new bake lands, so panels never drop to real-time mid-run (M6).
   let activeForce = forceRound || (force ? [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('') : null);
@@ -155,7 +179,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         try {
           const decoded = await codec.decode(bytes);
           if (decoded.width !== layout.room.page || decoded.height !== layout.room.page) throw new Error('A lightmap page does not fit its array.');
-          legacyPages.set(p, bytes);
+          legacyPages.set(p, {bytes, etag: r.headers.get('etag')});
         } catch { damagedPages.add(p); missing.add(p); }
       }
       manifest = { ...manifest, lights: { ...manifest.lights } };
@@ -299,8 +323,9 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       matchesEntry(packed.entries[l.device], next.lights[l.device]) &&
       (!activeForce || next.lights[l.device]?.forceRound === activeForce));
     if (next.complete) delete next.forceRound;
-    next.pageIntegrity = { ...manifest.pageIntegrity };
-    for (const [page, bytes] of legacyPages) if (!uploads.some(u => u.page === page)) uploads.push({ page, bytes });
+    next.pageIntegrity = { ...manifest.pageIntegrity, ...latest?.pageIntegrity };
+    for (const [page, legacy] of legacyPages)
+      if (!uploads.some(u => u.page === page) && await legacyUpload(page, legacy, latest)) uploads.push({ page, bytes: legacy.bytes });
     for (const { page, bytes } of uploads) {
       if (!valid()) return null;
       const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
@@ -336,16 +361,17 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     if (manifest.round === round && manifest.complete === true && !unsigned(manifest) && !legacyPages.size) return false;
     return withBakeLease(request, path, who, valid, async check => {
       await check();
-      const latest = await readManifest();
-      if (!latest || !valid() || (latest.round === round && latest.complete === true && !unsigned(latest) && !legacyPages.size)) return false;
+      const latest = await readManifest() || {pages: packed.pages, lights: {}, ownership: packed.ownership,
+        densities: packed.densities, formats: Array(packed.pages).fill('ktx2')};
+      if (!valid() || (latest.round === round && latest.complete === true && !unsigned(latest) && !legacyPages.size)) return false;
       const whole = lights.every(l => !packed.entries[l.device] || matchesEntry(packed.entries[l.device], latest.lights[l.device]) &&
         (!latest.forceRound || latest.lights[l.device]?.forceRound === latest.forceRound));
       if (!whole) return false;
       const next = signed({ ...latest, round, complete: true }); delete next.forceRound;
       next.pageIntegrity = { ...latest.pageIntegrity };
-      for (const [page, bytes] of legacyPages) {
-        // A concurrent desk may already have published this page's metadata.
-        if (next.pageIntegrity[page]) continue;
+      for (const [page, legacy] of legacyPages) {
+        if (!(await legacyUpload(page, legacy, latest))) continue;
+        const {bytes} = legacy;
         const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
         if (!r.ok) throw new Error('Could not save the lightmap.');
         const saved = await r.json();
@@ -357,6 +383,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         body: JSON.stringify(next) });
       if (!r.ok) throw new Error('Could not save the bake manifest.');
       manifest = next;
+      legacyPages.clear();
       return true;
     });
   }

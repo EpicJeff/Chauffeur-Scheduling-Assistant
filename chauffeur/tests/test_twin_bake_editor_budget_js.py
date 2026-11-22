@@ -22,6 +22,8 @@ PREFIX=K.PREFIX.replace("if (url.endsWith('/twin_generator.js')) {", r"""if (/\/
 DRIVER=PREFIX+r"""
 const {bakeLights}=await import(file('static/twin/bake/runtime.js'));
 const {cheapSignatures}=await import(file('static/twin/bake/freshness.js'));
+const {keyInputs}=await import(file('static/twin/bake/key_inputs.js'));
+const {realtimeReason}=await import(file('static/twin/bake/baker.js'));
 const kit=structuredClone(input.kit),plan=structuredClone(input.plan),layout={room:{density:1,page:256,gutter:2}};
 const live={markers:plan.buildings.flatMap(b=>(b.rooms||[]).map((r,i)=>({device_id:b.id+':'+r.id,kind:'light',placed:true,building:b.id,level:r.level,room:r.id,
  at:[r.polygon.reduce((n,p)=>n+p[0],0)/r.polygon.length,r.polygon.reduce((n,p)=>n+p[1],0)/r.polygon.length,6]})))};
@@ -29,8 +31,9 @@ const viewer=await mountTwin(host(false),{plan:structuredClone(plan),kit,tier:'h
 const atlas=buildAtlas(viewer.scene.children.find(isBakeRoot),viewer.plan,layout);
 const lights=bakeLights(live,viewer.scene.children.find(isBakeRoot),plan),packed=bakeLayout(atlas,layout,lights);
 const cheap=cheapSignatures(lights,packed.ownership,packed.entries),digest='"'+'a'.repeat(64)+'"';
-const manifest={round:42,complete:true,pages:packed.pages,ownership:packed.ownership,
+const manifest={round:42,complete:true,keyInputs:keyInputs(viewer),pages:packed.pages,ownership:packed.ownership,
  lights:Object.fromEntries(Object.entries(packed.entries).map(([id,e])=>[id,{...e,cheap:cheap[id]}])),
+ realtime:Object.fromEntries(lights.filter(l=>!packed.entries[l.device]).map(l=>[l.device,{cheap:cheap[l.device],reason:realtimeReason(packed,l.device)}])),
  pageIntegrity:Object.fromEntries(Array.from({length:packed.pages},(_,p)=>[p,{size:100,digest}]))};
 let checks=0,fullPages=0;
 const bake={host:new Element(),poll:0,api:async(path,init)=>{
@@ -42,6 +45,23 @@ const bake={host:new Element(),poll:0,api:async(path,init)=>{
 }};
 const editor=await mountTwin(host(true),{plan,kit,tier:'high',round:42,bake});
 try{
+ await editor.bake.idle();await editor.bake.refresh();
+ await test('same_round_input_stamp_checks_only_compute_cheap_status_under_16ms',async()=>{
+  const samples=[];
+  for(const field of ['atlas','materials','stage']){
+   const saved=manifest.keyInputs[field];manifest.keyInputs[field]='previous-'+saved;
+   globalThis.__calls={buildTwin:0,bakeSource:0,bakeLayout:0,loadAtlas:0,buildAtlas:0,atlasJob:0,bakeLights:0};globalThis.__cost=0;
+   await editor.bake.refresh();
+   const calls={...globalThis.__calls},ms=globalThis.__cost;globalThis.__calls=null;globalThis.__cost=null;
+   assert.deepEqual({...calls,bakeLights:0},{buildTwin:0,bakeSource:0,bakeLayout:0,loadAtlas:0,buildAtlas:0,atlasJob:0,bakeLights:0});
+   assert.ok(ms<16,'same-round input stamps exceeded 16 ms: '+ms);
+   assert.equal(editor.bake.state().stale.length,lights.length);
+   assert.equal(editor.bake.packing(),null);assert.equal(editor.bake.held(),null);
+   manifest.keyInputs[field]=saved;samples.push({field,ms,calls});
+  }
+  await editor.bake.refresh();assert.equal(editor.bake.state().stale.length,0);
+  console.log('STAMP_COSTS '+JSON.stringify(samples));
+ });
  await test('three_committed_household_wall_edits_only_compute_cheap_status_under_16ms',async()=>{
   const samples=[];
   for(let i=0;i<3;i++){
