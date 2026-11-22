@@ -69,6 +69,8 @@ def _batch_preflight(model, members):
             if not isinstance(host, dict):
                 continue  # The member's own validator reports malformed data.
             kind, pid, owner = host.get('kind'), host.get('id'), host.get('building')
+            if not isinstance(kind, str):
+                continue  # An unhashable kind is malformed; the member's validator refuses it (400, as a single op).
             if kind in site_lists:
                 rows = model['site'].get(site_lists[kind], [])
                 rows = rows if isinstance(rows, list) else [rows] if isinstance(rows, dict) else []

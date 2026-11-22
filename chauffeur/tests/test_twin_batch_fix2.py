@@ -185,6 +185,11 @@ def test_malformed_lookup_keys_remain_indexed_refusals():
                  change=dict(ref='floor', building=[], level='L1')),
             dict(op='move_site_item', list=[], index=0, at=[1, 0]),
             dict(op='update_light_fixture', entity_id=[], id=LIGHT_AREA, change={}),
+            # Unhashable attachment host kinds: a single op answers 400, so a batch must too.
+            dict(op='update_light_fixture', entity_id=ENTITY, id=LIGHT_AREA,
+                 change=dict(anchors=[dict(host=dict(kind=['wall'], id='w'), at=[0, 0])])),
+            dict(op='update_light_fixture', entity_id=ENTITY, id=LIGHT_AREA,
+                 change=dict(snap=dict(host=dict(kind={}, id='w')))),
         ]
         for member in bad_members:
             response = post(c, [plant_move(original), member])
