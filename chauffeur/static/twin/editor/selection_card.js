@@ -10,7 +10,7 @@ import { createContextMenu } from './context_menu.js';
 import { materialName } from './material_catalog.js';
 
 const noun = {
-  planting: ['tree', 'trees'], furniture: ['object', 'objects'], opening: ['opening', 'openings'],
+  planting: ['plant', 'plants'], furniture: ['object', 'objects'], opening: ['opening', 'openings'],
   light_fixture: ['light', 'lights'], effect_fixture: ['effect', 'effects'],
   beds: ['planting bed', 'planting beds'], edges: ['planting edge', 'planting edges'], yard_rooms: ['yard room', 'yard rooms'],
   steps: ['pool steps', 'pool steps'], terraces: ['pad', 'pads'], roof: ['roof', 'roofs'], stair: ['stair', 'stairs'],
