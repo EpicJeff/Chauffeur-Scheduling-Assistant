@@ -11,8 +11,10 @@ from test_twin_yard_reuse_js import PREFIX
 ROOT = Path(__file__).resolve().parents[1]
 # Re-anchored to main v2.499.969 after deliberate changes through v2.499.969:
 # poolFinish (c21296c9), the circular stage (faaae672), local rebake (72ac45fb),
-# and reach-atlas-12 (ff4d70a7). Guards against future accidental changes to an untouched house.
-BASELINE = '243d2738'
+# and reach-atlas-12 (ff4d70a7). Re-anchored again to 99b7bb7d: the roof drip-line clip
+# of horizontal faces (wet edges follow the drip line, 2026-11-22) deliberately changes the
+# untouched house's geometry. Guards against future accidental changes to an untouched house.
+BASELINE = '99b7bb7d'
 
 
 def baseline_sources():
