@@ -876,6 +876,15 @@ await test('real editor boot shows generation bar only for running, paused or re
   assert.equal(button.querySelector('svg').getAttribute('stroke'),'currentColor',button.id);
   assert.equal(button.querySelector('svg').getAttribute('fill'),'none',button.id);button.setAttribute('aria-pressed',was);
  }
+ for(const name of ['copy','paste']){
+  const button=el('rail-'+name),label=button.querySelector('span'),menu=el('editor-menu'),disabled=button.disabled;
+  assert.equal(label.textContent,name==='copy'?'Copy':'Paste');assert.equal(label.classList.contains('editor-sr-only'),false,'menu has a visible text label');
+  button.disabled=false;menu.open=true;
+  // Paste disables itself as its real async queue starts. The shared menu must
+  // decide to close using the enabled state at the start of the click.
+  button.addEventListener('click',()=>{button.disabled=true;},{once:true});
+  await press(label);assert.equal(menu.open,false,'clipboard click closes the existing House menu');button.disabled=disabled;
+ }
  assert.equal(el('editor-house-name').textContent,'Our house');
  assert.equal(el('editor-house-name').title,'Our house');
  const {closeDialog}=await import(file('static/twin/editor/dialog.js'));closeDialog();

@@ -381,7 +381,10 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         if (!destination) throw new Error('Choose a ground point for Paste.');
       }
       const firstCut = buffer.cut && buffer.firstPaste;
-      const step = mode === 3 ? firstCut ? 0 : (lastPaste?.step || 0) + 1 : 0;
+      const owner = e => mode === 3 ? e.building : ['opening', 'item', 'anchor', 'device', 'furniture'].includes(e.kind) ? t?.building?.id : undefined;
+      const keep = entries.map(e => firstCut && owner(e) === e.building && !record(plan, e.ref));
+      const restoreInPlace = keep.every(Boolean);
+      const step = mode === 3 ? restoreInPlace ? 0 : (lastPaste?.step || 0) + 1 : 0;
       const by = mode === 3 ? offset().map(v => v * step) : destination.map((v, i) => v - (buffer.centre[i] || 0)).slice(0, 2);
       const lot = plan.site?.lot;
       if (lot?.length) for (const e of entries.filter(e => e.kind !== 'opening')) {
@@ -403,7 +406,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         if (!w) throw new Error('The original opening’s wall is gone. A window needs a wall.');
         const length = Math.hypot(...w.to.map((v, i) => v - w.from[i]));
         const p = e.piece, width = p.width, existing = [...b.openings, ...(mode === 3 ? lastPaste?.placed || [] : []).filter(o => o.building === b.id), ...pending.filter(o => o.building === b.id),
-          ...(mode === 3 && !firstCut ? openings.filter(o => o.building === b.id).map(o => o.piece) : [])];
+          ...(mode === 3 && !restoreInPlace ? openings.filter(o => o.building === b.id).map(o => o.piece) : [])];
         const clear = at => {
           if (at - width / 2 < -1e-8 || at + width / 2 > length + 1e-8) return false;
           const height = openingFloor(b, w, at).offset;
@@ -415,7 +418,7 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
           });
         };
         let at;
-        if (mode === 3 && firstCut) {
+        if (mode === 3 && restoreInPlace) {
           at = p.at;
           if (!clear(at)) throw new Error('The cut opening no longer fits on its original wall.');
         } else if (mode === 3) {
@@ -437,10 +440,9 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         }
         placements.set(e, at); pending.push({ ...p, at, wall: w.id, building: b.id, floor_reference_ft: openingFloor(b, w, at).offset });
       }
-      const owner = e => mode === 3 ? e.building : ['opening', 'item', 'anchor', 'device', 'furniture'].includes(e.kind) ? t?.building?.id : undefined;
-      const keep = entries.map(e => firstCut && owner(e) === e.building && !record(plan, e.ref));
       const ids = entries.map((e, i) => keep[i] ? e.piece.id : freshId(e.kind === 'light_fixture' ? 'fixture' : e.kind === 'effect_fixture' ? 'effect' : e.kind));
-      const ops = entries.map((e, i) => create(e, ids[i], by, t, mode, placements.get(e), keep[i], destination));
+      const ops = entries.map((e, i) => create(e, ids[i], by, t, mode, placements.get(e), keep[i], destination))
+        .map(op => ['add_site_shape', 'add_site_item', 'add_pad'].includes(op.op) ? { ...op, require_inside: true } : op);
       busy = true; onChange();
       await applyBatch(ops, { label: 'The pasted pieces' });
       if (firstCut) {
@@ -456,7 +458,8 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
         ...(ops[i].building || ops[i].fixture?.building ? { buildingId: ops[i].building || ops[i].fixture.building } : {}) }));
       lastPaste = { refs, step, placed: [...(lastPaste?.placed || []), ...pending], openings: Object.fromEntries(openings.map(e => [key(e.ref), placements.get(e)])) };
       selection?.set(refs);
-      setStatus(`${fallback ? 'No valid host selected; pasted beside the originals. ' : ''}Pasted ${entries.length} piece${entries.length === 1 ? '' : 's'}.${firstCut && keep.some(k => !k) ? ' The piece got a new identity in its receiving owner.' : ''}${entries.some((e, i) => !keep[i] && (e.kind === 'device' || e.piece.device)) ? ' Device binding omitted.' : ''}`);
+      const newIdentities = firstCut ? keep.filter(k => !k).length : 0;
+      setStatus(`${fallback ? 'No valid host selected; pasted beside the originals. ' : ''}Pasted ${entries.length} piece${entries.length === 1 ? '' : 's'}.${newIdentities ? ` ${newIdentities} piece${newIdentities === 1 ? '' : 's'} received a new identity.` : ''}${entries.some((e, i) => !keep[i] && (e.kind === 'device' || e.piece.device)) ? ' Device binding omitted.' : ''}`);
       return { ok: true };
     } catch (error) { return say(error.editorStatus || error.message); }
     finally { busy = false; onChange(); }
@@ -507,6 +510,14 @@ export function createClipboard({ getPlan = () => null, getModel = () => null, g
     } };
 }
 
+function focusedTextSelection() {
+  const selected = globalThis.getSelection?.(), focused = document.activeElement;
+  if (!selected || selected.isCollapsed || !focused?.closest?.('#editor-dock, #editor-dialog')) return false;
+  const node = selected.anchorNode?.nodeType === 3 ? selected.anchorNode.parentElement : selected.anchorNode;
+  return !!(node && focused.contains(node) && focused.contains(selected.focusNode)
+    && !node.closest?.('[hidden], .hidden, [inert]') && node.getClientRects?.().length);
+}
+
 export function clipboardKey(event, clipboard, { dialogOpen = false, canEdit = true } = {}) {
   if (event.shiftKey) return false;
   const duplicate = (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'd';
@@ -517,7 +528,7 @@ export function clipboardKey(event, clipboard, { dialogOpen = false, canEdit = t
   }
   const action = { c: 'copy', x: 'cut', v: 'paste', d: 'duplicate' }[event.key.toLowerCase()];
   if (!action) return false;
-  if (['copy', 'cut'].includes(action) && globalThis.getSelection?.()?.isCollapsed === false) return false;
+  if (['copy', 'cut'].includes(action) && focusedTextSelection()) return false;
   // Always consume Ctrl+D here: an unavailable duplicate must not bookmark.
   event.preventDefault();
   if (event.repeat && ['paste', 'duplicate'].includes(action)) return false;

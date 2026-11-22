@@ -67,12 +67,15 @@ await test('fix4_cut_same_owner_keeps_flags_cross_owner_gets_new_id_despite_coll
  // Undo has restored the original in the plan; the clipboard itself is intact.
  assert.deepEqual(r.c.contents(),frozen);assert.equal((await r.c.paste()).ok,true,r.status());
  assert.notEqual(r.posts[1].ops[0].id,p.id);assert.match(r.status(),/new identity/);
+ assert.deepEqual(r.posts[1].ops[0].at,[p.at[0]+.5,p.at[1]-.5],'paste after Undo is one grid step from the restored original');
+ assert.deepEqual(r.plan.site.planting[0],p,'the restored original stays untouched');assert.equal(r.posts.length,2,'cut and paste each use one request');
 });
 await test('fix6_native_text_shift_repeat_and_bookmark_key_guards',async()=>{
  const called=[];const c=Object.fromEntries(['copy','cut','paste','duplicate'].map(k=>[k,()=>called.push(k)]));
- const old=globalThis.getSelection;globalThis.getSelection=()=>({isCollapsed:false});
+ const panel=document.createElement('div');panel.id='editor-dock';const area=document.createElement('div'),text=document.createElement('p');area.tabIndex=0;area.append(text);panel.append(area);document.body.append(panel);area.focus();
+ const old=globalThis.getSelection;globalThis.getSelection=()=>({isCollapsed:false,anchorNode:text,focusNode:text});
  try{for(const key of ['c','x']){let prevented=false;clipboardKey({key,ctrlKey:true,preventDefault(){prevented=true;}},c);assert.equal(prevented,false);} }
- finally{globalThis.getSelection=old;}
+ finally{globalThis.getSelection=old;panel.remove();area.blur();}
  for(const key of ['c','x','v','d'])clipboardKey({key,ctrlKey:true,shiftKey:true,preventDefault(){assert.fail('shift shortcut consumed');}},c);
  for(const key of ['v','d']){let prevented=false;clipboardKey({key,ctrlKey:true,repeat:true,preventDefault(){prevented=true;}},c);assert.ok(prevented);}
  assert.deepEqual(called,[]);let prevented=false;clipboardKey({key:'d',ctrlKey:true,preventDefault(){prevented=true;}},c);assert.ok(prevented);assert.deepEqual(called,['duplicate']);
@@ -95,6 +98,51 @@ await test('fix11_beds_are_hosts_in_modes_one_and_two',async()=>{
  const r=rig(),bed={id:'host-bed',polygon:[[30,30],[40,30],[40,40],[30,40]],material:'mulch'};r.plan.site.beds.push(bed);r.c.copy([tree]);
  for(const mode of [1,2]){assert.equal((await r.c.paste({mode,target:{kind:'beds',id:bed.id},point:[35,35]})).ok,true,r.status());assert.deepEqual(r.posts.at(-1).ops[0].at,[35,35]);}
 });
+await test('round2_n2_cut_window_undo_paste_uses_clear_spot_in_one_batch',async()=>{
+ const r=rig(),p=structuredClone(r.plan.buildings[0].openings.find(o=>o.id===windowRef.pieceId));
+ assert.equal((await r.c.cut([windowRef])).ok,true);const held=r.c.contents();
+ // The rig's unchanged plan represents the original restored by Undo.
+ assert.deepEqual(r.c.contents(),held);assert.equal((await r.c.paste()).ok,true,r.status());
+ const op=r.posts[1].ops[0];assert.notEqual(op.id,p.id);assert.ok(Math.abs(op.at-p.at)>=p.width);
+ assert.equal(op.wall,p.wall);assert.equal(r.posts.length,2);assert.match(r.status(),/1 piece received a new identity/);
+});
+await test('round2_n7_only_visible_focused_panel_text_defers_native_copy_cut',async()=>{
+ const panel=document.createElement('div');panel.id='editor-dock';const area=document.createElement('div'),text=document.createElement('p'),scene=document.createElement('div');
+ area.tabIndex=0;scene.tabIndex=0;area.append(text);panel.append(area);document.body.append(panel,scene);
+ const old=globalThis.getSelection;let called=[];const c={copy:()=>called.push('copy'),cut:()=>called.push('cut')};
+ globalThis.getSelection=()=>({isCollapsed:false,anchorNode:text,focusNode:text});
+ const press=key=>{let prevented=false;clipboardKey({key,ctrlKey:true,preventDefault(){prevented=true;}},c);return prevented;};
+ try{
+  area.focus();for(const key of ['c','x'])assert.equal(press(key),false);assert.deepEqual(called,[]);
+  scene.focus();for(const key of ['c','x'])assert.equal(press(key),true);assert.deepEqual(called,['copy','cut']);
+  area.focus();panel.hidden=true;assert.equal(press('c'),true);assert.deepEqual(called,['copy','cut','copy']);
+  panel.hidden=false;globalThis.getSelection=()=>({isCollapsed:false});assert.equal(press('c'),true,'stale range with no live node');
+ }finally{globalThis.getSelection=old;panel.remove();scene.remove();area.blur();}
+});
+await test('round2_n3_n4_n5_shared_cards_hide_ineffective_fields',async()=>{
+ window.twinObjectSchema=input.objectSchema;
+ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>({ok:true,status:200,text:async()=>'[]'});
+ const {drawObjectShelf}=await import(file('static/twin/editor/object_shelf.js')),{drawSiteShapeShelf}=await import(file('static/twin/editor/site_shape_shelf.js'));
+ const {selectionFields}=await import(file('static/twin/editor/selection_fields.js'));
+ const options={canEdit:()=>true,queue:fn=>Promise.resolve().then(fn),op:async()=>{},report:e=>{throw e;},ownSlot(){},getPlan:()=>input.plan,getKit:()=>input.kit};
+ try{
+  for(const kind of ['door','window','slider','bifold','garage']){
+   const host=document.createElement('div');drawObjectShelf(host,{kind:'opening',piece:{...b.openings[0],kind},building:b},options);
+   assert.equal(!!host.querySelector('[aria-label="Door glass"]'),kind==='door',kind);
+  }
+  const preset=structuredClone(plant),imported={...structuredClone(plant),id:'imported-plant',asset:'import-'+'a'.repeat(32),object_kind:'plant'};delete imported.preset;
+  for(const [piece,visible] of [[preset,true],[imported,false],[{id:'decor-plant',at:[20,20],object_kind:'plant'},false]]){
+   const host=document.createElement('div');drawObjectShelf(host,{kind:'planting',piece,index:0},options);
+   for(const label of ['Plant height (ft)','Plant variation seed'])assert.equal(!!host.querySelector(`[aria-label="${label}"]`),visible,label);
+  }
+  const plan=structuredClone(input.plan);plan.site.planting=[preset,imported];
+  const shared=selectionFields(plan,plan.site.planting.map(p=>ref('planting',p.id)));
+  assert.ok(!shared.some(f=>['height','seed'].includes(f.key)),'mixed preset/imported set omits ineffective fields');
+  const host=document.createElement('div');drawSiteShapeShelf(host,{kind:'yard_rooms',piece:{id:'room',name:'Room',polygon:[[20,20],[24,20],[24,24],[20,24]]}},options);
+  assert.equal(host.querySelector('[aria-label="Height above surface (ft)"]'),null);
+  await new Promise(r=>setTimeout(r,0));
+ }finally{globalThis.fetch=originalFetch;}
+});
 await test('fix12_shared_cards_offer_plant_height_seed_opening_glass_and_shape_elevation',async()=>{
  window.twinObjectSchema=input.objectSchema;
  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>({ok:true,status:200,text:async()=>'[]'});
@@ -105,7 +153,7 @@ await test('fix12_shared_cards_offer_plant_height_seed_opening_glass_and_shape_e
   const host=document.createElement('div');drawObjectShelf(host,record,options);
   for(const [label,value] of fields){const field=host.querySelector(`[aria-label="${label}"]`);assert.ok(field,label);field.value=value;field.dispatchEvent(new Event('change'));}
  }
- for(const kind of ['beds','pool','yard_rooms']){
+ for(const kind of ['beds','pool']){
   const host=document.createElement('div');drawSiteShapeShelf(host,{kind,piece:{id:'card-'+kind,polygon:[[20,20],[24,20],[24,24],[20,24]]}},options);
   const field=host.querySelector('[aria-label="Height above surface (ft)"]');assert.ok(field,kind);field.value='2';field.dispatchEvent(new Event('change'));
  }await new Promise(r=>setTimeout(r,0));
@@ -122,8 +170,8 @@ def server_checks(client, headers, model):
     twin_store.update_model(lambda _: deepcopy(model), kind='build')
     before = twin_store.current_model()
     plant = before['site']['planting'][0]
-    outside = [10000, 10000]
-    poly = [[10000, 10000], [10004, 10000], [10004, 10004], [10000, 10004]]
+    outside = [1000, 1000]
+    poly = [[1000, 1000], [1004, 1000], [1004, 1004], [1000, 1004]]
     creates = [
         {'op': 'add_site_item', 'list': 'planting', 'asset': plant.get('asset') or plant['preset'], 'at': outside},
         {'op': 'add_site_item', 'list': 'furniture', 'asset': 'chair', 'at': outside},
@@ -134,10 +182,26 @@ def server_checks(client, headers, model):
         {'op': 'add_site_shape', 'list': 'fire_pit', 'at': outside, 'radius': 2},
     ]
     for op in creates:
-        answer = client.post('/api/house/editor/op', headers=headers, json={'op': {'op': 'batch', 'ops': [op]}})
+        answer = client.post('/api/house/editor/op', headers=headers, json={'op': {'op': 'batch', 'ops': [{**op, 'require_inside': True}]}})
         assert answer.status_code == 400 and 'lot' in answer.text.lower(), (op, answer.text)
         assert twin_store.current_model() == before, 'outside-lot batch published nothing'
-    print(f'  ok Fix 3 HTTP: {len(creates)} outside-lot create paths refuse atomically')
+        answer = client.post('/api/house/editor/op', headers=headers, json={'op': {'op': 'batch', 'ops': [op]}})
+        assert answer.status_code == 200, ('unflagged caller must retain its original behavior', op, answer.text)
+        if op['op'] == 'add_site_shape':
+            assert 'outside the lot' in answer.text, answer.text
+        twin_store.update_model(lambda _: deepcopy(before), kind='build')
+    print(f'  ok Round 2 N1 HTTP: {len(creates)} flagged refusals and {len(creates)} unflagged creates; shapes retain warnings')
+    lot = before['site']['lot']
+    boundary_ops = [
+        {**creates[0], 'at': lot[0]},
+        {'op': 'add_pad', 'polygon': lot, 'height': 0},
+        {'op': 'add_site_shape', 'list': 'beds', 'polygon': lot},
+    ]
+    for op in boundary_ops:
+        answer = client.post('/api/house/editor/op', headers=headers, json={'op': {**op, 'require_inside': True}})
+        assert answer.status_code == 200, ('boundary counts as inside', op, answer.text)
+        twin_store.update_model(lambda _: deepcopy(before), kind='build')
+    print('  ok Round 2 N1 HTTP: flagged item, pad and shape accept the lot boundary')
 
     building = before['buildings'][0]
     door = next(p for p in building['openings'] if p['kind'] == 'door')

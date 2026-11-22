@@ -26,7 +26,7 @@
     "other": {}
   },
   "opening": {
-    "glass": {"type":"choice", "label":"Door glass", "choices":["none","half"], "labels":{"none":"None","half":"Half glass"}, "default":"none"},
+    "glass": {"type":"choice", "kind":"door", "label":"Door glass", "choices":["none","half"], "labels":{"none":"None","half":"Half glass"}, "default":"none"},
     "model": {"type":"model", "default":null},
     "hinge": {"type":"choice", "choices":["left","right"], "default":"left"},
     "swing": {"type":"choice", "choices":["in","out","fixed"], "default":"fixed"},

@@ -108,7 +108,7 @@ export function drawSiteShapeShelf(host, record, { library, ownSlot, canEdit, qu
   const { piece, kind } = record, centre = shapeCentre(piece), size = shapeSize(piece);
   const poolFeature = ['ledge', 'steps', 'spa'].includes(kind);
   const path = piece.kind === 'path';
-  if (!poolFeature)
+  if (!poolFeature && kind !== 'yard_rooms')
     field('Height above surface (ft)', piece.elevation || 0, (_, elevation) => ({ elevation }));
   if (kind === 'yard_rooms') {
     const name = field('Name', piece.name, (_, name) => ({ name: name.trim() }), section, false);

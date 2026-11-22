@@ -80,8 +80,8 @@
   <main class="editor-shell" aria-label="House editor">
     <div id="editor-scene" aria-label="Interactive house preview"></div>
 
-    {% macro tool_button(tool, label) -%}
-      <button id="rail-{{ tool }}" type="button" data-editor-icon="{{ tool }}" title="{{ label }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool not in ['select', 'library', 'add-effect', 'ground'] %}disabled{% endif %} {% if tool == 'library' %}aria-controls="library-panel"{% endif %}><span class="editor-sr-only">{{ label }}</span></button>
+    {% macro tool_button(tool, label, menu=false) -%}
+      <button id="rail-{{ tool }}" type="button" data-editor-icon="{{ tool }}" title="{{ label }}" aria-label="{{ label }}" aria-pressed="{{ 'true' if tool == 'select' else 'false' }}" {% if tool not in ['select', 'library', 'add-effect', 'ground'] %}disabled{% endif %} {% if tool == 'library' %}aria-controls="library-panel"{% endif %}><span{% if not menu %} class="editor-sr-only"{% endif %}>{{ label }}</span></button>
     {%- endmacro %}
     <header id="editor-top">
     <div id="editor-toolbar" role="toolbar" aria-label="House editor toolbar">
@@ -96,7 +96,7 @@
           <button id="menu-director" type="button" disabled>Art director</button>
           <button id="menu-advanced" type="button" disabled>Advanced: edit the plan file</button>
           <button id="menu-start-over" type="button" disabled>Start over</button>
-          <div role="group" aria-label="Clipboard">{{ tool_button('copy', 'Copy') }}{{ tool_button('paste', 'Paste') }}</div>
+          <div role="group" aria-label="Clipboard">{{ tool_button('copy', 'Copy', true) }}{{ tool_button('paste', 'Paste', true) }}</div>
 
           <button id="menu-record" type="button" hidden disabled>Download build record</button>
           <a href="{{ _up }}house/twin">House preview</a></div>

@@ -122,7 +122,7 @@ export async function boot() {
     listen(menu, 'click', event => {
       const action = event.target.closest?.('button, a');
       if (action && !action.disabled) menu.open = false;
-    });
+    }, { capture: true });
   }
   listen(document, 'pointerdown', event => {
     for (const menu of document.querySelectorAll('.editor-toolbar-menu')) if (menu.open && !menu.contains(event.target)) menu.open = false;

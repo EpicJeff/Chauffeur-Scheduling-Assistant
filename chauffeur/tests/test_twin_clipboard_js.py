@@ -42,6 +42,7 @@ await test('household_tree_rigid_set_all_properties_and_three_modes',async()=>{
  r.selection.set(trees);assert.equal(r.c.copy(trees).ok,true);const frozen=r.c.contents();
  assert.equal((await r.c.paste()).ok,true,r.status());assert.equal(r.posts.length,1);
  const ops=r.posts[0].ops;assert.equal(ops.length,3);assert.equal(new Set(ops.map(o=>o.id)).size,3);
+ assert.ok(ops.every(op=>op.require_inside===true),'clipboard opts its yard creates into server containment');
  for(let i=1;i<3;i++)for(let axis=0;axis<2;axis++)assert.ok(Math.abs((ops[i].at[axis]-ops[0].at[axis])-(original[i][axis]-original[0][axis]))<1e-7);
  for(const k of ['height','seed','tint','rotation','scale','scale_axes','elevation'])assert.deepEqual(ops[0][k],r.plan.site.planting[0][k]);
  assert.equal(ops[0].at[0],r.plan.site.planting[0].at[0]+.5,'copy uses the visible queued position');
@@ -265,6 +266,9 @@ def main():
             for case in cases:
                 twin_store.update_model(lambda _: case['model'], kind='build')
                 for batch in case['batches']:
+                    for member in batch['ops']:
+                        if member['op'] in ('add_site_shape', 'add_site_item', 'add_pad'):
+                            assert member.get('require_inside') is True, 'every clipboard yard create opts in'
                     before, round_id, count = twin_store.current_model(), twin_store.current_id(), len(twin_store.rounds())
                     answer = client.post('/api/house/editor/op', headers=headers, json={'op': batch})
                     assert answer.status_code == 200, (case['name'], batch, answer.text,

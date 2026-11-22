@@ -1662,7 +1662,7 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
         if name == 'pool' and pieces:
             raise Refused('A pool already exists. Edit or delete it before drawing another.')
         try:
-            piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list', 'id', 'materials', 'rotation', 'elevation')}, model['site'].get('lot'), require_inside=True)
+            piece, words = twin_site_shapes.create(name, {k: v for k, v in op.items() if k not in ('op', 'list', 'id', 'materials', 'rotation', 'elevation', 'require_inside')}, model['site'].get('lot'), require_inside=op.get('require_inside') is True)
             if 'materials' in op:
                 twin_site_shapes.update(name, piece, {'materials': op['materials']}, model['site'].get('lot'))
             if 'rotation' in op:
@@ -1690,7 +1690,7 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
         asset = _text(op.get('asset'))
         piece = {'id': _create_id(model['site'], name, op), 'asset': asset, 'at': _point(op.get('at'))}
         from services import twin_terrain
-        if model['site'].get('lot') and not twin_terrain.inside(model['site']['lot'], piece['at']):
+        if op.get('require_inside') is True and model['site'].get('lot') and not twin_terrain.inside(model['site']['lot'], piece['at']):
             raise Refused('The yard item must stay inside the lot.')
         if name == 'planting' and not asset.startswith('import-'):
             from services import twin_library
@@ -2066,7 +2066,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                 error = twin_terrain.pad_error(pad)
                 if error:
                     raise Refused(error)
-                if kind == 'add_pad' and model['site'].get('lot'):
+                if kind == 'add_pad' and op.get('require_inside') is True and model['site'].get('lot'):
                     from services.twin_site_shapes import _contained
                     if not _contained(model['site']['lot'], pad['polygon']):
                         raise Refused('The terrain pad must stay inside the lot.')
