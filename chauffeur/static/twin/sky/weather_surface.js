@@ -50,6 +50,37 @@ float weatherWetScale(float luminance, float metal, float wet) {
   float identity=smoothstep(.02,.5,luminance)*mix(1.0,.14,metal);
   return 1.0-.5*wet*identity;
 }
+#if !defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_SUBMERGED)
+// Lagarde-style material porosity from per-texel metalness and roughness:
+// high for rough non-metals (concrete, shingles, wood), near zero for metals
+// and smooth non-porous surfaces (glazed tile, painted metal).
+float weatherPorosity(float metal, float roughness) {
+  return (1.0-clamp(metal,0.0,1.0))*smoothstep(.35,.85,roughness);
+}
+float weatherDarkenWet(float porosity, float wet) {
+  float w=clamp(wet,0.0,1.0);
+  float absorb=w/(.72+.28*w);
+  return mix(w*.12,absorb,clamp(porosity,0.0,1.0));
+}
+float weatherWetRoughness(float original, float porosity, float wet) {
+  float w=clamp(wet,0.0,1.0);
+  float p=clamp(porosity,0.0,1.0);
+  float film=original<.08?original:.08;
+  float porousTarget=original<.42?original:mix(.42,original*.52,.5);
+  float target=mix(film,porousTarget,p);
+  float ramp=mix(smoothstep(0.0,.65,w),w*(.3+.7*w),p);
+  return mix(original,target,ramp);
+}
+// Continuous dielectric water-film coverage: forms directly with wetness on
+// non-porous surfaces (and puddles), and only after saturation on porous ones.
+float weatherWaterFilm(float porosity, float wet, float puddle) {
+  float w=clamp(wet,0.0,1.0);
+  float p=clamp(porosity,0.0,1.0);
+  float porousFilm=smoothstep(.65,1.0,w)*.35;
+  float film=mix(smoothstep(0.0,.75,w),porousFilm,p);
+  return max(film,clamp(puddle,0.0,1.0));
+}
+#endif
 float weatherSpot(float wet, float seed, float shape) {
   return smoothstep(seed*.35,seed*.35+.02,wet)*shape;
 }
@@ -126,6 +157,83 @@ float weatherDrops(vec2 world, float wet, vec2 dx, vec2 dy, float up) {
   float b=weatherDropLayer(rotation*world+vec2(1.731,4.913),wet,rotation*dx,rotation*dy,.047,up);
   return a+b-a*b;
 }
+#ifdef WEATHER_SURFACE_ROOF
+// Roof wet rivulets and raised beads (ALU only, zero new uniforms/samplers).
+// Coordinates are metric (across-slope, downhill-slope) on the pitched face.
+vec3 weatherRoofRivuletLayer(vec2 uv, float wet, float rate, float phase, vec2 dx, vec2 dy, float cellW, float seed) {
+  float wetScale=smoothstep(0.0,.18,wet);
+  if(wetScale<=0.0) return vec3(0.0);
+  float density=.62*smoothstep(.08,.65,wet);
+  // True Euclidean pixel width across slope (rotation-invariant); fade is for
+  // overview distance (~2.1-5.5 cm/px), keeping full contrast at ~1-1.8 cm/px.
+  float pxAcross=length(vec2(dx.x,dy.x));
+  float avgHalfW=.025;
+  float vis=1.0-smoothstep(.85,2.2,pxAcross/avgHalfW);
+  float avgCov=density*(2.0*avgHalfW/cellW)*.48*wetScale;
+  if(vis<=.001) return vec3(0.0,0.0,avgCov);
+  float cellX=uv.x/cellW,id=floor(cellX),localX=fract(cellX);
+  vec3 h=weatherRingHash(vec2(id,seed));
+  float arrive=fract(h.z*7.13+h.x*3.17);
+  if(arrive>=density) return vec3(0.0,0.0,mix(avgCov,0.0,vis));
+  // Nearly straight downhill tracks: gentle <=1.2 cm lateral drift over 4-14 m.
+  float f1=.45+h.y*.35,f2=1.05+h.x*.45;
+  float p1=uv.y*f1+h.z*6.2831853,p2=uv.y*f2+h.y*6.2831853;
+  float wanderM=(sin(p1)*.75+sin(p2)*.25)*.012;
+  float dWander=(cos(p1)*f1*.75+cos(p2)*f2*.25)*.012;
+  float centre=.18+h.x*.64+wanderM/cellW;
+  float swell=.5+.5*sin(uv.y*(.9+h.x*.8)+h.y*6.2831853);
+  float activeFlow=smoothstep(0.0,.35,rate);
+  float surgeLen=1.15+h.y*.65;
+  float surgePhi=6.2831853*(uv.y/surgeLen-2.0*phase+h.z);
+  float surge=.5+.5*sin(surgePhi);
+  float fullness=mix(.54,1.0,swell)*mix(.78,.52+.72*surge*surge,activeFlow);
+  float baseHalfW=mix(.018,.032,h.y);
+  float halfW=baseHalfW*mix(.82,1.12,clamp(fullness,0.0,1.0));
+  float distM=(localX-centre)*cellW;
+  float s=distM/max(halfW,.001);
+  float aa=max(pxAcross/max(halfW,.001)*.82,.22);
+  float mask=1.0-smoothstep(1.0-aa,1.0+aa,abs(s));
+  float cov=mask*clamp(fullness,0.0,1.0)*wetScale;
+  float cs=clamp(s,-1.0,1.0),crown=1.0-cs*cs;
+  float slopeU=cs*crown*.55*mask*vis*wetScale;
+  float slopeV=(-dWander*slopeU-cos(surgePhi)*.20*activeFlow*crown*mask*vis*wetScale);
+  return vec3(slopeU,slopeV,mix(avgCov,cov,vis));
+}
+vec3 weatherRoofRivulets(vec2 uv, float wet, float rate, float phase, vec2 dx, vec2 dy) {
+  vec3 a=weatherRoofRivuletLayer(uv,wet,rate,phase,dx,dy,.54,11.7);
+  vec3 b=weatherRoofRivuletLayer(uv+vec2(.25,3.71),wet,rate,phase,dx,dy,.89,29.3);
+  return vec3(a.xy+b.xy,a.z+b.z-a.z*b.z);
+}
+vec3 weatherRoofBeadLayer(vec2 uv, float wet, vec2 dx, vec2 dy, float cellSize, float up) {
+  if(wet<=0.0) return vec3(0.0);
+  vec2 p=uv/cellSize,id=floor(p);
+  float footprint=max(length(vec2(dx.x,dy.x)),length(vec2(dx.y,dy.y)))/cellSize;
+  float featCell=.011/cellSize;
+  float vis=1.0-smoothstep(.45,1.15,footprint/featCell);
+  float avgCov=weatherDropDensity(up)*(.000095/(cellSize*cellSize))*smoothstep(0.0,.37,wet);
+  if(vis<=.001) return vec3(0.0,0.0,avgCov);
+  vec4 spot=weatherDropCell(id,cellSize,up);
+  if(spot.w>1.0) return vec3(0.0,0.0,mix(avgCov,0.0,vis));
+  float arrived=weatherSpot(wet,spot.w,1.0);
+  if(arrived<=0.0) return vec3(0.0,0.0,mix(avgCov,0.0,vis));
+  float radius=min(spot.z*1.25,.45);
+  vec2 centre=clamp(spot.xy,vec2(radius),vec2(1.0-radius));
+  vec2 q=(fract(p)-centre)/max(radius,.001);
+  float r2=dot(q,q);
+  float aa=max(footprint/max(radius,.001),.22);
+  float disc=1.0-smoothstep(1.0-aa,1.0+aa,sqrt(r2));
+  float dome=max(0.0,1.0-r2);
+  vec2 slope=q*dome*.78*arrived*disc*vis;
+  return vec3(slope,mix(avgCov,arrived*disc,vis));
+}
+vec3 weatherRoofBeads(vec2 uv, float wet, vec2 dx, vec2 dy, float up) {
+  mat2 rot=mat2(.8,.6,-.6,.8);
+  vec3 a=weatherRoofBeadLayer(uv,wet,dx,dy,.031,up);
+  vec3 b=weatherRoofBeadLayer(rot*uv+vec2(1.731,4.913),wet,rot*dx,rot*dy,.047,up);
+  vec2 slopeB=vec2(.8*b.x+.6*b.y,-.6*b.x+.8*b.y);
+  return vec3(a.xy+slopeB,a.z+b.z-a.z*b.z);
+}
+#endif
 float weatherSnow(float up, float cover, float edge) {
   return smoothstep(.55,.85,up)*smoothstep(edge-.12,edge+.12,cover)*smoothstep(0.0,.12,cover);
 }
@@ -211,15 +319,55 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     vec2 weatherPlane=abs(weatherUp)>.5?vWeatherWorld.xz:(abs(weatherFace.x)>abs(weatherFace.z)?vWeatherWorld.zy:vWeatherWorld.xy);
     vec2 weatherDx=abs(weatherUp)>.5?weatherWorldDx.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDx.zy:weatherWorldDx.xy);
     vec2 weatherDy=abs(weatherUp)>.5?weatherWorldDy.xz:(abs(weatherFace.x)>abs(weatherFace.z)?weatherWorldDy.zy:weatherWorldDy.xy);
+    #ifdef WEATHER_SURFACE_ROOF
+      float weatherDrop=0.0;
+    #else
     float weatherDrop=weatherSurface.x>0.0&&weatherSurface.x<.9?weatherDrops(weatherPlane,weatherSurface.x,weatherDx,weatherDy,weatherUp):0.0;
+    #endif
     #ifdef WEATHER_SURFACE_LAWN
       weatherDrop=0.0;
     #endif
     float weatherFilmValue=weatherFilm(weatherSurface.x);
+    float weatherBaseRough=.85;
+    #ifdef STANDARD
+      weatherBaseRough=roughnessFactor;
+    #endif
+    float weatherPorosityValue=weatherPorosity(weatherMetal,weatherBaseRough);
     weatherWet=weatherExposure(weatherGloss(weatherSurface.x,weatherDrop),vWeatherOpen);
     float weatherGlossValue=weatherWet;
     #ifdef WEATHER_SURFACE_ROOF
-      weatherGlossValue*=mix(.65,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
+      float roofSlopeSin=length(weatherFace.xz);
+      vec2 roofHoriz=roofSlopeSin>.001?weatherFace.xz/roofSlopeSin:vec2(1.0,0.0);
+      vec3 roofAcrossDir=vec3(roofHoriz.y,0.0,-roofHoriz.x);
+      vec3 roofDownDir=vec3(roofHoriz.x*weatherUp,-roofSlopeSin,roofHoriz.y*weatherUp);
+      vec2 roofUv=vec2(dot(vWeatherWorld,roofAcrossDir),dot(vWeatherWorld,roofDownDir));
+      vec2 roofDx=vec2(dot(weatherWorldDx,roofAcrossDir),dot(weatherWorldDx,roofDownDir));
+      vec2 roofDy=vec2(dot(weatherWorldDy,roofAcrossDir),dot(weatherWorldDy,roofDownDir));
+      float roofUpMask=smoothstep(.05,.25,weatherUp);
+      float roofSlopeMask=smoothstep(.02,.12,roofSlopeSin)*roofUpMask;
+      float roofRate=floor(weatherSurface.w)/255.0;
+      float roofPhase=roofRate>0.0?fract(weatherSurface.w):0.0;
+      float roofWetRaw=weatherExposure(weatherSurface.x,vWeatherOpen)*roofUpMask;
+      float roofImpervious=1.0-weatherPorosityValue;
+      // Impervious roofs (metal, smooth tile) form rivulets and beads; porous
+      // roofs (asphalt/wood shingles) absorb water so beads soak in and rivulets stay faint.
+      float roofRivWeight=mix(.12,1.0,roofImpervious*roofImpervious);
+      float roofBeadWeight=smoothstep(.25,.75,roofImpervious);
+      vec3 roofRiv=roofWetRaw>0.0&&roofSlopeMask>0.0?weatherRoofRivulets(roofUv,roofWetRaw,roofRate,roofPhase,roofDx,roofDy)*(roofSlopeMask*roofRivWeight):vec3(0.0);
+      vec3 roofBead=roofWetRaw>0.0&&roofBeadWeight>0.0?weatherRoofBeads(roofUv,roofWetRaw,roofDx,roofDy,weatherUp)*roofBeadWeight:vec3(0.0);
+      // Standing-seam ribs perturb the normal map across the slope; bias calm
+      // straight runnels along seam edges on impervious mapped roofs, zero otherwise.
+      float roofSeamRib=smoothstep(.06,.28,abs(dot(normal-nonPerturbedNormal,mat3(viewMatrix)*roofAcrossDir)));
+      float roofActiveFlow=smoothstep(0.0,.35,roofRate);
+      float roofSeamPhi=6.2831853*(roofUv.y/1.25-2.0*roofPhase+fract(roofUv.x*1.73));
+      float roofSeamVis=1.0-smoothstep(.025,.065,length(vec2(roofDx.x,roofDy.x)));
+      float roofSeamRun=roofSeamRib*mix(.68,.48+.58*(.5+.5*sin(roofSeamPhi)),roofActiveFlow)*smoothstep(.08,.55,roofWetRaw)*roofSlopeMask*roofSeamVis*roofRivWeight;
+      float roofChannelCov=clamp(max(roofRiv.z,roofSeamRun*.65),0.0,1.0);
+      float roofBeadKeep=1.0-roofChannelCov;
+      vec2 roofSlope=roofRiv.xy+roofBead.xy*roofBeadKeep+vec2(0.0,-cos(roofSeamPhi)*.12*roofActiveFlow*roofSeamRun);
+      float roofWaterCov=clamp(roofChannelCov+roofBead.z*roofBeadKeep,0.0,1.0);
+      weatherGlossValue*=mix(.65,1.0,weatherNoise(vec2(roofUv.x*2.2,roofUv.y*.3)));
+      float roofFilmVar=weatherWet>0.0?clamp((weatherGlossValue/weatherWet-.65)/.35,0.0,1.0):0.0;
     #else
       if(abs(weatherUp)<.5)weatherGlossValue*=mix(.45,1.0,weatherNoise(weatherPlane*vec2(12.0,.7)));
     #endif
@@ -242,15 +390,28 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     #ifdef WEATHER_SURFACE_LAWN
       weatherLum=max(weatherLum,.35);
     #endif
-    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherWet);
+    diffuseColor.rgb *= weatherWetScale(weatherLum,weatherMetal,weatherDarkenWet(weatherPorosityValue,weatherWet));
     diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.85,.87,.9),weatherS);
     #ifdef STANDARD
       #ifdef WEATHER_SURFACE_LAWN
         roughnessFactor=weatherRoughness(mix(roughnessFactor,.42,weatherGlossValue),0.0,weatherP,weatherS);
+      #elif defined(WEATHER_SURFACE_ROOF)
+        float roofBaseWet=weatherWetRoughness(roughnessFactor,weatherPorosityValue,roofWetRaw);
+        float roofRough=mix(roofBaseWet,min(roofBaseWet,mix(.14,.08,roofFilmVar)),roofImpervious*roofWetRaw);
+        roofRough=mix(roofRough,clamp(roofBaseWet*mix(.82,1.12,roofFilmVar),.045,1.0),weatherPorosityValue*roofWetRaw);
+        roofRough=mix(roofRough,min(roofRough,.05),roofBead.z*roofBeadKeep*roofWetRaw);
+        roofRough=mix(roofRough,min(roofRough,.045),roofChannelCov*roofWetRaw);
+        roughnessFactor=mix(roofRough,.7,weatherS);
       #else
-        roughnessFactor=weatherRoughness(roughnessFactor,weatherGlossValue,weatherP,weatherS);
+        roughnessFactor=weatherRoughness(weatherWetRoughness(roughnessFactor,weatherPorosityValue,weatherGlossValue),0.0,weatherP,weatherS);
       #endif
-      metalnessFactor=mix(metalnessFactor,0.0,weatherS);
+      // Clear dielectric water film shifts the specular interface toward untinted
+      // water (metalness -> 0) wherever a continuous film, puddle or rivulet sits.
+      float weatherWaterFilmCov=weatherWaterFilm(weatherPorosityValue,weatherWet,weatherP);
+      #ifdef WEATHER_SURFACE_ROOF
+        weatherWaterFilmCov=max(weatherWaterFilmCov,roofWaterCov*roofWetRaw);
+      #endif
+      metalnessFactor=mix(metalnessFactor,0.0,max(weatherWaterFilmCov,weatherS));
     #endif
   #endif
   float weatherRingWeight=smoothstep(.9,.98,weatherUp)*weatherExposure(1.0,vWeatherOpen);
@@ -261,7 +422,11 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
   #endif
   vec2 weatherSlope=vec2(0.0);
   if(weatherRingWeight>0.0)weatherSlope=weatherRipple(vWeatherWorld.xz)*weatherRingWeight;
+  #ifdef WEATHER_SURFACE_ROOF
+    vec3 weatherNormal=normal+mat3(viewMatrix)*((roofAcrossDir*roofSlope.x+roofDownDir*roofSlope.y)*(1.0-weatherS));
+  #else
   vec3 weatherNormal=normal+mat3(viewMatrix)*vec3(weatherSlope.x,0.0,weatherSlope.y);
+  #endif
   normal=weatherNormal/max(length(weatherNormal),.0001);
   #if !defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_ROOF)
     vec3 weatherReflected=inverseTransformDirection(reflect(normalize(vViewPosition),normal),viewMatrix);
@@ -269,6 +434,22 @@ if(vWeatherOpen>0.0&&weatherSurface.x+weatherSurface.y+weatherSurface.z+floor(we
     // shared coverage after the horizon mask fills, so late Fresnel gains
     // cannot outrun absorption on partially exposed ground.
     weatherHorizonDamp=weatherHorizon(weatherReflected.y,smoothstep(0.0,.35,max(weatherGlossValue,weatherP))*(1.0-weatherS))*(1.0-.25*weatherWet*(1.0-weatherS));
+  #elif defined(WEATHER_SURFACE_ROOF)
+    vec3 roofViewDir=normalize(vViewPosition);
+    vec3 roofReflected=inverseTransformDirection(reflect(-roofViewDir,normal),viewMatrix);
+    float roofWetNoSnow=roofWetRaw*(1.0-weatherS);
+    // Horizon damp only where the reflected ray points at or below the horizon;
+    // impervious wet roofs catch the overcast sky with straight wet streaks,
+    // while porous roofs (shingles) keep a soft, unboosted sheen.
+    float roofHorizon=weatherHorizon(roofReflected.y,roofWetNoSnow);
+    float roofNoV=clamp(dot(normal,roofViewDir),0.0,1.0);
+    float roofGrazing=(1.0-roofNoV)*(1.0-roofNoV);
+    float roofSkyGrad=smoothstep(.15,.95,roofReflected.y);
+    float roofCoatWeight=(1.0-smoothstep(.15,.65,weatherLum*weatherMetal))*roofImpervious;
+    float roofFilmSheen=mix(1.50,2.25,clamp(roofGrazing*.75+roofSkyGrad*.45,0.0,1.0))*mix(.90,1.08,roofFilmVar);
+    float roofWaterGlint=mix(0.0,1.35,roofWaterCov)*(.70+.45*roofSkyGrad);
+    float roofSheen=mix(1.0,roofFilmSheen+roofWaterGlint,roofCoatWeight);
+    weatherHorizonDamp=mix(1.0,roofHorizon*roofSheen,roofWetNoSnow);
   #endif
 }
 #endif
