@@ -5,7 +5,7 @@ import { retainingWallGeometry } from './twin_retaining_wall.js';
 import { buildRailing } from './fence_geometry.js';
 
 // Emit only additions: the legacy wall's buffers and UVs are never altered.
-export function buildPadEdge(plan, pad, index, emit) {
+export function buildPadEdge(plan, pad, index, emit, emitTop = null) {
   const edge = pad.edges?.[index];
   if (edge?.edge !== 'sharp') return;
   const a = pad.polygon[index], b = pad.polygon[(index + 1) % pad.polygon.length];
@@ -43,6 +43,9 @@ export function buildPadEdge(plan, pad, index, emit) {
         const expanded = ring.map((q, k) => [q[0] + n[0] / width * overhang * (k < 2 ? -1 : 1),
           q[1] + n[1] / width * overhang * (k < 2 ? -1 : 1), q[2]]);
         emit(capPrism(expanded, thickness), 'cap', 'patio_concrete', wall.materials?.cap);
+        // Only flat tops: the SSR face test also rejects sloping/vertical faces.
+        if (emitTop && expanded.every(q => Math.abs(q[2] - expanded[0][2]) < 1e-6))
+          emitTop(expanded.map(q => q.slice(0, 2)), expanded[0][2] + thickness);
       }
       body.dispose();
     }
@@ -74,6 +77,11 @@ export function buildPadEdge(plan, pad, index, emit) {
       'riser', 'patio_concrete', stair.materials?.riser);
     if (hasTreads) emit(place(length + 2 * nose, slab, tread + nose, length / 2, (i + .5) * tread + nose / 2, top - slab / 2),
       'tread', 'patio_concrete', stair.materials?.tread);
+    if (emitTop) {
+      const u0 = hasTreads ? -nose : 0, u1 = length - u0;
+      const v0 = i * tread, v1 = (i + 1) * tread + (hasTreads ? nose : 0);
+      emitTop([at(u0, v0, top), at(u1, v0, top), at(u1, v1, top), at(u0, v1, top)].map(q => q.slice(0, 2)), top);
+    }
   }
   // Posts stand a post's width inside the flight, so none hangs off an end or the bottom step.
   const inset = Math.min(1.5 / 12, length / 4, run / 4);

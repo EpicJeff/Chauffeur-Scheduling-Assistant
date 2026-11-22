@@ -77,7 +77,7 @@ import { porchFoundationRole } from './twin_porch_foundation.js';
 import { retainingWallGeometry, retainingWallRole } from './twin_retaining_wall.js';
 import { buildFence } from './fence_geometry.js';
 import { buildPadEdge } from './pad_edge_geometry.js';
-import { buildPoolFeatures, cutSurface, offsetOutline, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
+import { buildPoolFeatures, cutSurface, offsetOutline, outlineNormal, waterlineMaterial, WATERLINE_BELOW } from './pool_features.js';
 import { waterBodies, rippleSources, updateRipples, updateChop } from './effects/water_ripples.js';
 import { surfaceMaterial } from './effects/water_surface.js';
 import { underwaterMaterial } from './effects/underwater.js';
@@ -601,12 +601,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         poolMesh(poolSurface(pool, -d - 0.2, -d), interior.material, seedOf(site.pool, 'floor'), interior.ref, 'interior');
         // Offset each edge outwards by coping width. This works for the convex pool
         // polygons used by the plan and retains the original water outline.
-        const area = pool.reduce((a, p, i) => a + p[0] * pool[(i + 1) % pool.length][1] - pool[(i + 1) % pool.length][0] * p[1], 0);
-        const normal = (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return area > 0 ? [(b[1] - a[1]) / l, -(b[0] - a[0]) / l] : [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]; };
-        const outer = pool.map((p, i) => {
-          const a = normal(pool[(i + pool.length - 1) % pool.length], p), b = normal(p, pool[(i + 1) % pool.length]), factor = coping / Math.max(0.1, 1 + a[0] * b[0] + a[1] * b[1]);
-          return [p[0] + (a[0] + b[0]) * factor, p[1] + (a[1] + b[1]) * factor];
-        });
+        const outer = offsetOutline(pool, coping), normal = outlineNormal(pool);
         if (coping > 0) poolMesh(poolSurface(outer, 0.3, 0.45, [pool]), cap.material, seedOf(site.pool, 'coping'), cap.ref, 'coping');
         // The coping overhangs the wall. Fill under the overhang from the ground up, so a coping
         // over lawn sits on it. Beside paving the fill is inside the slab and never seen.
@@ -909,6 +904,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       }
       scratch.traverse(mesh => {
         if (!mesh.isMesh || mesh.userData.part === 'water' || !poolBody) return;
+        // Ledges/steps can also label a finish slot 'coping', below water.
+        // Only the pool/spa rim is an always-above-water paving surface.
+        if (mesh.userData.bakePart === 'coping' && ['pool', 'spa'].includes(mesh.userData.kind)) return;
         const body = bodies.find(b => b.id === mesh.userData.waterBody) || poolBody;
         const simulation = simulations.get(body.id), source = mesh.material;
         const peers = simulation ? [] : bodies.filter(b => b.height === body.height && !simulations.has(b.id));

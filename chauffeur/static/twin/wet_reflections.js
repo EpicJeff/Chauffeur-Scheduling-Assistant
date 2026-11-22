@@ -7,7 +7,7 @@ const vertex='varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0
 // imported verbatim; unused ripple/drop functions disappear at shader link.
 const common=`
 varying vec2 vUv;
-uniform sampler2D image,ssrDepth,ssrNormal,ssrBeautyDepth,wetEdge;
+uniform sampler2D image,ssrDepth,ssrNormal,ssrBeautyDepth,wetEdge,wetCaps;
 uniform vec4 wetGroundBounds;
 uniform mat4 ssrProjection,ssrInverseProjection,ssrWorld;
 uniform vec3 ssrCamera;
@@ -36,6 +36,14 @@ float ssrMask(float up,float y,float covered,float ground,float wet,float puddle
   return max(film*.45,weatherPuddle(up,puddles,edge)*film)*(1.0-weatherSnow(up,snow,edge));
 }
 float ssrPuddle=0.0;
+float ssrHardWeight(float y,float sdf,float top,float capSDF,float capTop) {
+  float hard=smoothstep(-.015,.015,sdf);
+  if(top<=-9999.0||abs(y-top)>=.15)hard=0.0;
+  return capSDF>0.0&&abs(y-capTop)<.05?1.0:hard;
+}
+float ssrOpen(float y,float sdf,float ceiling) {
+  return sdf>0.0||y>=ceiling?1.0:clamp(sdf/.6,0.0,1.0);
+}
 float ssrReceiver(vec3 position,vec3 normal) {
   ssrPuddle=0.0;
   vec3 world=(ssrWorld*vec4(position,1.0)).xyz;
@@ -46,14 +54,17 @@ float ssrReceiver(vec3 position,vec3 normal) {
   // Bilinear signed-distance + dilated-height field: r=cover SDF, g=hardscape SDF,
   // b=dilated cover height, a=dilated hardscape height. Smooth along curves and drip lines.
   vec4 field=texture2D(wetEdge,uv);
-  float hard=smoothstep(-.015,.015,field.g);
-  if(hard<=0.0||field.a<=-9999.0||abs(world.y-field.a)>=.15)return 0.0;
-  float open=world.y<field.b?clamp(field.r/.6,0.0,1.0):1.0;
+  vec2 cap=texture2D(wetCaps,uv).rg;
+  float hard=ssrHardWeight(world.y,field.g,field.a,cap.r,cap.g);
+  if(hard<=0.0)return 0.0;
+  float open=ssrOpen(world.y,field.r,field.b);
   if(open<=0.0)return 0.0;
   // Reject lawn/roof/cover before paying for the procedural puddle edge.
   float edge=weatherSurface.y>0.0||weatherSurface.z>0.0?weatherEdge(world.xz):.5;
   ssrPuddle=weatherPuddle(up,weatherSurface.z,edge)*open;
-  return ssrMask(up,world.y,-1e4,field.a,weatherSurface.x*open,weatherSurface.z*open,weatherSurface.y*open,edge)*hard;
+  // ssrHardWeight already validated this height against either independent
+  // receiver. Do not test a cap against the neighbouring deck's field.a again.
+  return ssrMask(up,world.y,-1e4,world.y,weatherSurface.x*open,weatherSurface.z*open,weatherSurface.y*open,edge)*hard;
 }
 // Rain rings bend the reflection exactly as they bend the lit surface's normal.
 vec3 ssrRippled(vec3 position,vec3 normal) {
@@ -116,7 +127,7 @@ export class WetReflectionPass extends Pass {
     this.target=new THREE.WebGLRenderTarget(1,1,{type:THREE.HalfFloatType,depthBuffer:false,
       minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter});
     this.uniforms={image:{value:null},ssrDepth:{value:occlusion.depthTexture},ssrNormal:{value:occlusion.normalTexture},ssrBeautyDepth:{value:null},
-      weatherSurface:{value:new THREE.Vector4()},wetGround:{value:null},wetEdge:{value:null},wetGroundBounds:{value:new THREE.Vector4(0,0,1,1)},
+      weatherSurface:{value:new THREE.Vector4()},wetGround:{value:null},wetEdge:{value:null},wetCaps:{value:null},wetGroundBounds:{value:new THREE.Vector4(0,0,1,1)},
       ssrProjection:{value:new THREE.Matrix4()},ssrInverseProjection:{value:new THREE.Matrix4()},ssrWorld:{value:new THREE.Matrix4()},
       ssrCamera:{value:new THREE.Vector3()},ssrHits:{value:this.target.texture}};
     const material=(name,fragmentShader)=>new THREE.ShaderMaterial({name,uniforms:this.uniforms,vertexShader:vertex,
@@ -161,12 +172,13 @@ void main(){
 }`);
     this.materials=[gather,composite];this.gather=new FullScreenQuad(gather);this.composite=new FullScreenQuad(composite);
   }
-  bind({weatherSurface,precipCover,precipCoverBounds,precipEdge}) {
+  bind({weatherSurface,precipCover,precipCoverBounds,precipEdge,precipCaps}) {
     const edge=precipEdge||{value:null};
     for(const material of this.materials){
       material.uniforms.weatherSurface=weatherSurface;
       material.uniforms.wetGround=precipCover;
       material.uniforms.wetEdge=edge;
+      material.uniforms.wetCaps=precipCaps||{value:null};
       material.uniforms.wetGroundBounds=precipCoverBounds;
     }
     this.update();
