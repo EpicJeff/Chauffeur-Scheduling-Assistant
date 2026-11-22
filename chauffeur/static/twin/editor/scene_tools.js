@@ -407,6 +407,15 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
   let contextMaterialWarning = false;
+  // Household materials are named by the person, and the right-click menu
+  // labels them before any card or the Library has loaded the names.
+  let materialNamesRequested = false;
+  function requestMaterialNames() {
+    if (materialNamesRequested) return;
+    materialNamesRequested = true;
+    readMaterialNames().catch(error => { materialNamesRequested = false; materialWarning(error); });
+  }
+  requestMaterialNames();
   function materialWarning(error) {
     if (!contextMaterialWarning) { console.warn('Could not look up the context material.', error); contextMaterialWarning = true; }
   }

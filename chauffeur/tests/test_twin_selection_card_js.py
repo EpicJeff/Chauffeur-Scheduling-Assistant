@@ -50,12 +50,12 @@ await test('household_summary_narrows_removes_and_marks_immovable_without_edits'
   const room=ref('room',b.rooms[0].id,bid),light=ref('light_fixture','test:light');
   selection.set([...walls,...trees,windows[0],room,light]);
   const summary=host.querySelector('[data-selection-summary]');
-  assert.match(summary.textContent,/3 walls · 2 trees · 1 window · 1 room \(moves with its building\) · 1 light/);
+  assert.match(summary.textContent,/3 walls · 2 plants · 1 window · 1 room \(moves with its building\) · 1 light/);
   assert.ok(host.querySelector('button').textContent==='Close');
   const narrow=[...summary.querySelectorAll('button')].find(n=>n.textContent==='3 walls');await click(narrow);
   assert.deepEqual(selection.members(),walls);assert.equal(saves.length,0);
   selection.set([...walls,...trees,windows[0]]);
-  await fire([...host.querySelector('[data-selection-summary]').querySelectorAll('button')].find(n=>n.textContent==='2 trees'),'click',{metaKey:true});
+  await fire([...host.querySelector('[data-selection-summary]').querySelectorAll('button')].find(n=>n.textContent==='2 plants'),'click',{metaKey:true});
   assert.deepEqual(selection.members(),[...walls,windows[0]]);assert.equal(saves.length,0);
   assert.ok([...host.querySelectorAll('button')].some(n=>n.textContent==='Narrow to walls (3)'));
 });
