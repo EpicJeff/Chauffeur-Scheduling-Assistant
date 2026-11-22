@@ -5,7 +5,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 
 function domain(mesh) {
-  const names=[];for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene && !p.userData.viewingWalls)names.push(p.name);
+  const names=[];for(let p=mesh;p;p=p.parent)if(p.name && !p.isScene)names.push(p.name);
   return JSON.stringify([mesh.userData.yardPart||null,names]);
 }
 const owner=(d,r)=>d+':'+JSON.stringify([r?.buildingId||null,r?.pieceId||null,r?.bakePart||r?.part||null]);
@@ -49,13 +49,13 @@ function staticMesh(m) {
     (m.userData.merged||m.geometry?.userData.bakeHeightfield)&&!m.geometry.userData.bakeExcluded&&
     m.material.name!=='fixture';
 }
-export function filterAlphaSource(source,root) {
+export function filterAlphaSource(source,root,authoredClasses=null) {
   const domains=new Set();source.traverse(m=>{if(staticMesh(m))domains.add(domain(m));});
   const classes=new Map(),alpha=new Map();
   root.traverse(mesh=>{
     if(!staticMesh(mesh))return;
     const d=domain(mesh);if(!domains.has(d))return;
-    const excluded=!!nonOpaque(mesh.material),g=mesh.geometry;
+    const excluded=authoredClasses?.get(mesh) ?? !!nonOpaque(mesh.material),g=mesh.geometry;
     const ranges=g.userData.snapRanges||mesh.userData.snapRanges||[{start:0,count:g.index?.count||g.attributes.position.count}];
     for(const r of ranges){const key=owner(d,r);if(!classes.has(key))classes.set(key,new Set());classes.get(key).add(excluded);}
     if(!excluded)return;

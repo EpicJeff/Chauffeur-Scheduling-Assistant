@@ -158,6 +158,7 @@ function fakeServer({ leaseRequired = false } = {}) {
   const pages = new Map(), manifests = new Map(), calls = [], bad = [], etags = new Map();
   const lease = { holder: null, granted: 0, overlaps: 0, refused: 0 };
   let fail = null, version = 0;
+  const digestOf=async bytes=>'"'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('')+'"';
   const answer = (status, body, type, extra = {}) => new Response(status === 304 ? null : body instanceof Uint8Array ? body.slice() : body,
     { status, headers: { ...(type ? { 'Content-Type': type } : {}), ...extra } });
   const header = (options, name) => {
@@ -192,14 +193,16 @@ function fakeServer({ leaseRequired = false } = {}) {
       if (method === 'POST') {
         const refused = guard(); if (refused) return refused;
         const b = await bytesOf(options.body); pages.set(id, b); etags.set(id, `"${++version}-${b.length}"`);
-        return answer(200, JSON.stringify({ etag: etags.get(id) }), 'application/json');
+        const digest=await digestOf(b);
+        return answer(200, JSON.stringify({ etag: etags.get(id), digest }), 'application/json');
       }
       if (method === 'GET') {
         if (!pages.has(id)) return answer(404, '{"detail":"Not Found"}', 'application/json');
         const tags = String(call.inm || '').split(',').map(t => t.trim().replace(/^W\//, ''));
-        if (tags.some(t => t === '*' || t === etags.get(id))) return answer(304, null, null, { ETag: etags.get(id) });
+        const headers={ETag:etags.get(id),'X-Bake-Digest':await digestOf(pages.get(id)),'X-Bake-Size':String(pages.get(id).length)};
+        if (tags.some(t => t === '*' || t === etags.get(id))) return answer(304, null, null, headers);
         call.full = true;
-        return answer(200, pages.get(id), 'application/octet-stream', { ETag: etags.get(id) });
+        return answer(200, pages.get(id), 'application/octet-stream', headers);
       }
       return answer(405, '{}', 'application/json');
     }
@@ -357,10 +360,10 @@ check('stale_lights_are_only_the_changed_ones', async () => {
   assert.ok(compare(lightSamples(packed,'h1',before,key),lightSamples(packed,'h1',server.pages,key)).mean>=3);
   // An entry's fill is the bake's output (the room fill beside its shadowmask), so a rebake may
   // change it; the key, location, pages and channel are what a refresh must keep.
-  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,input,...e}])=>[id,e]));
+  const placement=lights=>Object.fromEntries(Object.entries(lights).map(([id,{fill,forceRound,...e}])=>[id,e]));
   for (const id of ['k1','k2','h1','c1']) {
-    assert.ok(KEY_RE.test(manifest.lights[id].input),'editor freshness receipt is a bounded fingerprint');
-    assert.equal(server.manifests.get(key).lights[id].input,manifest.lights[id].input,'a force refresh preserves identical physical inputs');
+    assert.equal(manifest.lights[id].input,undefined,'freshness uses the physical viewer key');
+    for(const page of manifest.lights[id].pages)assert.ok(manifest.pageIntegrity[page].size>0 && manifest.pageIntegrity[page].digest,'published pages carry integrity metadata');
   }
   assert.deepEqual(placement(server.manifests.get(key).lights),placement(manifest.lights),'forced refresh retains every key and entry');
   assert.ok(Object.values(server.manifests.get(key).lights).every(e=>e.fill&&typeof e.fill==='object'),'every baked entry carries its room fill');

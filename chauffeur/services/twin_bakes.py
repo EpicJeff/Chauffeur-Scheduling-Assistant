@@ -25,6 +25,7 @@ _KEY = re.compile(r'[0-9a-f]{16,64}')
 _LOCK = threading.RLock()
 _LEASES = {}                        # key -> (owner, until); the add-on runs one worker
 _OWNER = re.compile(r'[A-Za-z0-9_.:-]{1,64}')
+_PAGE_VERSIONS = {}
 
 
 def _now():
@@ -85,7 +86,7 @@ def _write_lease(key, owner):
     _LEASES[key] = (owner, now + LEASE_SECONDS)
 
 
-def save_page(key, page, data, owner):
+def save_page(key, page, data, owner, info=False):
     path = _directory(key) / f'{check_page(page)}.png'
     if len(data) > MAX_PAGE_BYTES:
         raise ValueError('Bake page exceeds 16 MiB.')
@@ -94,7 +95,49 @@ def save_page(key, page, data, owner):
     with _LOCK:
         _write_lease(key, owner)
         _write(path, data)
-    return _etag(data)
+        stat = path.stat()
+        # Nanoseconds exceed JavaScript's safe integer range. Persist strings
+        # through the upload answer and manifest without rounding the stamp.
+        version = {'stat': [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)], 'etag': _etag(data)}
+        if len(_PAGE_VERSIONS) >= 256:
+            _PAGE_VERSIONS.clear()
+        _PAGE_VERSIONS[path] = version
+        return {'etag': version['etag'], 'version': version['stat']} if info else version['etag']
+
+
+def _page_stat(path):
+    stat = path.stat()
+    stamp = [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)]
+    version = _PAGE_VERSIONS.get(path)
+    if version is None:
+        try:
+            manifest = json.loads((path.parent / 'manifest.json').read_text(encoding='utf-8'))
+            saved = manifest.get('pageIntegrity', {}).get(path.stem, {})
+            version = {'stat': saved.get('version'), 'etag': saved.get('digest')}
+        except (FileNotFoundError, ValueError, AttributeError, TypeError):
+            version = {}
+        if not isinstance(version, dict):
+            version = {}
+        if len(_PAGE_VERSIONS) >= 256:
+            _PAGE_VERSIONS.clear()
+        _PAGE_VERSIONS[path] = version
+    # Identical re-uploads retain their content ETag. A changed file cannot use
+    # the saved digest: return its stat identity without reading page bytes.
+    etag = version.get('etag') if version.get('stat') == stamp else None
+    return etag or f'"{stat.st_size:x}-{stat.st_mtime_ns:x}-{stat.st_ctime_ns:x}"', stat.st_size
+
+
+def page_response(key, page, matches=()):
+    """Answer conditional metadata from stat; read bytes only for a 200.
+
+    Keep stat, comparison and reading under the publication lock so the ETag
+    always describes this response, including concurrent Windows replacements.
+    """
+    path = _directory(key) / f'{check_page(page)}.png'
+    with _LOCK:
+        etag, size = _page_stat(path)
+        hit = any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches)
+        return None if hit else path.read_bytes(), etag, size
 
 
 def read_page(key, page):
@@ -186,6 +229,18 @@ def _check_manifest(body):
         raise ValueError('Bake round must be a round id.')
     if 'complete' in body and type(body['complete']) is not bool:
         raise ValueError('Bake complete must be true or false.')
+    if 'pageIntegrity' in body:
+        integrity = body['pageIntegrity']
+        if not isinstance(integrity, dict):
+            raise ValueError('Invalid lightmap page integrity.')
+        for page, value in integrity.items():
+            if (not re.fullmatch(r'[0-9]+', str(page)) or int(page) >= pages
+                    or not isinstance(value, dict) or type(value.get('size')) is not int
+                    or not 0 < value['size'] <= MAX_PAGE_BYTES
+                    or not isinstance(value.get('digest'), str) or not re.fullmatch(r'"[0-9a-f]{64}"', value['digest'])
+                    or ('version' in value and (not isinstance(value['version'], list)
+                        or len(value['version']) != 3 or any(not isinstance(n, str) or not re.fullmatch(r'[0-9]{1,32}', n) for n in value['version'])))):
+                raise ValueError('Invalid lightmap page integrity.')
 
 
 def save_manifest(key, body, owner):

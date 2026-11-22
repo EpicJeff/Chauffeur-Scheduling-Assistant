@@ -654,7 +654,41 @@ def test_viewer_bake_status_parent_flag_uses_authenticated_identity():
                   ('only a parent sees the editor lighting link', expected))
 
 
+def test_conditional_page_reads_stat_without_opening_and_detects_damage():
+    from pathlib import Path
+    from services import twin_bakes
+    key = key_of(0xf12)
+    body = png()
+    with Ctx() as c:
+        saved = c.upload(key, 0, body).json()
+        etag = saved['etag']
+        check(all(isinstance(n, str) for n in saved['version']), 'file nanoseconds survive a JavaScript JSON round trip exactly')
+        m = manifest(pages=1)
+        m['pageIntegrity'] = {'0': {'size': len(body), 'digest': etag, 'version': saved['version']}}
+        check(c.put_manifest(key, m).status_code == 200, 'publish integrity with the manifest')
+        for integrity in ([], {'0': {**m['pageIntegrity']['0'], 'digest': 'bad\nheader'}},
+                          {'0': {**m['pageIntegrity']['0'], 'version': [1, 2, 3]}}):
+            check(c.put_manifest(key, {**m, 'pageIntegrity': integrity}).status_code == 400, 'invalid integrity cannot replace a publication')
+        twin_bakes._PAGE_VERSIONS.clear()  # persisted digest also survives a restart
+        with patch.object(Path, 'read_bytes', side_effect=AssertionError('304 must not open page bytes')):
+            for tag in (etag, '*', 'W/' + etag):
+                r = c.client.get(page_url(key, 0), headers={**c.panel, 'If-None-Match': tag})
+                check(r.status_code == 304, r.text)
+                check(r.headers['etag'] == etag and int(r.headers['X-Bake-Size']) == len(body), r.headers)
+        path = Path(stored_path(key, 0))
+        path.write_bytes(b'damaged')
+        r = c.client.get(page_url(key, 0), headers={**c.panel, 'If-None-Match': '*'})
+        check(r.status_code == 304 and r.headers['etag'] != etag, r.headers)
+        check(int(r.headers['X-Bake-Size']) == 7, r.headers)
+        # Even same-size damage changes the stat identity without a file read.
+        previous = r.headers['etag']
+        path.write_bytes(b'changed')
+        r = c.client.get(page_url(key, 0), headers={**c.panel, 'If-None-Match': '*'})
+        check(r.headers['etag'] != previous, r.headers)
+
+
 TESTS = (
+    test_conditional_page_reads_stat_without_opening_and_detects_damage,
     test_viewer_bake_status_parent_flag_uses_authenticated_identity,
     test_live_other_owner_fences_page_and_manifest_writes,
     test_expired_unclaimed_writes_renew_their_owner,

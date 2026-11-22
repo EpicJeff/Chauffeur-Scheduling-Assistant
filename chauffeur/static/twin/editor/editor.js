@@ -407,7 +407,7 @@ export async function boot() {
     panel.readOnly(!canEdit());
   }
   function syncChip() {
-    statusChip.update({ state: currentBuild?.state, pause: currentBuild?.pause,
+    statusChip.update({ state: currentBuild?.state, pause: currentBuild?.pause, directing,
       cost: snapshot.cost?.total || 0, bake: snapshot.bake,
       estimate: ['running', 'stopped', 'checkpoint'].includes(currentBuild?.state) ? snapshot.cost?.estimate ?? null : null });
   }
@@ -806,8 +806,10 @@ export async function boot() {
     houseKit = kit;
     view = await mountTwin(el('editor-scene'), { plan: emptyPlan(), kit, preserveCamera: true,
       bake: { host: statusChip.bakeHost, blocked: () => previewing ? 'Back to now to bake'
-        : queue.pending() || JSON.stringify(previewPlan()) !== JSON.stringify(snapshot.plan || emptyPlan()) ||
-          view?.bakePlan && JSON.stringify(view.bakePlan) !== JSON.stringify(snapshot.plan || emptyPlan())
+        : queue.pending() ? 'Saving edits; bake when they land'
+        : JSON.stringify(previewPlan()) !== JSON.stringify(shownPlan() || emptyPlan())
+          ? 'Finish or cancel the preview to bake'
+        : view?.bakePlan && JSON.stringify(view.bakePlan) !== JSON.stringify(snapshot.plan || emptyPlan())
           ? 'Saving edits; bake when they land' : '' }, stage:snapshot.stage });
     view.isPiecePickable = isPickable;
     const hiddenState = visibility.snapshot(); view.setHiddenPieces?.(hiddenState.hidden, hiddenState.hiddenKinds);

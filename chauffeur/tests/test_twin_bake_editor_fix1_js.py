@@ -48,13 +48,13 @@ await check('2_impossible_desks_do_no_atlas_work_and_edits_wait_for_idle_without
    document.dispatchEvent(event('pointerdown'));releaseLive();await sleep(100);
    assert.equal(neutral,0,'a gesture starting during the live fetch also defers generation');
    document.dispatchEvent(event('pointerup'));await ready(d);
-   assert.equal(neutral,1);assert.equal(physical,0);assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
+   assert.equal(neutral,1);assert.equal(physical,1,'physical viewer keys are computed after idle');assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
    await d.controller.start();assert.equal(physical,1);assert.equal(transcodes,0);assert.equal(d.controller.held(),null);
-   const key=d.controller.state().key;assert.ok(d.server.manifests.get(key).lights.k1.input);
+   const key=d.controller.state().key;assert.ok(d.server.manifests.get(key).lights.k1.key);assert.equal(d.server.manifests.get(key).lights.k1.input,undefined);
    await d.controller.refresh();assert.equal(d.controller.fresh().length,4);
    d.view.live={layout:()=>liveLayout([k1,k2,h1,{...c1,at:[c1.at[0]+1,...c1.at.slice(1)]}])};
    await d.controller.refresh();assert.deepEqual(d.controller.state().stale,['c1']);
-   const page=d.server.manifests.get(key).lights.k1.pages[0];d.server.pages.delete(key+'/'+page);
+   const page=d.server.manifests.get(key).lights.k1.pages[0];d.server.pages.delete(key+'/'+page);d.server.manifests.get(key).pageRevision=1;
    await d.controller.refresh();assert.ok(d.controller.state().stale.includes('k1'),'missing pages invalidate their lights without a transcode');
    assert.equal(transcodes,0);d.controller.stop();
   }
@@ -87,7 +87,7 @@ await check('4_poll_failure_after_a_completed_press_never_starts_a_bake_or_offer
   await until(()=>/^Could not read baked lighting/.test(output(d)?.textContent),'read error wording');
   assert.equal(buttons(d).find(b=>b.textContent==='Resume').hidden,true);
   const key=d.controller.state().key,page=d.server.manifests.get(key).lights.k1.pages[0];
-  d.server.pages.delete(key+'/'+page);
+  d.server.pages.delete(key+'/'+page);d.server.manifests.get(key).pageRevision=1;
   broken=false;await advance(200000);await d.controller.refresh();await sleep(300);
   assert.equal(d.server.writes(before).length,0);assert.equal(d.controller.state().baking,false);
   assert.ok(d.controller.state().stale.includes('k1'));
@@ -115,7 +115,7 @@ await check('6_spend_and_estimate_are_absent_without_build_state',async()=>{
  const host=new Node('div'),chip=createStatusChip(host);
  chip.update({state:null,cost:0,estimate:4});assert.equal(host.children[1].hidden,true);assert.equal(host.children[2].hidden,true);
  chip.update({state:'running',cost:0,estimate:4});assert.equal(host.children[1].hidden,false);assert.equal(host.children[2].hidden,false);
- chip.update({state:'done',cost:3,estimate:null});assert.equal(host.children[1].hidden,false);assert.equal(host.children[2].hidden,true);
+ chip.update({state:'done',cost:3,estimate:null});assert.equal(host.children[1].hidden,true);assert.equal(host.children[2].hidden,true);
 });
 await check('7_document_library_and_splitter_drags_pause_render_to_texture',async()=>{
  const d=await context('high',null,null,opts());

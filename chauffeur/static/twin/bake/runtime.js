@@ -14,7 +14,7 @@ import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
 import { releaseBakeSource, bakeReceiverRoots } from './source.js';
-import { bakeInputs } from './inputs.js';
+import { matchesEntry, pageDamage } from './freshness.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -163,6 +163,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', failureSource = null, errorReason = null, manifestText = null, initialized = false, mounting = null, manifestRead = false;
+  let checkingKeys = false;
   let blockReason = blocked();
   let authPaused = false, manualWait = false, retryAt = null, retryTimer = null, retryAttempts = 0;
   let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null, resumePending = false;
@@ -304,7 +305,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (!message && !running) status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
         : disabledReason ? disabledReason
         : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
-        : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
+        : !manifestRead || checkingKeys ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
         : stale.length ? `Lighting out of date: ${stale.length} lights` : 'Lighting is up to date';
       if (blockReason) status.textContent = blockReason;
       meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
@@ -569,27 +570,48 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (text === undefined) text = await readManifest(atlas?.key || pending.key);
     await idle();
     if (!valid()) return;
+    const mine = generation;
     const m = typeof text === 'string' ? JSON.parse(text) : null;
-    const inputs = bakeInputs(round, lights, view.materialManifest);
-    const available = new Map();
-    for (const p of new Set(Object.values(m?.lights || {}).flatMap(e => e.pages || [e.page]))) {
-      const r = await api(`api/house/bakes/${atlas?.key || pending.key}/${p}.png`, { headers: { 'If-None-Match': '*' } });
-      if (!valid()) return;
-      if (r.status !== 304 && !r.ok && r.status !== 404) throw bakeHTTPError('Could not read the lightmap page', r.status);
-      available.set(p, r.status === 304 || r.ok);
+    if (!atlas) { atlas = pending.apply(); pending = null; }
+    // The same physical layout and ownership history the viewer uses. No round
+    // shortcut or authored-input receipt can substitute for these keys.
+    packed = bakeLayout(atlas, layout, lights, m?.ownership, m?.lights);
+    lightsKey = JSON.stringify(lights);
+    if (text !== manifestText || !manifestRead) {
+      present.clear(); pageErrors.clear();
+      for (const p of new Set(Object.values(m?.lights || {}).flatMap(e => e.pages || [e.page]))) {
+        const saved = m?.pageIntegrity?.[p];
+        const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, saved ? { headers: { 'If-None-Match': '*' } } : {});
+        if (!valid() || mine !== generation) return;
+        if (r.status !== 304 && !r.ok && r.status !== 404) throw bakeHTTPError('Could not read the lightmap page', r.status);
+        if (r.status === 404) continue;
+        const header = r.headers.get('X-Bake-Size');
+        let damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), header == null ? null : Number(header));
+        // Legacy pages have no integrity receipt. Validate them once per changed
+        // manifest with the same decoder as the viewer, never a GPU transcode.
+        if (!saved && !damage) {
+          try {
+            codec ||= workerCodec();
+            const decoded = await codec.decode(new Uint8Array(await r.arrayBuffer()));
+            if (decoded.width !== layout.room.page || decoded.height !== layout.room.page)
+              throw new Error('A lightmap page does not fit its array.');
+          }
+          catch (error) { damage = `Lightmap page ${p}: ${error.message || error}`; }
+        }
+        if (!valid() || mine !== generation) return;
+        if (damage) pageErrors.set(p, damage); else present.add(p);
+      }
     }
     fresh.clear();
     for (const l of lights) {
-      const e = m?.lights?.[l.device];
-      // Legacy entries have no receipt. A complete bake of this exact saved
-      // round is still valid; otherwise a press verifies it with the baker.
-      if (e && (e.input === inputs[l.device] || !e.input && view.round != null && m.round === view.round && m.complete) &&
-          (e.pages || [e.page]).every(p => available.get(p))) fresh.add(l.device);
+      const e = packed.entries[l.device];
+      if (!packed.ownershipReset && (l.kind !== 3 || e?.scale > 0) && matchesEntry(e, m?.lights?.[l.device]) &&
+          e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m?.forceRound;
     stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
     if (!running) progress = { done: lights.length - stale.length, total: lights.length };
-    manifestText = text; manifestRead = true; showProgress();
+    manifestText = text; manifestRead = true; checkingKeys = false; showProgress();
   }
   async function loadPages() {
     if (inspectOnly) return loadEditorPages();
@@ -629,14 +651,26 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       const etag = etags.get(p), at = locate(p);
       const r = await api(`api/house/bakes/${atlas.key}/${p}.png`, { headers: etag ? { 'If-None-Match': etag } : {} });
       if (!valid()) return;
-      if (r.status === 304) continue;
+      if (r.status === 304) {
+        const size = r.headers.get('X-Bake-Size');
+        const damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), size == null ? null : Number(size));
+        if (damage) {
+          pageErrors.set(p, damage); etags.delete(p);
+          if (present.delete(p)) writeLayer(at.texture, at.layer, null);
+          changed = true;
+        }
+        continue;
+      }
       if (r.status === 404) {
         if (present.has(p)) { writeLayer(at.texture, at.layer, null); present.delete(p); changed = true; }
         etags.delete(p); continue;
       }
       if (!r.ok) continue;     // offline: keep the last complete page
       try {
-        const data = await codec.transcode(new Uint8Array(await r.arrayBuffer()), at.texture.format);
+        const bytes = new Uint8Array(await r.arrayBuffer());
+        const damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), bytes.length);
+        if (damage) throw new Error('damaged stored page');
+        const data = await codec.transcode(bytes, at.texture.format);
         if (!valid()) return;
         writeLayer(at.texture, at.layer, data); present.add(p); etags.set(p, r.headers.get('etag')); changed = true;
         if (pageErrors.delete(p)) showProgress();
@@ -655,8 +689,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     const previous = [...fresh]; fresh.clear();
     for (const l of lights) {
       const e = packed.entries[l.device], stored = m.lights[l.device];
-      if (e && (l.kind !== 3 || e.scale > 0) && stored?.key === e.key && stored.scale === e.scale && stored.location === e.location && stored.channel === e.channel &&
-        JSON.stringify(stored.pages) === JSON.stringify(e.pages) && e.pages.every(p => present.has(p))) fresh.add(l.device);
+      if (e && (l.kind !== 3 || e.scale > 0) && matchesEntry(e, stored) && e.pages.every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m.forceRound;
     stale = lights.filter(l => !fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound).map(l => l.device);
@@ -810,9 +843,10 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     },
     materialsChanged(ids = null) {
       if (inspectOnly) {
-        if (ids && atlas) { controller.refreshMaterials(ids); invalidateMaterialReach(atlas.room, ids); }
+        if (atlas) { if (ids) controller.refreshMaterials(ids); invalidateMaterialReach(atlas.room, ids); }
         ++generation; baker?.cancel(); requested = false; clearRetry();
-        fresh.clear(); stale = lights.map(l => l.device); showProgress(); return true;
+        checkingKeys = true; fresh.clear(); showProgress();
+        controller.refresh().catch(reportError); return true;
       }
       if (!valid() || !atlas || layerOverflow) return false;
       if(ids)controller.refreshMaterials(ids);

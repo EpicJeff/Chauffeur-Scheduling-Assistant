@@ -12,8 +12,9 @@ export function createStatusChip(host) {
       : ['paused', 'checkpoint', 'stopped'].includes(value.state) ? 'Waiting on you' : '';
     state.hidden = !state.textContent;
     spend.textContent = `$${Number(value.cost || 0).toFixed(2)} so far`;
-    spend.hidden = !value.state;
-    estimate.hidden = !value.state || value.estimate == null;
+    const generationVisible = value.directing || ['running', 'paused', 'stopped', 'checkpoint'].includes(value.state);
+    spend.hidden = !generationVisible;
+    estimate.hidden = !generationVisible || value.estimate == null;
     estimate.textContent = value.estimate == null ? '' : `about $${Number(value.estimate).toFixed(2)}`;
     // Stop ends any build still in flight: running, or waiting at a pause or checkpoint.
     if (stop) stop.hidden = !['running', 'paused', 'checkpoint'].includes(value.state);

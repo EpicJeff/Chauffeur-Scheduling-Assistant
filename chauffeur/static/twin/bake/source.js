@@ -43,7 +43,19 @@ export function cloneBakeGeometry(root,children=root.children) {
   for(const child of new Set(children))if(child.parent===root && !providers.has(child))group.add(cloneWithoutProviders(child));
   return group;
 }
-export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,dispose=null}={}) { providers.set(root, {make,extras,receiverRoots,alphaRoots,dispose,children:new Set(children)}); }
+export function bakeAuthoredMaterial(root, mesh) { return providers.get(root)?.authoredMaterials.get(mesh); }
+export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,dispose=null}={}) {
+  // Capture model-created materials before editor presentation swaps any mesh.
+  // In particular, yard receivers must not inherit a focused-room fade.
+  const authoredMaterials = new WeakMap(), alphaClasses = new WeakMap();
+  root.traverse(mesh => {
+    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    authoredMaterials.set(mesh, mesh.material);
+    const m = mesh.material, mode = m.userData.alphaMode;
+    alphaClasses.set(mesh, mode ? mode !== 'opaque' : !!(m.name === 'glass' || m.alphaTest > 0 || m.transparent && !m.userData.viewingOpaque));
+  });
+  providers.set(root, {make,extras,receiverRoots,alphaRoots,dispose,authoredMaterials,alphaClasses,children:new Set(children)});
+}
 export function bakeSource(root) {
   const entries = [];
   root.updateMatrixWorld(true);
@@ -65,7 +77,9 @@ export function bakeSource(root) {
     }
   }
   source.updateMatrixWorld(true);
-  for (const receivers of providers.get(root)?.alphaRoots?.() || bakeReceiverRoots(root)) filterAlphaSource(source,receivers);
+  const authored = providers.get(root)?.alphaRoots;
+  for (const receivers of authored?.() || bakeReceiverRoots(root))
+    filterAlphaSource(source, receivers, authored ? providers.get(receivers)?.alphaClasses : null);
   sources.set(root, {source,signature});
   return source;
 }

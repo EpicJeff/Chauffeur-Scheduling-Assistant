@@ -192,8 +192,7 @@ if (which === 'chip_words_follow_state') {
     text = await say({state, pause: null, cost: 1.5, estimate: null});
     assert.doesNotMatch(text, /\bWorking\b|Waiting on you/, `nothing else: a ${state} build says neither word: ` + text);
     assert.equal(stops().length, 0, `no Stop when no build is running (${state})`);
-    if (state) assert.match(text, /\$1\.50 so far/, 'completed build keeps its spend: ' + text);
-    else assert.doesNotMatch(text, /so far|about \$/, 'no build has no spend pill: ' + text);
+    assert.doesNotMatch(text, /so far|about \$/, 'the old generation bar is hidden: ' + text);
   }
   console.log('  ok chip_words_follow_state');
  } else if (which === 'chip_preserves_manual_bake_controls') {
@@ -221,7 +220,7 @@ if (which === 'chip_words_follow_state') {
   assert.equal((text.match(/so far/g) || []).length, 1, 'one spend figure: ' + text);
   assert.equal((text.match(/about \$/g) || []).length, 1, 'one estimate: ' + text);
   text = await say({state: 'done', pause: null, cost: 3.1, estimate: null});
-  assert.match(text, /\$3\.10 so far/, text);
+  assert.doesNotMatch(text, /so far/, 'completed generation hides its spend: ' + text);
   assert.doesNotMatch(text, /about/, 'no estimate without one: ' + text);
   assert.doesNotMatch(text, /NaN|undefined|null/, text);
   console.log('  ok spend_and_estimate_format');

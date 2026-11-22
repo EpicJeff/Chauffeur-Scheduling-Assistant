@@ -8022,12 +8022,12 @@ async def house_bake_page_post(key: str, page: str, request: Request):
             raise HTTPException(status_code=413, detail='Bake page exceeds 16 MiB.')
         data.extend(chunk)
     try:
-        etag = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data), request.headers.get('X-Bake-Owner'))
+        saved = await asyncio.to_thread(twin_bakes.save_page, key, page, bytes(data), request.headers.get('X-Bake-Owner'), info=True)
     except twin_bakes.BakeLeaseConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {'etag': etag}
+    return saved
 
 
 @app.post('/api/house/bakes/{key}/lease')
@@ -8047,14 +8047,13 @@ def house_bake_lease(key: str, body: dict = Body(...)):
 def house_bake_page_get(key: str, page: str, request: Request):
     from services import twin_bakes
     try:
-        data, etag = twin_bakes.read_page(key, page)
+        data, etag, size = twin_bakes.page_response(key, page, request.headers.get('if-none-match', '').split(','))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail='No such bake page.') from exc
-    matches = request.headers.get('if-none-match', '').split(',')
-    headers = {'ETag': etag}
-    if any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches):
+    headers = {'ETag': etag, 'X-Bake-Digest': etag, 'X-Bake-Size': str(size)}
+    if data is None:
         return Response(status_code=304, headers=headers)
     kind = 'image/ktx2' if data.startswith(twin_bakes.KTX2_SIGNATURE) else 'image/png'
     return Response(content=data, media_type=kind, headers=headers)

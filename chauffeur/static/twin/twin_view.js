@@ -21,7 +21,7 @@ import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
-import { registerBakeSource } from './bake/source.js';
+import { registerBakeSource, bakeAuthoredMaterial } from './bake/source.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { atlasMesh } from './bake/atlas.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
@@ -1782,15 +1782,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // scene: it contains sheets, handles and temporarily ghosted finishes.
       // The viewer's full-wall topology preserves its existing atlas keys.
       const bakePlan = plan;
-      let physical = null, physicalYard = null, alphaHouse = null;
+      let physical = null, physicalYard = null;
       const yardMaterials = new Set();
-      const copyReceivers = (node, alpha = false) => {
-        const original = selectedMaterials.get(node) || faded.get(node) || node.material;
+      const copyReceivers = node => {
+        const original = bakeAuthoredMaterial(yardGroup, node) || selectedMaterials.get(node) || faded.get(node) || node.material;
         const shown = node.material;
         node.material = original;
-        const receives = atlasMesh(node) || alpha && node.isMesh && node.userData.merged && !Array.isArray(original);
+        const receives = atlasMesh(node);
         node.material = shown;
-        const children = node.children.map(child => copyReceivers(child, alpha)).filter(Boolean);
+        const children = node.children.map(copyReceivers).filter(Boolean);
         if (!receives && !children.length) return null;
         // Skip trees, grass instances, props and editor layers entirely. Only
         // receiving buffers are copied; authored materials remain shared.
@@ -1803,12 +1803,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       };
       registerBakeSource(twin.root, () => buildTwin(withoutSurfaceMaterials(bakePlan), { ...kit, manifest: {} }, tier,
         { viewing: true, bakeSource: true }).root, { extras: false,
-          // Classification needs only the existing authored alpha faces. Full
-          // viewer-shaped physical receivers are generated only for a run.
+          // Authored viewer-shaped materials classify alpha and supply physical
+          // reach inputs. Drawn editor fades, focus and selection never enter.
           alphaRoots: () => {
-            alphaHouse ||= copyReceivers(twin.root, true) || new THREE.Group();
-            alphaHouse.updateMatrixWorld(true);
-            return [alphaHouse];
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            physical.root.updateMatrixWorld(true);
+            return [physical.root, ...(yardGroup ? [yardGroup] : [])];
           },
           receiverRoots: () => {
             physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
@@ -1821,8 +1821,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           dispose: () => {
             if (physical) release(physical);
             if (physicalYard) disposeObject(physicalYard, { keepMaterials: yardMaterials });
-            if (alphaHouse) disposeObject(alphaHouse, { keepMaterials: yardMaterials });
-            physical = physicalYard = alphaHouse = null; yardMaterials.clear();
+            physical = physicalYard = null; yardMaterials.clear();
           } });
     }
     const host = document.getElementById('twin-controls');

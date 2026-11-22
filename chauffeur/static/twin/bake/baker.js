@@ -3,7 +3,7 @@ import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } fro
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights } from './reach.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
-import { bakeInputs } from './inputs.js';
+import { matchesEntry } from './freshness.js';
 
 export { encodePage, decodePage } from './codec.js';
 
@@ -85,7 +85,6 @@ async function exists(api, url) {
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
   round = view.round ?? null, owner = null }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
-  const inputs = bakeInputs(plan, lights, view.materialManifest);
   const bakeView = Object.create(view); bakeView.plan = plan;
   let packed, assignmentHistory;
   const path = `api/house/bakes/${atlas.key}`;
@@ -119,9 +118,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   };
   const isStale = device => packed.entries[device] && (
     lights.find(l => l.device === device)?.kind === 3 && !(packed.entries[device].scale > 0) ||
-    (activeForce && manifest.lights[device]?.forceRound !== activeForce) || manifest.lights[device]?.key !== packed.entries[device].key ||
-    manifest.lights[device]?.location !== packed.entries[device].location ||
-    manifest.lights[device]?.scale !== packed.entries[device].scale);
+    (activeForce && manifest.lights[device]?.forceRound !== activeForce) || !matchesEntry(packed.entries[device], manifest.lights[device]));
   const ready = enabled ? readManifest().then(async m => {
     await view.bake?.idle?.();
     if (!valid()) return;
@@ -148,8 +145,13 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   async function pageData(page, size, count) {
     const r = await api(`${path}/${page}.png`);
     if (r.ok) {
-      const decoded = await codec.decode(new Uint8Array(await r.arrayBuffer()));
-      if (decoded.width === size && decoded.height === size) return decoded.channels;
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      try {
+        // A previous attempt may have uploaded a valid page before its manifest
+        // PUT failed. Decode those channels and preserve finished-light work.
+        const decoded = await codec.decode(bytes);
+        if (decoded.width === size && decoded.height === size) return decoded.channels;
+      } catch (error) { if (!activeForce) throw error; }
     } else if (r.status !== 404) throw new Error(`Could not read the lightmap (HTTP ${r.status}).`);
     return Array.from({ length: count }, () => new Uint8Array(size * size));
   }
@@ -249,7 +251,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
-      next.lights[device] = { ...expected, input: inputs[device], ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
+      next.lights[device] = { ...expected, ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });
     // Bank zero reserves unlit rooms too. Publish any missing reserved pages
@@ -262,18 +264,21 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       uploads.push({ page, bytes: empty });
     }
     delete next.sky; // Ignore legacy sky metadata when publishing room lights.
-    next.lights[id] = { ...packed.entries[id], input: inputs[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
+    next.lights[id] = { ...packed.entries[id], fill, ...(activeForce ? { forceRound: activeForce } : {}) };
     // Which house round was baked and whether it is whole.
     next.round = round;
     next.complete = lights.every(l => !packed.entries[l.device] ||
-      next.lights[l.device]?.key === packed.entries[l.device].key &&
-      next.lights[l.device]?.scale === packed.entries[l.device].scale &&
+      matchesEntry(packed.entries[l.device], next.lights[l.device]) &&
       (!activeForce || next.lights[l.device]?.forceRound === activeForce));
     if (next.complete) delete next.forceRound;
+    next.pageIntegrity = { ...manifest.pageIntegrity };
     for (const { page, bytes } of uploads) {
       if (!valid()) return null;
       const r = await api(`${path}/${page}.png`, { method: 'POST', headers: { 'Content-Type': 'image/ktx2' }, body: bytes });
       if (!r.ok) throw new Error('Could not save the lightmap.');
+      const saved = await r.json();
+      next.pageIntegrity[page] = { size: bytes.length, digest: saved.digest || saved.etag,
+        ...(saved.version ? { version: saved.version } : {}) };
     }
     if (!valid()) return null;
     const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
@@ -298,18 +303,15 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   async function settle() {
     await ready;
     if (!enabled || !valid() || lights.some(l => isStale(l.device))) return false;
-    const receipted = m => lights.every(l => !packed.entries[l.device] || m.lights[l.device]?.input === inputs[l.device]);
-    if (manifest.round === round && manifest.complete === true && receipted(manifest)) return false;
+    if (manifest.round === round && manifest.complete === true) return false;
     return withBakeLease(request, path, who, valid, async check => {
       await check();
       const latest = await readManifest();
-      if (!latest || !valid() || (latest.round === round && latest.complete === true && receipted(latest))) return false;
-      const whole = lights.every(l => !packed.entries[l.device] || latest.lights[l.device]?.key === packed.entries[l.device].key &&
-        latest.lights[l.device]?.scale === packed.entries[l.device].scale &&
+      if (!latest || !valid() || (latest.round === round && latest.complete === true)) return false;
+      const whole = lights.every(l => !packed.entries[l.device] || matchesEntry(packed.entries[l.device], latest.lights[l.device]) &&
         (!latest.forceRound || latest.lights[l.device]?.forceRound === latest.forceRound));
       if (!whole) return false;
-      const next = { ...latest, round, complete: true, lights: Object.fromEntries(Object.entries(latest.lights)
-        .map(([id, entry]) => [id, inputs[id] ? { ...entry, input: inputs[id] } : entry])) }; delete next.forceRound;
+      const next = { ...latest, round, complete: true }; delete next.forceRound;
       await check();
       const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next) });
