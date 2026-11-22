@@ -217,8 +217,8 @@ if __name__ == '__main__':
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
-    baseline = subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/sky/precipitation.js'], cwd=ROOT, encoding='utf-8')
-    baseline_yard = subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/twin_yard.js'], cwd=ROOT, encoding='utf-8')
+    baseline = subprocess.check_output(['git', 'show', '1e2c46dc:chauffeur/static/twin/sky/precipitation.js'], cwd=ROOT, encoding='utf-8')
+    baseline_yard = subprocess.check_output(['git', 'show', '1e2c46dc:chauffeur/static/twin/twin_yard.js'], cwd=ROOT, encoding='utf-8')
     driver = DRIVER
     if '--cost-only' in sys.argv:
         driver = driver.replace('async function test(name, fn) {', "async function test(name, fn) {\n  if (!name.startsWith('measured')) return;")
