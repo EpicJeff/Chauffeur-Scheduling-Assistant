@@ -90,7 +90,7 @@ async function exists(api, url) {
 }
 
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
-  round = view.round ?? null, owner = null, damaged = [], inspectLegacy = false }) {
+  round = view.round ?? null, lighting = view.lighting ?? null, owner = null, damaged = [], inspectLegacy = false }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
   const inputLights = lights; // reachLights adds derived, metre-valued ranges.
   const inputs = keyInputs(view);
@@ -125,12 +125,12 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   const signed = m => {
     m = {...m, lights: Object.fromEntries(Object.entries(m.lights).filter(([id]) => !realtimeReason(packed, id)))};
     const cheap = signatures(m);
-    return { ...m, keyInputs: inputs, realtime: realtime(m), lights: Object.fromEntries(Object.entries(m.lights).map(([id, e]) =>
+    return { ...m, lighting, keyInputs: inputs, realtime: realtime(m), lights: Object.fromEntries(Object.entries(m.lights).map(([id, e]) =>
       [id, matchesEntry(packed.entries[id], e) ? { ...e, cheap: cheap[id] } : e])) };
   };
   const unsigned = m => {
     const cheap = signatures(m);
-    return !sameKeyInputs(m.keyInputs, inputs) || JSON.stringify(m.realtime || {}) !== JSON.stringify(realtime(m)) ||
+    return m.lighting !== lighting || !sameKeyInputs(m.keyInputs, inputs) || JSON.stringify(m.realtime || {}) !== JSON.stringify(realtime(m)) ||
       lights.some(l => packed.entries[l.device] && m.lights[l.device]?.cheap !== cheap[l.device]);
   };
   // Legacy bytes were read before the lease. Only migrate the exact version

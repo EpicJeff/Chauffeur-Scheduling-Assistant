@@ -187,7 +187,7 @@ export async function boot() {
       const round = roundOf(result);
       // A poll may already have delivered a newer foreign round.
       if (round >= currentRound() || currentRound() == null) {
-        snapshot = { ...snapshot, plan: result.plan, model: result.model };
+        snapshot = { ...snapshot, plan: result.plan, model: result.model, lighting: result.lighting ?? null };
         if (!snapshot.rounds.some(row => row.id === round)) snapshot.rounds = [...snapshot.rounds, { id: round }].slice(-50);
       }
       info.after = round;
@@ -224,7 +224,7 @@ export async function boot() {
     el('editor-save-state').textContent = state.saved ? 'Saved'
       : `${state.unsaved ? '' : 'Saving '}${count} ${count === 1 ? 'change' : 'changes'}${state.unsaved ? ' not saved' : ''}`;
     el('editor-toolbar-save-state').textContent = el('editor-save-state').textContent;
-    if (view) view.round = currentRound();
+    if (view) { view.round = currentRound(); view.lighting = snapshot.lighting ?? null; }
     view?.bake?.syncBlocked?.();
   }
   async function settleView(plan, info) {
@@ -452,7 +452,7 @@ export async function boot() {
     return plan;
   }
   async function renderScene(timing = null) {
-    if (view) view.round = currentRound();
+    if (view) { view.round = currentRound(); view.lighting = snapshot.lighting ?? null; }
     view?.bake?.syncBlocked?.();
     view?.setSite?.(snapshot.site);
     if (tools?.dragging() || lot?.dragging()) return;

@@ -603,9 +603,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     editorFreshness(m);
     manifestText = text; manifestRead = true; showProgress();
   }
+  // Old rounds/manifests retain round-based freshness until a pressed bake.
+  const lightingChanged = m => !!m && (m.lighting && view.lighting
+    ? m.lighting !== view.lighting : m.round !== (view.round ?? null));
   function editorFreshness(m) {
     const cheap = cheapSignatures(lights, m?.ownership, m?.lights);
-    editedRound = !!m && m.round !== (view.round ?? null);
+    editedRound = lightingChanged(m);
     const currentInputs = !editedRound && !materialDirty && sameKeyInputs(m?.keyInputs, keyInputs(view));
     fresh.clear();
     for (const l of lights) {
@@ -839,7 +842,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   }
   const controller = {
     syncBlocked() {
-      if (inspectOnly && manifestRead && editorManifest && editedRound !== (editorManifest.round !== (view.round ?? null)))
+      if (inspectOnly && manifestRead && editorManifest && editedRound !== lightingChanged(editorManifest))
         editorFreshness(editorManifest);
       const next = blocked();
       if (next === blockReason) return;

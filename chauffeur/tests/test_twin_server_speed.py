@@ -243,6 +243,15 @@ def test_op_and_state_responses_identical_with_cache():
         # serialized order/float/Unicode representation remain identical.
         current_round = actual['state'].pop('current_round')
         assert current_round == actual['state']['rounds'][-1]['id']
+        # Lighting revision is new round evidence, not a change to the golden
+        # plan/model. Verify it before comparing the historical payload fields.
+        from services.twin_lighting_rev import lighting_fingerprint
+        lighting = actual['state'].pop('lighting')
+        assert lighting == lighting_fingerprint(actual['state']['model'])
+        if actual['kind'] != 'revert':
+            assert actual['op'].pop('lighting') == lighting
+        for record in actual['state']['rounds']:
+            assert len(record.pop('lighting')) == 32
         stage = actual['state'].pop('stage')  # faaae672 (v2.499.914)
         assert isinstance(stage, dict) and 'centre' in stage and 'radius' in stage
         actual['state']['site'].pop('front_bearing_source', None)  # 3a89f573 (v2.499.908)

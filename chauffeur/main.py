@@ -7474,10 +7474,13 @@ def house_facade_delete(fid: str):
 def house_twin_api():
     from services import twin_store, twin_site, twin_stage
     twin_site.start_bearing_job()
-    plan = twin_store.current()
-    return {'plan': plan, 'rounds': twin_store.rounds(),
-            'round': twin_store.current_id(), 'kit_id': 'modern_farmhouse', 'site': twin_site.site(),
-            'stage': twin_stage.read(plan)}
+    with twin_store.LIFECYCLE, twin_store._LOCK:
+        plan = twin_store.current()
+        round_id = twin_store.current_id()
+        return {'plan': plan, 'rounds': twin_store.rounds(),
+                'round': round_id, 'lighting': twin_store.round_lighting(round_id),
+                'kit_id': 'modern_farmhouse', 'site': twin_site.site(),
+                'stage': twin_stage.read(plan)}
 
 
 def _house_ha_context(settings=None):
@@ -8969,6 +8972,7 @@ def house_editor_op(request: Request, body: dict = Body(default={})):
             plan = twin_model_bridge.flatten(model)
             twin_store.prime_reads(result['round'], model, plan)
         return twin_timing.response({'round': result['round'], 'words': result['summary'],
+                                     'lighting': twin_store.round_lighting(result['round']),
                                      'plan': plan, 'model': model}, timing)
 
 
@@ -9101,7 +9105,8 @@ def house_editor_state(have_round: int | None = None):
                          'estimate': twin_build.remaining_estimate(latest) if latest else None},
                 'build': latest,
                 # Manual editor baking supersedes B15; retain the poll summary.
-                'bake': twin_bakes.status(current_round), 'current_round': current_round}
+                'bake': twin_bakes.status(current_round), 'current_round': current_round,
+                'lighting': twin_store.round_lighting(current_round)}
 
 
 @app.get('/api/house/twin/rounds/{round_id}')

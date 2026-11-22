@@ -20,6 +20,7 @@ from PIL import Image, ImageOps
 
 from services.twin_timing import timed as _edit_timed
 from services import storage, twin_model, twin_model_bridge, twin_pdf, twin_plan, twin_place
+from services.twin_lighting_rev import lighting_fingerprint
 
 DATA_DIR = os.path.join(os.path.dirname(storage.DB_PATH), 'twin')
 HISTORY_KEEP = 50
@@ -558,6 +559,12 @@ def rounds() -> list[dict]:
         return _state()['rounds']
 
 
+def round_lighting(round_id) -> str | None:
+    """Saved evidence only: pre-fingerprint rounds and an empty house are unknown."""
+    with _LOCK:
+        return next((r.get('lighting') for r in _state()['rounds'] if r['id'] == round_id), None)
+
+
 def _check_base(base):
     if base is not None and (type(base) is not int or base < 1):
         raise ValueError('The base must be a round id.')
@@ -665,7 +672,7 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
     at = datetime.now(timezone.utc).isoformat()
     stale = base is not None and base != row['current']
     record = {'id': round_id, 'kind': kind, 'created': at, 'note': note,
-              'cost': cost, 'run': run, 'stale': stale}
+              'cost': cost, 'run': run, 'stale': stale, 'lighting': lighting_fingerprint(plan)}
     if step is not None:
         record['step'] = deepcopy(step)
     if partial:

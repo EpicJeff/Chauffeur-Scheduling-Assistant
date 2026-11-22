@@ -874,7 +874,7 @@ def _tombstone(kind, piece, building):
 
 # Caches the model derives from walls and joints (a person never edits them),
 # and provenance marks (who owns a piece is not a reader's error).
-_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
+_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|porches\[[^\]]+\]\.polygon|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
 
 
 def _derived_path(path):
@@ -910,9 +910,9 @@ def save(edit, actor_id, reason=''):
             edit['reg'] = _registration(edit.get('reg'))
             twin_store._source_page(twin_store._state(), edit.get('source'), edit.get('page'))
         # A model update_model just published is already normalized: skip the second pass.
-        finish_only = twin_model_ops.material_only(edit)
+        preserve_polygons = twin_model_ops.preserves_room_geometry(edit)
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
-                      else twin_model.normalize(current, preserve_room_polygons=finish_only))
+                      else twin_model.normalize(current, preserve_room_polygons=preserve_polygons))
         model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
@@ -947,10 +947,11 @@ def save(edit, actor_id, reason=''):
                 row['sources'] = place_row['sources']
         round_id, written_model = twin_store.update_model(
             lambda current: model, 'edit', note=summary, changes=changes, state_mutator=metadata,
-            return_model=True, preserve_room_polygons=finish_only)
+            return_model=True, preserve_room_polygons=preserve_polygons)
         for tombstone in tombstones:
             twin_store.add_tombstone({**tombstone, 'round': round_id})
         if edit.get('op') == 'registration':
             edit['reg']['source'] = 'person'
             twin_store.set_registration(edit['source'], edit['page'], edit['level'], edit['reg'])
-        return {'round': round_id, 'summary': summary, 'model': written_model}
+        return {'round': round_id, 'lighting': twin_store.round_lighting(round_id),
+                'summary': summary, 'model': written_model}

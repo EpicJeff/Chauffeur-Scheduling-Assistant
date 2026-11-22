@@ -1525,6 +1525,11 @@ def material_only(op):
     return bool(keys) and 'materials' in op and set(op) <= keys
 
 
+def preserves_room_geometry(op):
+    """A rename, like a slot write, must not re-derive cached room polygons."""
+    return material_only(op) or isinstance(op, dict) and op.get('op') == 'set' and op.get('field') == 'name'
+
+
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None) -> tuple[dict, str]:
     from services import twin_fixtures
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
@@ -1554,7 +1559,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     op = deepcopy(op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
-    model, notes = twin_model.normalize(model, preserve_room_polygons=material_only(op)) if _normalized is None else deepcopy(_normalized)
+    model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
     if kind in twin_effect_fixtures.OPS:
         try:
             return model, twin_effect_fixtures.apply_op(model, op)
@@ -1858,7 +1863,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                   op.get('exterior', False), actor)
         _split_drawing(building, actor)
         hosts.carry_split(building, before)
-    if kind != 'set_material':
+    if not preserves_room_geometry(op):
         notes.extend(twin_model.derive(building))
     if kind == 'add_porch':
         room = _find(building, 'rooms', porch_id)
