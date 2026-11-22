@@ -124,6 +124,13 @@ async function cameraBindings({view,tools,fire,ops}, body) {
   real.target=controls.target;real.mouseButtons=controls.mouseButtons;
   real.maxPolarAngle=controls.maxPolarAngle;real.enableDamping=false;
   Object.defineProperty(real,'enabled',{get:()=>controls.enabled});real.update();
+  // Mouselook updates the production controls directly, so that path must
+  // reach the same real controls as OrbitControls' own pointer listeners.
+  const update=controls.update;
+  controls.update=()=>{
+    real.minPolarAngle=controls.minPolarAngle??0;real.maxPolarAngle=controls.maxPolarAngle??Math.PI;
+    return real.update();
+  };
   function mouse(type,p,button=0) {
     const extra={pointerType:'mouse',button:type==='pointermove'?-1:button,
       buttons:type==='pointerup'?0:button===2?2:button===1?4:1};
@@ -137,11 +144,13 @@ async function cameraBindings({view,tools,fire,ops}, body) {
     const members=tools.selectionStore.members(),count=ops.length;
     mouse('pointerdown',p,button);assert.equal(controls.enabled,true);
     mouse('pointermove',[p[0]+40,p[1]],button);mouse('pointerup',[p[0]+40,p[1]],button);await tick();
-    assert.ok(view.camera.position.distanceTo(position)>1e-5,'navigation actually moves the camera');
     if(button===2) {
-      assert.ok(view.camera.quaternion.angleTo(rotation)>1e-5,'right-drag actually orbits');
-      assert.ok(controls.target.distanceTo(target)<1e-8,'right-drag retains its pivot');
+      assert.ok(view.camera.position.distanceTo(position)<1e-8,'right-drag looks in place');
+      assert.ok(view.camera.quaternion.angleTo(rotation)>1e-5,'right-drag turns the view');
+      assert.ok(Math.abs(controls.target.distanceTo(position)-target.distanceTo(position))<1e-8,'right-drag retains target distance');
+      assert.ok(controls.target.clone().sub(position).normalize().distanceTo(view.camera.getWorldDirection(new THREE.Vector3()))<1e-8,'pivot follows the view');
     } else {
+      assert.ok(view.camera.position.distanceTo(position)>1e-5,'pan actually moves the camera');
       assert.ok(view.camera.quaternion.angleTo(rotation)<1e-7,'middle-drag pans without rotating');
       assert.ok(view.camera.position.clone().sub(position).distanceTo(controls.target.clone().sub(target))<1e-8,'middle-drag carries the pivot');
     }
@@ -163,8 +172,8 @@ async function cameraBindings({view,tools,fire,ops}, body) {
     assert.equal(doc.getElementById('editor-drag-outline').getAttribute('points'),'');
     assert.equal(controls.enabled,true);assert.equal(ops.length,count);assert.equal(JSON.stringify(flat),before);
   }
-  try {await body({orbit:p=>navigate(p),pan:p=>navigate(p,1),marquee});}
-  finally {real.dispose();canvas.ownerDocument=owner;}
+  try {await body({look:p=>navigate(p),pan:p=>navigate(p,1),marquee});}
+  finally {controls.update=update;real.dispose();canvas.ownerDocument=owner;}
 }
 await test('pad_corner_wins_over_tree',async({view,tools,library,terrain,ops,look,fire,ordinaryPresses})=>{
   flat.site.terraces=[{id:'pad:gesture',polygon:[[200,200],[220,200],[220,220],[200,220]],height:0,blend:0}];
@@ -247,8 +256,8 @@ await test('armed_modes_then_first_handle_source_own_the_press',async({view,tool
 });
 await test('unselected_press_navigates',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   look([200,200,0]);const p=pixel([200,200,0]), before=JSON.stringify(flat);
-  await cameraBindings({view,tools,fire,ops},async({orbit,pan,marquee})=>{
-    await orbit(p);assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
+  await cameraBindings({view,tools,fire,ops},async({look,pan,marquee})=>{
+    await look(p);assert.equal(tools.selection().id,null);assert.equal(view.controls.enabled,true);
     await pan(p);assert.equal(view.controls.enabled,true);
     assert.equal(ops.length,0);assert.equal(tools.selection().id,null);
     assert.ok(controlStates.every(Boolean));assert.equal(JSON.stringify(flat),before);
@@ -266,8 +275,8 @@ await test('selected_wall_body_does_not_move_with_select_tool',async({view,tools
   const p=pixel([...point,0],building);
   assert.equal(view.pick(...p)?.id,W,'press is on the actual wall');
   assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false,'body press is outside the drawn end and middle handles');
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);
     assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(view.controls.enabled,true);
     assert.equal(tools.selection().id,W);
     await marquee(p);
@@ -334,8 +343,8 @@ await test('yard_click_refreshes_its_selection_outline',async({view,look,pixel,c
 });
 await test('move_tool_unselected_press_navigates',async({view,tools,ops,controlStates,look,pixel,fire})=>{
   look([200,200,0]);tools.setTool('move');const p=pixel([200,200,0]),before=JSON.stringify(flat);
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
     assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
     assert.equal(JSON.stringify(flat),before);
     await marquee(p);
@@ -450,8 +459,8 @@ await test('rotate_tool_needs_selection_first',async({view,tools,ops,controlStat
   view.setView('ext');tools.setTool('rotate');
   const point=wall.from.map((v,i)=>v*.8+wall.to[i]*.2);look([...point,0],building,40);
   const p=pixel([...point,0],building),before=JSON.stringify(flat);assert.equal(view.pick(...p)?.building,B);
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,null);
     assert.equal(ops.length,0);assert.equal(tools.selection().id,null);assert.ok(controlStates.every(Boolean));
     assert.equal(JSON.stringify(flat),before);
     await marquee(p);
@@ -460,8 +469,8 @@ await test('rotate_tool_needs_selection_first',async({view,tools,ops,controlStat
 await test('move_tool_other_selection_does_not_grab_tree',async({view,tools,ops,controlStates,look,pixel,fire,click})=>{
   tools.select({kind:'building',id:B,building:B});tools.setTool('move');look([200,200,0]);
   const p=pixel([200,200,0]);
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);
     assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
     await marquee(p);
     click(p);assert.equal(tools.selection().id,'tree:gesture');assert.equal(view.controls.enabled,true);
@@ -475,11 +484,11 @@ await test('move_and_rotate_do_not_grab_a_building_through_an_unselected_tree',a
   flat.site.planting.push({id:'tree:in-front',kind:'tree',at:[hit.point[0]/.3048,-hit.point[2]/.3048],height:hit.point[1]/.3048+2});
   try {
     assert.equal(library.pickSite(...p)?.id,'tree:in-front','real tree box is in front of the building body');
-    await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
+    await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
       for(const tool of ['move','rotate']) {
         tools.setTool(tool);
         assert.equal(view.controls.enabled,true);assert.equal(tools.selection().id,B);
-        await orbit(p);
+        await look(p);
         assert.equal(ops.length,0);assert.equal(tools.selection().id,B);assert.ok(controlStates.every(Boolean));
       }
       for(const tool of ['move','rotate']) {
@@ -492,8 +501,8 @@ await test('rotate_tool_yard_body_selects_but_never_moves',async({view,tools,ops
   tools.setTool('rotate');look([200,200,0]);const p=pixel([200,200,0]);
   click(p);assert.equal(tools.selection().id,'tree:gesture');
   assert.equal(tools.handleAt({clientX:p[0],clientY:p[1]}),false);
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);
     assert.equal(ops.length,0);assert.equal(tools.selection().id,'tree:gesture');assert.ok(controlStates.every(Boolean));
     await marquee(p);
   });
@@ -513,8 +522,8 @@ await test('selected_room_body_does_not_move_with_select_tool',async({view,tools
   const ps=room.polygon.flatMap(vertex=>[.3,.5,.7].map(t=>vertex.map((v,i)=>v*(1-t)+centre[i]*t)));
   const p=ps.map(point=>pixel([...point,0],building)).find(p=>view.pick(...p)?.id===room.id&&!tools.handleAt({clientX:p[0],clientY:p[1]}));
   assert.ok(p,'actual room floor away from drawn handles exists');
-  await cameraBindings({view,tools,fire,ops},async({orbit,marquee})=>{
-    await orbit(p);
+  await cameraBindings({view,tools,fire,ops},async({look,marquee})=>{
+    await look(p);
     assert.equal(ops.length,0);assert.ok(controlStates.every(Boolean));assert.equal(tools.selection().id,room.id);
     await marquee(p);
   });
