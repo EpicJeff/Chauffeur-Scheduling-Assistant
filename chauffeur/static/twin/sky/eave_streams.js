@@ -73,7 +73,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
         const n=[0,0,0];n[g.axis]=g.sign;
         const origin=frame.world([0,0,0]),tip=frame.world(n);
         result.push({a,b,outward:[tip[0]-origin[0],0,tip[2]-origin[2]],building:frame.b.id,
-          section:g.index,kind:g.s.kind,gridStart:lo*FT,
+          section:g.index,side:`${'xy'[g.axis]}${g.sign>0?1:0}`,edge:g.edge>=0?g.edge:null,kind:g.s.kind,gridStart:lo*FT,
           ...eavePattern(plan,frame.b,g.s,g.edge,kit)});
       }
     }
@@ -95,7 +95,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
           const s=sections[attachment.section];
           const pattern=eavePattern(plan,frame.b,s,null,kit),{pitch}=pattern;
           result.push({a:start,b:end,outward:[o[0]-start[0],0,o[2]-start[2]],building:frame.b.id,section:attachment.section,
-            kind:'attachment',gridStart:pitch===null?0:-pitch*.5,...pattern});
+            side:null,edge:null,kind:'attachment',gridStart:pitch===null?0:-pitch*.5,...pattern});
         }
       }
     }
@@ -103,7 +103,13 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
   return clipExposedEdges(result,frames,roofs);
 }
 
-function clipExposedEdges(edges,frames,roofs) {
+export function clipExposedEdges(edges,frames,roofs) {
+  return createEaveClipper(frames,roofs)(edges);
+}
+
+// Reuse the exact mesh/wall exposure query for rebuild-time endpoint probes.
+// Stream extraction still invokes it once through clipExposedEdges above.
+export function createEaveClipper(frames,roofs) {
   // Split at every projected covering/wall boundary, then test every open
   // interval. One midpoint for an entire edge misses partial abutments.
   const roofsWorld=[],walls=[];
@@ -116,7 +122,9 @@ function clipExposedEdges(edges,frames,roofs) {
     for(const level of frame.b.levels||[])if(level.outline?.length>=3)walls.push({polygon:level.outline.map(p=>{
       const v=frame.world([...p,0]);return [v[0],v[2]];}),bottom:(frame.base+level.elevation)*FT,top:(frame.base+level.elevation+level.ceiling)*FT});
   }
-  const result=[],ray=new THREE.Ray(new THREE.Vector3(),new THREE.Vector3(0,-1,0)),hit=new THREE.Vector3();
+  const ray=new THREE.Ray(new THREE.Vector3(),new THREE.Vector3(0,-1,0)),hit=new THREE.Vector3();
+  return edges=>{
+  const result=[];
   for(const edge of edges){
     const length=Math.hypot(edge.b[0]-edge.a[0],edge.b[2]-edge.a[2]),n=Math.hypot(...edge.outward);
     const a=[edge.a[0]+edge.outward[0]/n*.012,edge.a[2]+edge.outward[2]/n*.012];
@@ -140,19 +148,31 @@ function clipExposedEdges(edges,frames,roofs) {
     flush();
   }
   return result;
+  };
 }
 
 // Static down-rays against the actual triangulated roof envelope, plus the
 // authored deck/paving and terrain receivers used by precipitation. The ray
 // starts just outside the lip, so it cannot hit its own fascia/underside.
-export function createEaveLandingSampler(plan={},roofs=new Map()) {
+// Opt-in roofDetails adds roofEave in world metres for storey-aware drops;
+// ordinary stream callers retain the same {height,kind} result and ray tests.
+export function createEaveLandingSampler(plan={},roofs=new Map(),{roofDetails=false}={}) {
   const triangles=[],decks=[],hard=collectHardSurfaces(plan),caps=collectCapSurfaces(plan);
   for(const b of plan.buildings||[]){
     const f=buildingFrame(plan,b),roof=roofs?.get(b.id)||roofMesh(b.roof?.sections||[]);
-    const positions=[...(roof.coverPositions||roof.positions),...(roof.slabPositions||[])];
+    // section[] indexes positions[], never the renderer's independently
+    // ordered coverPositions. Placement uses that canonical mesh plus known
+    // attachment geometry; ordinary stream rays retain their existing cover.
+    const positions=[...(roofDetails?roof.positions:roof.coverPositions||roof.positions),
+      ...(roofDetails?(roof.eaveAttachments||[]).flatMap(a=>Array.from(a.positions)):[]),...(roof.slabPositions||[])];
+    const eaves=new Map();
+    if(roofDetails)for(let t=0;t<roof.positions.length;t+=9){const section=roof.section?.[t/9];
+      eaves.set(section,Math.min(eaves.get(section)??Infinity,...[2,5,8].map(i=>roof.positions[t+i])));}
     for(let t=0;t<positions.length;t+=9){
       const p=[0,3,6].map(i=>new THREE.Vector3(...f.world(positions.slice(t+i,t+i+3))));
-      triangles.push({p,x0:Math.min(...p.map(v=>v.x)),x1:Math.max(...p.map(v=>v.x)),z0:Math.min(...p.map(v=>v.z)),z1:Math.max(...p.map(v=>v.z))});
+      const eave=t<roof.positions.length?eaves.get(roof.section?.[t/9]):null;
+      triangles.push({p,x0:Math.min(...p.map(v=>v.x)),x1:Math.max(...p.map(v=>v.x)),z0:Math.min(...p.map(v=>v.z)),z1:Math.max(...p.map(v=>v.z)),
+        eave:eave==null?Math.min(...p.map(v=>v.y)):(f.base+eave)*FT});
     }
     for(const p of allPorches(b))if(p.polygon?.length>=3){
       const room=b.rooms?.find(r=>r.kind==='porch'&&r.level===(p.level||b.levels?.[0]?.id)&&inPolygon(r.polygon,...p.polygon[0]));
@@ -161,8 +181,8 @@ export function createEaveLandingSampler(plan={},roofs=new Map()) {
   }
   const ray=new THREE.Ray(new THREE.Vector3(),new THREE.Vector3(0,-1,0)),hit=new THREE.Vector3();
   return top=>{
-    const [x,y,z]=top,px=x/FT,py=-z/FT;let height=groundAt(plan,px,py)*FT,kind='ground';
-    const offer=(h,k)=>{if(h<y-.005&&h>=height){height=h;kind=k;}};
+    const [x,y,z]=top,px=x/FT,py=-z/FT;let height=groundAt(plan,px,py)*FT,kind='ground',roofEave=null;
+    const offer=(h,k,eave=null)=>{if(h<y-.005&&h>=height){height=h;kind=k;roofEave=eave;}};
     for(const h of hard)if(inPolygon(h.polygon,px,py))offer(((h.flat??groundAt(plan,px,py))+h.elevation)*FT,'hardscape');
     for(const cap of caps)if(inPolygon(cap.polygon,px,py)&&!(cap.holes||[]).some(p=>inPolygon(p,px,py)))offer(cap.top*FT,'cap');
     for(const bed of plan.site?.beds||[])if(bed.polygon&&inPolygon(bed.polygon,px,py))offer((groundAt(plan,px,py)+(bed.elevation||0)+.12)*FT,'bed');
@@ -171,8 +191,8 @@ export function createEaveLandingSampler(plan={},roofs=new Map()) {
     for(const d of decks){const p=d.frame.local(top);if(inPolygon(d.polygon,...p))offer(d.height,'deck');}
     ray.origin.set(x,y-.005,z);
     for(const t of triangles)if(x>=t.x0&&x<=t.x1&&z>=t.z0&&z<=t.z1
-      &&ray.intersectTriangle(...t.p,false,hit))offer(hit.y,'roof');
-    return {height,kind};
+      &&ray.intersectTriangle(...t.p,false,hit))offer(hit.y,'roof',t.eave);
+    return roofDetails&&kind==='roof'?{height,kind,roofEave}:{height,kind};
   };
 }
 
