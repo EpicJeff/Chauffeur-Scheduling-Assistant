@@ -558,7 +558,7 @@ function gutterInputKey(plan) {
   );
   const h = fingerprint();
   h.add(JSON.stringify(canonical({
-    dims: [GUTTER.fasciaFt, GUTTER.fasciaProudFt, GUTTER.profileIn, GUTTER.soffitClearIn],
+    dims: [GUTTER.fasciaFt, GUTTER.fasciaProudFt, GUTTER.profileIn, GUTTER.soffitClearIn, GUTTER.elbowFt],
     site,
     buildings,
   })));
@@ -752,24 +752,42 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
 
     const isBlocked = (spout.flags || []).includes('outlet-blocked');
     if (isBlocked) {
-      // Outlet jammed against a lower roof: emit only a flush 2 x 3 in outlet hole collar in the gutter bottom.
+      // Outlet jammed against a lower roof: emit only a flush 2 x 3 in outlet hole collar seated on the gutter floor.
       const outArr = owningSeg?.outward ? unitXZ([owningSeg.outward[0], 0, -owningSeg.outward[1]]) : unitXZ(dirLocal(spout.outlet?.dir || [0, 0, 1]));
       const V = new THREE.Vector3(outArr[0], 0, outArr[2]).normalize();
-      const U = new THREE.Vector3(-V.z, 0, V.x).normalize();
+      // Match emitBoxTube handedness: T = (0, -1, 0) and T x U = V => U = (V.z, 0, -V.x).
+      const U = new THREE.Vector3(V.z, 0, -V.x).normalize();
       const c = rawPts[0];
       if (c && c.every(Number.isFinite)) {
+        const segA = owningSeg ? toLocal(owningSeg.a) : null;
+        const segB = owningSeg ? toLocal(owningSeg.b) : null;
+        const eaveY = segA && segB ? Math.min(segA[1], segB[1]) : c[1] + GUTTER.profileIn / 12;
+        const gutterBotY = eaveY - GUTTER.profileIn / 12;
         const rimW = halfW + 0.03, rimD = halfD + 0.03, collarH = 0.018;
-        const pt = (u, v, y) => [c[0] + u * U.x + v * V.x, y, c[2] + u * U.z + v * V.z];
-        const yTop = c[1], yBot = c[1] - collarH;
+        // Keep the collar tucked cleanly inside open gutter end caps when blocked.top lies on an endpoint.
+        let cx = c[0], cz = c[2];
+        if (segA && segB) {
+          const sdx = segB[0] - segA[0], sdz = segB[2] - segA[2], sLen = Math.hypot(sdx, sdz);
+          const inset = rimW + 0.02;
+          if (sLen > 2 * inset) {
+            const tx = sdx / sLen, tz = sdz / sLen;
+            const t = (cx - segA[0]) * tx + (cz - segA[2]) * tz;
+            const tc = Math.max(inset, Math.min(sLen - inset, t));
+            cx += (tc - t) * tx;
+            cz += (tc - t) * tz;
+          }
+        }
+        const pt = (u, v, y) => [cx + u * U.x + v * V.x, y, cz + u * U.z + v * V.z];
+        const yBot = Math.min(c[1], gutterBotY), yTop = yBot + collarH;
         const outR = CORNERS.map(([cu, cv]) => [cu * rimW, cv * rimD]);
         const inR = CORNERS.map(([cu, cv]) => [cu * halfW, cv * halfD]);
         for (let k = 0; k < 4; k++) {
           const n = (k + 1) % 4;
           const aTop = pt(outR[k][0], outR[k][1], yTop), bTop = pt(outR[n][0], outR[n][1], yTop);
           const aBot = pt(outR[k][0], outR[k][1], yBot), bBot = pt(outR[n][0], outR[n][1], yBot);
-          const aiBot = pt(inR[k][0], inR[k][1], yBot), biBot = pt(inR[n][0], inR[n][1], yBot);
+          const aiTop = pt(inR[k][0], inR[k][1], yTop), biTop = pt(inR[n][0], inR[n][1], yTop);
           pushQuad(aTop, bTop, bBot, aBot, [0, 0], [0.2, 0], [0.2, collarH], [0, collarH]);
-          pushQuad(aBot, bBot, biBot, aiBot, [0, 0], [0.2, 0], [0.2, 0.03], [0, 0.03]);
+          pushQuad(aTop, aiTop, biTop, bTop, [0, 0], [0, 0.03], [0.2, 0.03], [0.2, 0]);
         }
       }
       continue;
@@ -812,39 +830,43 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
       continue;
     }
 
-    // For porch-post mounts, gutters.js routes the vertical drop through the column centreline;
-    // offset the vertical drop flush onto the column's outward face while keeping path[0] and outlet.at fixed.
-    if (spout.mount === 'post' && anchor >= 1 && anchor + 1 < P.length) {
-      const dropX = P[anchor].x, dropZ = P[anchor].z;
-      const col = allPorches(b).flatMap(p => p.columns || []).find(c => c.at && Math.hypot(c.at[0] - dropX, -c.at[1] - dropZ) < 0.5);
-      if (col) {
-        const offset = (col.size || 0.5) / 2 + halfD + 0.01;
-        P[anchor].addScaledVector(wallOut, offset);
-        P[anchor + 1].addScaledVector(wallOut, offset);
-        // Keep any preceding horizontal leader cleanly clear of the shifted wallTop.
-        if (anchor >= 2 && Math.hypot(P[anchor].x - P[anchor - 1].x, P[anchor].z - P[anchor - 1].z) < 0.05) {
-          P[anchor - 1].addScaledVector(wallOut, offset);
+    // Replace the bottom corner [wallBottom, outlet] with a smooth formed circular-arc elbow
+    // (centreline radius 4 in, turning 75 deg from vertical to 15 deg below horizontal in 5 segments)
+    // ending right at outlet.at (mouth centre ~4 in above surface, bottom lip ~3 in above surface).
+    if (anchor >= 0 && anchor + 2 === P.length - 1) {
+      const wallTopPt = P[anchor], wallBotPt = P[anchor + 1], outPt = P[anchor + 2];
+      const ex = outPt.x - wallBotPt.x, ez = outPt.z - wallBotPt.z;
+      const reach = Math.hypot(ex, ez);
+      const availDrop = wallTopPt.y - outPt.y;
+      if (reach > 0.05 && availDrop > 0.15) {
+        const dirX = ex / reach, dirZ = ez / reach;
+        const theta = (75 * Math.PI) / 180; // 75 deg from vertical -> outward & 15 deg below horizontal
+        const sinT = Math.sin(theta), cosT = Math.cos(theta);
+        const arcSegs = 5;
+        let R = 4 / 12;
+        const maxRReach = (reach * 0.85) / (1 - cosT);
+        const maxRDrop = Math.max(0.08, (availDrop - 0.08) / (sinT + (1 - cosT) * (cosT / sinT)));
+        R = Math.min(R, maxRReach, maxRDrop);
+        const arcOut = R * (1 - cosT);
+        const arcDrop = R * sinT;
+        const cuffHoriz = Math.max(0, reach - arcOut);
+        const cuffDrop = cuffHoriz * (cosT / sinT);
+        let yStart = outPt.y + arcDrop + cuffDrop;
+        if (yStart > wallTopPt.y - 0.04) yStart = wallTopPt.y - 0.04;
+        const arcPts = [];
+        for (let k = 0; k <= arcSegs; k++) {
+          const a = (theta * k) / arcSegs;
+          const rOut = R * (1 - Math.cos(a));
+          const rDrop = R * Math.sin(a);
+          arcPts.push(new THREE.Vector3(
+            wallBotPt.x + dirX * rOut,
+            yStart - rDrop,
+            wallBotPt.z + dirZ * rOut,
+          ));
         }
+        if (cuffHoriz > 0.01) arcPts.push(outPt.clone());
+        P.splice(anchor + 1, 2, ...arcPts);
         T = computeTangents();
-      }
-    }
-
-    // Angle flat kick-out extensions slightly downward (~4% pitch) so the extension sits cleanly
-    // above the receiving surface (~2.5-3.8 in) and pitches outward like a real elbow/extension.
-    if (anchor >= 0 && anchor + 2 < P.length) {
-      const elbowBot = P[anchor + 1], mouth = P[P.length - 1];
-      if (Math.abs(mouth.y - elbowBot.y) < 0.02) {
-        let totalKick = 0;
-        const cum = [0];
-        for (let i = anchor + 1; i + 1 < P.length; i++) {
-          totalKick += Math.hypot(P[i + 1].x - P[i].x, P[i + 1].z - P[i].z);
-          cum.push(totalKick);
-        }
-        const drop = Math.min(0.12, totalKick * 0.04);
-        if (totalKick > 1e-4 && drop > 1e-4) {
-          for (let j = 1; j < cum.length; j++) P[anchor + 1 + j].y -= drop * (cum[j] / totalKick);
-          T = computeTangents();
-        }
       }
     }
 

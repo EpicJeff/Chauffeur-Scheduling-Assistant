@@ -20,7 +20,7 @@ import house_twin_live_harness as L
 H, check = L.H, L.check
 TIMEOUT = 40000
 NOON = '2026-06-21T12:00:00Z'
-SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\round2')
+SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\elbow')
 
 
 def synthetic_plan(gutters_on=True):
@@ -81,24 +81,24 @@ def synthetic_plan(gutters_on=True):
         for i in range(4)
     ]
     shed_section = {
-        'id': 'sr1', 'roof': 'sr1', 'kind': 'hip', 'ridge': 'x', 'pitch': 5,
+        'id': 'sr1', 'roof': 'sr1', 'kind': 'gable', 'ridge': 'x', 'pitch': 5,
         'plate': 9, 'overhang': 1, 'level': 'L1', 'rect': [0, 0, 14, 12],
         'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-        **({'gutters': {'y0': True, 'y1': True, 'x0': True}} if gutters_on else {}),
+        **({'gutters': {'y0': True, 'y1': True}} if gutters_on else {}),
     }
     shed_roof = {
         'id': 'sr1', 'area': shed_poly, 'overhang': 1,
         'edges': [
             {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
-            {'setting': 'sloped', 'pitch': 5},
+            {'setting': 'gable', 'pitch': 5},
             {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
-            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
+            {'setting': 'gable', 'pitch': 5},
         ],
     }
-    # Side carport flat roof + jammed upper shed eave right above it so the live fixture includes an outlet-blocked spill.
+    # Side carport flat roof + jammed upper shed eave right above it (0.96 in gap) so the live fixture includes an outlet-blocked spill.
     carport_section = {
         'id': 'sr_low', 'roof': 'sr_low', 'kind': 'flat', 'ridge': 'x', 'pitch': 0,
-        'plate': 8.55, 'overhang': 0, 'level': 'L1', 'rect': [14, 0, 21, 12],
+        'plate': 8.32, 'overhang': 0, 'level': 'L1', 'rect': [14, 0, 21, 12],
         'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
     }
     carport_roof = {
@@ -107,12 +107,12 @@ def synthetic_plan(gutters_on=True):
     }
     jammed_section = {
         'id': 'sr_jam', 'roof': 'sr_jam', 'kind': 'shed', 'low_side': 'x1', 'pitch': 4,
-        'plate': 9.15, 'overhang': 1, 'level': 'L1', 'rect': [12, 2, 14, 10],
+        'plate': 9.15, 'overhang': 1, 'level': 'L1', 'rect': [14, 2, 16, 10],
         'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
         **({'gutters': {'x1': True}} if gutters_on else {}),
     }
     jammed_roof = {
-        'id': 'sr_jam', 'area': [[12, 2], [14, 2], [14, 10], [12, 10]], 'overhang': 1,
+        'id': 'sr_jam', 'area': [[14, 2], [16, 2], [16, 10], [14, 10]], 'overhang': 1,
         'edges': [
             {'setting': 'gable', 'pitch': 4},
             {'setting': 'sloped', 'pitch': 4, **({'gutter': True} if gutters_on else {})},
@@ -317,10 +317,12 @@ def scenario_gutters_pours_and_programs():
             print('GUTTERS_ON', json.dumps(on_info))
             check(on_info['gutterRanges'] > 0, ('gutter snapRanges present when on', on_info))
             check(on_info['gutterMeshTagged'] == 0, ('merged fascia+gutter batch must NOT be tagged gutter at mesh level', on_info))
-            check(on_info['pourInstances'] > 0 and on_info['visible'] and on_info['drawn'] >= on_info['pourInstances'],
-                  ('pours are visible', on_info))
-            check(on_info['blockedPours'] >= 1, ('fixture includes an outlet-blocked spill', on_info))
-            check(on_info['postPours'] >= 1, ('fixture includes a porch-post downspout', on_info))
+            check(on_info['eavesCount'] == 0 and on_info['streamInstances'] == 0,
+                  ('no stream instances on guttered edges', on_info))
+            check(on_info['pourInstances'] == 8 and on_info['visible'] and on_info['drawn'] == on_info['pourInstances'],
+                  ('exact drawn pours visible', on_info))
+            check(on_info['blockedPours'] == 1, ('fixture includes 1 outlet-blocked spill', on_info))
+            check(on_info['postPours'] == 1, ('fixture includes 1 porch-post downspout', on_info))
             check(on_info['programs'] == off_info['programs'],
                   ('program count unchanged vs gutters off', off_info['programs'], on_info['programs']))
 
@@ -366,7 +368,7 @@ def scenario_gutters_pours_and_programs():
             check(cam_outlet['dist'] <= 2.5, ('outlet close-up within 2.5 m', cam_outlet))
             page.screenshot(path=str(SHOTS_DIR / 'corner_outlet_elbows.png'))
 
-            # Close-up 2a: <= 2.0 m from front-right kick-out & clear-water pour in overcast heavy rain (rain particles ON).
+            # Close-up 2a: ~1.5 m side profile of corner downspout curved elbow & pour in overcast heavy rain (rain particles ON).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
@@ -377,8 +379,8 @@ def scenario_gutters_pours_and_programs():
               const pour = pours.find(p => p.mount === 'wall' && p.top[0] > 9 && p.top[0] < 12 && p.top[2] > -2) || pours[0];
               if (!pour) return;
               const [x, y, z] = pour.top;
-              const target = [x, y + 0.04, z - 0.12];
-              const pos = [x + 1.35, y + 0.32, z + 0.90];
+              const target = [x, y + 0.04, z - 0.06];
+              const pos = [x + 1.42, y + 0.18, z + 0.36];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
@@ -386,10 +388,10 @@ def scenario_gutters_pours_and_programs():
               const v = window.__twin, c = v.cameraState();
               return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]), eaveFlow: v.eaves.uniforms.eaveFlow.value };
             }""")
-            check(cam_kick['dist'] <= 2.5, ('kickout close-up within 2.5 m', cam_kick))
-            page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_overcast_rain.png'))
+            check(cam_kick['dist'] <= 2.5, ('elbow close-up within 2.5 m', cam_kick))
+            page.screenshot(path=str(SHOTS_DIR / 'corner_elbow_overcast_rain.png'))
 
-            # Close-up 2b: same <= 2.0 m kick-out camera with rain particles off and bright sunlit sky (clear-water pour in day).
+            # Close-up 2b: same ~1.5 m side-profile elbow camera in bright day with rain particles off so the curve reads crisply.
             page.evaluate("""() => {
               const v = window.__twin;
               if (v.precipitation?.group) v.precipitation.group.visible = false;
@@ -402,14 +404,14 @@ def scenario_gutters_pours_and_programs():
               v.setClock('2026-06-21T12:00:00Z');
             }""")
             H.settle(page, 20)
-            page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_day.png'))
+            page.screenshot(path=str(SHOTS_DIR / 'corner_elbow_side.png'))
             page.evaluate("""() => {
               const v = window.__twin;
               if (v.__savedWeather && v.weather) Object.assign(v.weather, v.__savedWeather);
               v.setClock('2026-06-21T12:00:00Z');
             }""")
 
-            # Close-up 3: <= 2.4 m porch-post downspout (particles off so gutter elbow, column-mounted pipe & kick-out pour all show).
+            # Close-up 3: ~1.5 m porch-post downspout bottom curved elbow & pour (particles off).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
@@ -419,9 +421,9 @@ def scenario_gutters_pours_and_programs():
               const pours = (v.eaves.data.instances || []).filter(i => i.pour);
               const post = pours.find(p => p.mount === 'post');
               if (!post) return;
-              const sTop = post.spout.top, [ox, oy, oz] = post.top;
-              const target = [ox + 0.12, oy + 0.45, oz - 0.15];
-              const pos = [target[0] - 1.45, target[1] + 0.35, target[2] + 1.85];
+              const [ox, oy, oz] = post.top;
+              const target = [ox, oy + 0.04, oz - 0.08];
+              const pos = [target[0] - 1.28, target[1] + 0.22, target[2] + 0.68];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
@@ -430,7 +432,7 @@ def scenario_gutters_pours_and_programs():
               return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]) };
             }""")
             check(cam_post['dist'] <= 2.5, ('porch-post close-up within 2.5 m', cam_post))
-            page.screenshot(path=str(SHOTS_DIR / 'porch_post_downspout.png'))
+            page.screenshot(path=str(SHOTS_DIR / 'porch_post_elbow.png'))
 
             # Close-up 4: <= 2.0 m outlet-blocked spill (jammed gutter over flat carport roof -> outlet hole + short spill).
             page.evaluate("""() => {
@@ -443,8 +445,8 @@ def scenario_gutters_pours_and_programs():
               const blocked = pours.find(p => (p.spout?.flags || []).includes('outlet-blocked'));
               if (!blocked) return;
               const [bx, by, bz] = blocked.top;
-              const target = [bx, by, bz];
-              const pos = [bx + 1.15, by + 0.25, bz + 1.05];
+              const target = [bx, by + 0.04, bz - 0.05];
+              const pos = [bx + 0.90, by + 0.72, bz + 0.85];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)

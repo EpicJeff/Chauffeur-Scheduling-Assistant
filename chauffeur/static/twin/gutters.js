@@ -5,6 +5,11 @@
 // top is the outlet at the gutter bottom, centred half the profile width
 // outward of the fascia face; path[0] equals top. A vertical outlet drop
 // clears the soffit/fascia by 1 in before the offset elbows head to the wall.
+// Mounted downspouts end in a short curved elbow: wallBottom sits 0.5 ft
+// above the receiving surface and outlet.at is GUTTER.elbowFt (0.5 ft) out
+// from the wall/post mount, 4 in above the surface, with horizontal outlet.dir.
+// If the straight mouth lands on a walkway, path, step or stair, the elbow
+// swivels up to 90 degrees along the wall toward grass or a bed.
 // A 'stub' outlet clears its actual receiving surface by 1 in. If the gutter
 // bottom is at/below surface + 2 in, 'outlet-blocked' marks a zero-length hole:
 // top/path[0]/outlet.at are raised to max(gutter bottom, surface + 1 in), capped
@@ -45,7 +50,7 @@
 // Their outlet.at is just below the gutter, not at the receiving surface: the
 // renderer must use the landing sampler to find the falling water's length.
 import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSampler } from './sky/eave_streams.js';
-import { roofMesh, endKind, heightAt } from './twin_roof.js';
+import { roofMesh, endKind, heightAt, sectionHeight } from './twin_roof.js';
 import { allPorches } from './twin_generator.js';
 import { FASCIA } from './trim_dims.js';
 import { buildingBase, inPolygon, edgeDistance } from './twin_ground.js';
@@ -53,7 +58,7 @@ import { pathOutline, pathSurfacePolygons } from './path_shapes.js';
 import { paverSettings } from './paver_layout.js';
 
 export const GUTTER = { runJoinFt: 0.3, runJoinHeightIn: 2, spanFt: 35, maxOverhangFt: 4,
-  openingClearFt: 1, doorAvoidFt: 6, kickOutFt: 3, kickTurnFt: 4, profileIn: 5, spoutIn: [2, 3],
+  openingClearFt: 1, doorAvoidFt: 6, elbowFt: 0.5, profileIn: 5, spoutIn: [2, 3],
   fasciaFt: FASCIA.depthFt, fasciaProudFt: FASCIA.proudFt, soffitClearIn: 1 };
 
 const FT=.3048, EPS=1e-5, SIDES=['y0','x1','y1','x0'];
@@ -245,8 +250,7 @@ function dropFootprint(ctx,segment,at){
   const id=`${segment.roof}:${segment.edge}:${segment.porch}:${key(at)}`;
   if(!ctx.drops.has(id)){
     const p=ctx.f.local(at),mount=mountAt(ctx,segment,at,null),start=ctx.f.world([...mount.at,p[2]-.15]);
-    const support=ctx.sample(start),kick=support.kind==='roof'?.8:GUTTER.kickOutFt;
-    const end=ctx.sample(ctx.f.world([...add(mount.at,mul(mount.normal,kick)),p[2]-.16]));
+    const support=sampleAt(ctx,start),end=sampleAt(ctx,ctx.f.world([...add(mount.at,mul(mount.normal,GUTTER.elbowFt)),p[2]-.16]));
     const roofs=[support,end].filter(v=>v.kind==='roof');
     const floor=roofs.length?Math.max(...roofs.map(v=>(v.roofEave??v.height)/FT-ctx.f.base)):-Infinity;
     ctx.drops.set(id,{...ctx.footprint(p[2],floor),floor});
@@ -370,8 +374,28 @@ function stairContains(b,p){
   return (b.stairs||[]).some(s=>{if(s.polygon)return inPolygon(s.polygon,...p);
     if(!s.from||!s.to)return false;const q=projection(p,s.from,s.to);return dist(q.at,p)<(s.width||3)/2+.15;});
 }
+function sampleAt(ctx,at){
+  const hit=ctx.sample(at);
+  let best=null;
+  // roofMesh clips lower roofs in 2D under an upper roof's overhang; recover the
+  // continuous flashed lower-roof plane analytically when an elbow lands under it.
+  for(const c of ctx.contexts.values()){
+    const q=c.f.local(at);
+    for(const s of c.sections){
+      const z=sectionHeight(s,q[0],q[1]);
+      if(z===null)continue;
+      const h=(c.f.base+z)*FT;
+      if(h>=at[1]-.005||h<=hit.height)continue;
+      if(!best||h>best.height){
+        const eaveZ=s.plate-(s.overhang||0)*((s.pitch||0)/12);
+        best={height:h,kind:'roof',roofEave:(c.f.base+eaveZ)*FT};
+      }
+    }
+  }
+  return best||hit;
+}
 function landing(ctx,at){
-  const hit=ctx.sample(at),world=[at[0]/FT,-at[2]/FT],p=ctx.f.local(at).slice(0,2);
+  const hit=sampleAt(ctx,at),world=[at[0]/FT,-at[2]/FT],p=ctx.f.local(at).slice(0,2);
   if([...ctx.contexts.values()].some(c=>stairContains(c.b,c.f.local(at).slice(0,2))))return {...hit,lands:'hard',allowed:false};
   if(hit.kind==='water'||hit.kind==='cap')return {...hit,lands:'hard',allowed:false};
   if(hit.kind==='roof'||hit.kind==='deck')return {...hit,lands:hit.kind,allowed:true};
@@ -389,7 +413,7 @@ function landing(ctx,at){
 }
 function mountAt(ctx,segment,top,corner){
   const p=ctx.f.local(top),oh=segmentInfo(ctx,segment).overhang;
-  const posts=ctx.porches.flatMap(p=>(p.columns||[]).map(c=>({at:c.at,floor:p.floor||0})))
+  const posts=ctx.porches.flatMap(p=>(p.columns||[]).map(c=>({at:c.at,floor:p.floor||0,size:c.size||.5})))
     .filter(c=>c.at&&Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
       &&(heightAt(ctx.b.roof?.sections||[],...c.at)??ctx.b.levels?.[0]?.ceiling??0)>=p[2]-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
@@ -402,7 +426,7 @@ function mountAt(ctx,segment,top,corner){
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||b.floor-a.floor
       ||dot(b.normal,segment.outward)-dot(a.normal,segment.outward)||compare(a.w.id,b.w.id));
   if(posts.length&&(segment.porch!==null||!candidates.length||dist(posts[0].at,p.slice(0,2))<=dist(candidates[0].at,p.slice(0,2))+.1))
-    return {kind:'post',at:posts[0].at,normal:segment.outward};
+    return {kind:'post',at:add(posts[0].at,mul(segment.outward,posts[0].size/2+.08)),normal:segment.outward};
   if(candidates.length){const w=candidates[0],at=corner?.at||w.at;
     return {kind:'wall',at:add(at,mul(w.normal,(w.w.thickness||.5)/2+.08)),normal:w.normal};}
   return {kind:'hang',at:p.slice(0,2),normal:segment.outward};
@@ -425,25 +449,27 @@ function openingCheck(ctx,mount,top,bottom){
 function candidate(ctx,segment,top,corner,flags=[]){
   const p=ctx.f.local(top),mount=mountAt(ctx,segment,top,corner),n=mount.normal;
   if(mount.kind==='hang')return null;
-  const start=ctx.f.world([...mount.at,p[2]-.15]),support=ctx.sample(start),kick=support.kind==='roof'?.8:GUTTER.kickOutFt;
-  const end=add(mount.at,mul(n,kick)),probe=ctx.f.world([...end,p[2]-.16]);
-  const choices=[{end,turn:null}];
-  // Preserve the vertical corner position. Only the outlet extension turns,
-  // by at most four feet along the wall, to reach grass/bed beside a path.
+  const start=ctx.f.world([...mount.at,p[2]-.15]),support=sampleAt(ctx,start);
+  const end=add(mount.at,mul(n,GUTTER.elbowFt)),probe=ctx.f.world([...end,p[2]-.16]);
+  const choices=[{end,dir:n,swiveled:false}];
+  // Preserve the vertical corner position. If the straight elbow mouth lands on
+  // a walkway/path/step/stair, swivel the elbow up to 90 degrees along the wall.
   const initial=landing(ctx,probe),tangent=[-n[1],n[0]];
-  if(!initial.allowed)for(let d=.25;d<=GUTTER.kickTurnFt;d+=.25)for(const sign of [1,-1])
-    choices.push({end:add(end,mul(tangent,d*sign)),turn:mul(tangent,sign)});
+  if(!initial.allowed)for(const deg of [15,30,45,60,75,90])for(const sign of [1,-1]){
+    const rad=deg*Math.PI/180,dir=add(mul(n,Math.cos(rad)),mul(tangent,Math.sin(rad)*sign));
+    choices.push({end:add(mount.at,mul(dir,GUTTER.elbowFt)),dir,swiveled:true});
+  }
   let chosen=null,paved=null;
   for(const option of choices){const sample=landing(ctx,ctx.f.world([...option.end,p[2]-.16]));
     if(!sample.allowed)continue;
     if(['driveway','hard'].includes(sample.lands)){paved??={...option,sample};continue;}
-    if(option.turn&&!['grass','bed'].includes(sample.lands))continue;
+    if(option.swiveled&&!['grass','bed'].includes(sample.lands))continue;
     chosen={...option,sample};break;}
   chosen??=paved;
   // Landing is independent of mounting and opening clearance. Preserve a real
   // outside-corner drop even when every receiving surface needs attention.
   if(!chosen){if(!corner?.convex)return null;chosen={...choices[0],sample:initial};}
-  const bottom=Math.max(support.height,chosen.sample.height)+.4*FT,opening=openingCheck(ctx,mount,top,bottom);
+  const surface=Math.max(support.height,chosen.sample.height),bottom=surface+.5*FT,opening=openingCheck(ctx,mount,top,bottom);
   if(opening.blocked)return null;
   if(top[1]-.04*FT<=bottom+.1*FT)return null;
   const outletTop=gutterBottom(ctx,segment,top),under=[...outletTop];
@@ -454,10 +480,9 @@ function candidate(ctx,segment,top,corner,flags=[]){
   const first=add(under,mul(toward,elbow));first[1]-=elbow;
   const leader=[wallXY[0]-toward[0]*elbow,first[1],wallXY[2]-toward[2]*elbow];
   const wallTop=[wallXY[0],under[1]-2*elbow,wallXY[2]],wallBottom=ctx.f.world([...mount.at,bottom/FT-ctx.f.base]);
-  const outlet=ctx.f.world([...chosen.end,(chosen.sample.height+.4*FT)/FT-ctx.f.base]);
-  const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);path.push(wallTop,wallBottom);
-  if(chosen.turn)path.push(ctx.f.world([...end,bottom/FT-ctx.f.base]));path.push(outlet);
-  const dirLocal=chosen.turn||n,origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...dirLocal,0]);
+  const outlet=ctx.f.world([...chosen.end,(surface+4/12*FT)/FT-ctx.f.base]);
+  const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);path.push(wallTop,wallBottom,outlet);
+  const dirLocal=chosen.dir,origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...dirLocal,0]);
   return {top:outletTop,mount:mount.kind,path,outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:chosen.sample.lands},
     flags:[...flags,...(!chosen.sample.allowed?['no-safe-landing']:[])],door:opening.door,
     rank:!chosen.sample.allowed?2:['driveway','hard'].includes(chosen.sample.lands)?1:0};
