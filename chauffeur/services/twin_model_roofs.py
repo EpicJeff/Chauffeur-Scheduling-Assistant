@@ -25,7 +25,8 @@ def _metadata(piece, excluded):
 
 def from_section(section: dict) -> dict:
     """Convert a rectangular section without changing its drawn roof planes."""
-    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of', 'plane_edges'})
+    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of', 'plane_edges',
+                               'gutters', 'downspouts'})
     if 'plane_edges' in section and 'plane_materials' in roof:
         # A section becomes a canonical rectangle, whose edge order may differ
         # from the authored area's (and whose other sections have other edges).
@@ -52,6 +53,10 @@ def from_section(section: dict) -> dict:
                 setting = 'sloped'
         roof['edges'].append({'setting': setting,
                               'pitch': 0 if kind == 'flat' else pitches.get(side, section['pitch'])})
+        if section.get('gutters', {}).get(side) is True:
+            roof['edges'][-1]['gutter'] = True
+        if side in section.get('downspouts', {}):
+            roof['edges'][-1]['downspouts'] = deepcopy(section['downspouts'][side])
     return roof
 
 
@@ -151,6 +156,14 @@ def to_sections(roof: dict) -> list[dict]:
     for i, rect in enumerate(rectangles):
         section = _section(roof, rect, _rectangle_edges(roof, rect))
         section['plane_edges'] = _rectangle_edge_indices(roof, rect)
+        for field, key in (('gutters', 'gutter'), ('downspouts', 'downspouts')):
+            values = {side: deepcopy(roof['edges'][index][key])
+                      for side, index in section['plane_edges'].items()
+                      if index is not None and key in roof['edges'][index]
+                      and (roof['edges'][index][key] is True if key == 'gutter'
+                           else isinstance(roof['edges'][index][key], list))}
+            if values:
+                section[field] = values
         section['id'] = roof['id'] if len(rectangles) == 1 else f"{roof['id']}~{i + 1}"
         sections.append(section)
     return sections
