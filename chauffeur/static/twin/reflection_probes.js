@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { waterBodies } from './effects/water_ripples.js';
-import { buildingFootprint, buildingBase } from './twin_ground.js';
+import { buildingFootprint, buildingBase, groundAt, inPolygon } from './twin_ground.js';
 
 const FT = .3048;
 const replace = (shader, stage, anchor, value) => {
@@ -123,14 +123,10 @@ if (waterProbeCount > 0) {
 \t\t\tfloat probeRough = mix( roughness, roughness * mix( .80, 1.0, smoothstep( .35, .65, roughness ) ), probeActive );
 \t\t\tfloat probeLod = mix( float( ENVMAP_MAX_LOD ), roughnessToMip( probeRough ), probeActive );
 \t\t\tvec4 envMapColor = textureLod( envMap, envMapRotation * reflectVec, mix( roughnessToMip( roughness ), probeLod, step( .001, probeActive ) ) );
-\t\t\t// Soft-shoulder extreme unglassed interior lamp spikes (>1.5 linear) so
-\t\t\t// wet puddles reflect warm window glow without blooming into white flares.
-\t\t\tvec3 probeExcess = max( envMapColor.rgb - 1.5, 0.0 );
-\t\t\tvec3 probeRgb = mix( envMapColor.rgb, envMapColor.rgb - probeExcess * probeExcess / ( probeExcess + 1.5 ), probeActive );
 \t\t\t// Dry and damp ground keep scene.environmentIntensity (preserving dry parity
-\t\t\t// and SSR damp weight); standing puddles rise toward 1.0 to match SSR.
-\t\t\tfloat probeGain = mix( envMapIntensity, 1.0, probeActive * ( 1.0 - smoothstep( .05, .45, roughness ) ) );
-\t\t\treturn probeRgb * probeGain;`);
+\t\t\t// and SSR damp weight); standing puddles boost specular to stay readable at steep pitch.
+\t\t\tfloat probeGain = mix( envMapIntensity, 1.35, probeActive * ( 1.0 - smoothstep( .05, .40, roughness ) ) );
+\t\t\treturn envMapColor.rgb * probeGain;`);
     } else replace(chunk, 'fragmentShader', anchor, anchor + '\nreflectVec = probeDirection(reflectVec);');
     replace(shader, 'fragmentShader', '#include <envmap_physical_pars_fragment>', chunk.fragmentShader);
     if (kind === 'exterior') {
@@ -186,6 +182,7 @@ const visible = object => { for (let p = object; p; p = p.parent) if (!p.visible
 
 export function createReflectionProbes({scene, renderer, tier, extras = () => [], sky = () => null, uncut = () => null, now = () => performance.now(), warn = error => console.warn('House reflection capture failed:', error)}) {
   let probes = [], bindings = new Set(), queue = [], requested = false, quietAt = 0, unlit = false, disposed = false, lightsKey = null, lightsAt = -Infinity;
+  let buildingFootprints = [];
   let mirrorStillHz = 10, lampPending = false, lampAt = 0, lampRoundAt = -Infinity;
   let probeCloudSeconds = 30, skyPending = false, skyAt = 0, roundAt = -Infinity;
   const enabled = tier !== 'low';
@@ -199,14 +196,15 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
   const frustum = new THREE.Frustum(), scratch = new THREE.Matrix4(), size = new THREE.Vector2();
   const eye = new THREE.Vector3(), aim = new THREE.Vector3(), up = new THREE.Vector3(), plane = new THREE.Plane(), clip = new THREE.Vector4(), corner = new THREE.Vector4();
   // What a reflection must not contain: markers, handles, effects, the water
-  // itself and every other mirror. An imported model can carry a null name;
-  // a throw here would stop every capture and the pool mirror for good.
+  // itself and mirror surfaces (window panes, water). Ground receivers stay
+  // visible in all probe captures and the planar pool mirror. An imported model
+  // can carry a null name; a throw here would stop every capture for good.
   const excluded = (o, owner = null) => {
     const d = o.userData;
     return o.isSprite || o.isPoints || o.isLine || o.isHelper || o.layers.isEnabled(31) ||
-      d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.kind==='sheet' || String(o.name ?? '').startsWith('editor-') ||
+      d.effectFixtures || d.effectFixture || d.fireFlame || d.reflectionExclude || d.preview || d.aimHandle || d.fixtureId || d.bulb || d.lightWash || d.kind==='sheet' || String(o.name ?? '').startsWith('editor-') ||
       (owner && d.buildingId===owner) ||
-      [].concat(o.material || []).some(m=>m.userData.waterSurface || m.userData.reflection || m.depthTest===false || m.name==='sheet');
+      [].concat(o.material || []).some(m=>m.userData.waterSurface || (m.userData.reflection && m.userData.reflection.kind !== 'ground') || m.depthTest===false || m.name==='sheet');
   };
   function syncGround() {
     if (!enabled || disposed) return;
@@ -377,21 +375,21 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     if (!enabled || disposed) return;
     root.updateMatrixWorld(true);
     bindings = new Set();
-    const waterVisible = new Set(), groundBoxes = new Map();
+    const waterVisible = new Set(), yardBox = new THREE.Box3(), groundBoxes = [];
     root.traverse(o => {
       for (const m of o.material ? [].concat(o.material) : []) {
         const b = m.userData.reflection;
         if (b) {
           bindings.add(b);
           if (b.kind === 'water' && visible(o)) b.owners.forEach(id=>waterVisible.add(id));
-          if (b.kind === 'ground' && o.isMesh && !o.layers.isEnabled(31)) {
-            if (!groundBoxes.has(b)) groundBoxes.set(b, new THREE.Box3());
-            groundBoxes.get(b).expandByObject(o);
+          if (b.kind === 'ground' && o.isMesh && !o.layers.isEnabled(31) && visible(o)) {
+            const gb = new THREE.Box3().setFromObject(o);
+            if (!gb.isEmpty()) { yardBox.union(gb); groundBoxes.push(gb); }
           }
         }
       }
     });
-    const candidates = [];
+    const candidates = [], footprints = [];
     if (planar) { planar.boxes = []; planar.broken = false; planar.hiddenAt = -Infinity; }
     for (const body of waterBodies(plan)) if (waterVisible.has(body.id)) {
       const c = centreOf(body.polygon);
@@ -400,16 +398,97 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
     for (const b of plan.buildings || []) {
       const poly = buildingFootprint(b); if (!poly.length) continue;
-      const c = centreOf(poly), a = (b.rotation || 0)*Math.PI/180, pos = b.position || [0,0];
+      const c = centreOf(poly), a = (b.rotation || 0)*Math.PI/180, cos = Math.cos(a), sin = Math.sin(a), pos = b.position || [0,0];
+      const toWorld = pts => pts.map(([x,y]) => [pos[0] + x*cos - y*sin, pos[1] + x*sin + y*cos]);
+      const allPts = [...toWorld(poly)];
+      for (const l of b.levels || []) if (l.outline?.length >= 3) allPts.push(...toWorld(l.outline));
+      for (const porch of b.porches || []) if (porch.polygon?.length >= 3) allPts.push(...toWorld(porch.polygon));
+      for (const sec of b.roof?.sections || []) if (sec.rect?.length === 4) {
+        const [x0, y0, x1, y1] = sec.rect;
+        allPts.push(...toWorld([[x0,y0],[x1,y0],[x1,y1],[x0,y1]]));
+      }
+      // Use each building's enclosing world footprint (levels + porches + roofs)
+      // so the yard probe never lands inside a covered porch or narrow wall alcove.
+      const bx0 = Math.min(...allPts.map(p => p[0])), bx1 = Math.max(...allPts.map(p => p[0]));
+      const by0 = Math.min(...allPts.map(p => p[1])), by1 = Math.max(...allPts.map(p => p[1]));
+      footprints.push([[bx0, by0], [bx1, by0], [bx1, by1], [bx0, by1]]);
       candidates.push({id:'exterior:' + b.id, owner:b.id, kind:'exterior', area:area(poly), centre:new THREE.Vector3(
-        (pos[0]+c[0]*Math.cos(a)-c[1]*Math.sin(a))*FT,
+        (pos[0]+c[0]*cos-c[1]*sin)*FT,
         (buildingBase(plan,b)+Math.min(...b.levels.map(l=>l.elevation)))*FT+1.5,
-        -(pos[1]+c[0]*Math.sin(a)+c[1]*Math.cos(a))*FT)});
+        -(pos[1]+c[0]*sin+c[1]*cos)*FT)});
     }
-    // Reserve one of each kind when both exist, then spend the remaining budget
-    // on the largest candidates. Within each kind only its largest bodies survive.
+    buildingFootprints = footprints;
+    if (!yardBox.isEmpty()) {
+      const insideBuilding = p => footprints.find(poly => inPolygon(poly, p[0], p[1])) || null;
+      const pushOut = (p, poly, margin) => {
+        let bestQ = null, bestD = Infinity, bestN = [0, 1];
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i], b = poly[(i + 1) % poly.length];
+          const dx = b[0] - a[0], dy = b[1] - a[1], d2 = dx*dx + dy*dy;
+          const t = d2 ? Math.max(0, Math.min(1, ((p[0] - a[0])*dx + (p[1] - a[1])*dy) / d2)) : 0;
+          const q = [a[0] + t*dx, a[1] + t*dy];
+          const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+          if (d < bestD) {
+            bestD = d; bestQ = q;
+            const l = Math.hypot(dx, dy) || 1;
+            bestN = d > 1e-4 ? [(q[0] - p[0]) / d, (q[1] - p[1]) / d] : [dy / l, -dx / l];
+          }
+        }
+        return bestQ ? [bestQ[0] + bestN[0]*margin, bestQ[1] + bestN[1]*margin] : p;
+      };
+      const mid = yardBox.getCenter(new THREE.Vector3());
+      let pt = [mid.x / FT, -mid.z / FT];
+      if (insideBuilding(pt)) {
+        // Hardscape spans opposite sides of a building: pick the densest in-lot
+        // open cluster of hardscape + pool area and use its area-weighted centroid.
+        const lotPts = plan.site?.lot;
+        const lx0 = lotPts?.length ? Math.min(...lotPts.map(p => p[0])) : -Infinity;
+        const lx1 = lotPts?.length ? Math.max(...lotPts.map(p => p[0])) : Infinity;
+        const ly0 = lotPts?.length ? Math.min(...lotPts.map(p => p[1])) : -Infinity;
+        const ly1 = lotPts?.length ? Math.max(...lotPts.map(p => p[1])) : Infinity;
+        const clampLot = ([x, y]) => [Math.max(lx0, Math.min(lx1, x)), Math.max(ly0, Math.min(ly1, y))];
+        const pieces = [];
+        for (const h of plan.site?.hardscape || []) {
+          const pts = h.polygon?.length >= 3 ? h.polygon : h.points?.length >= 2 ? h.points.map(clampLot) : null;
+          if (!pts) continue;
+          const a = h.polygon?.length >= 3 ? area(pts) : pts.reduce((s, p, i) => i ? s + Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) * (h.width || 3) : 0, 0);
+          pieces.push({ area: a, centre: centreOf(pts) });
+        }
+        if (plan.site?.pool?.polygon?.length >= 3) pieces.push({ area: area(plan.site.pool.polygon), centre: centreOf(plan.site.pool.polygon) });
+        const openPieces = pieces.filter(p => !insideBuilding(p.centre));
+        if (openPieces.length) {
+          let best = openPieces[0], bestScore = -1;
+          for (const c of openPieces) {
+            const score = pieces.reduce((s, o) => s + (Math.hypot(o.centre[0] - c.centre[0], o.centre[1] - c.centre[1]) <= 40 ? o.area : 0), 0);
+            if (score > bestScore) { bestScore = score; best = c; }
+          }
+          const near = pieces.filter(o => Math.hypot(o.centre[0] - best.centre[0], o.centre[1] - best.centre[1]) <= 40);
+          const total = near.reduce((s, o) => s + o.area, 0) || 1;
+          const centroid = [near.reduce((s, o) => s + o.centre[0] * o.area, 0) / total, near.reduce((s, o) => s + o.centre[1] * o.area, 0) / total];
+          pt = insideBuilding(centroid) ? best.centre : centroid;
+        }
+      }
+      for (let step = 0; step < 6; step++) {
+        const hit = insideBuilding(pt);
+        if (!hit) break;
+        pt = pushOut(pt, hit, 10);
+      }
+      if (insideBuilding(pt)) {
+        const sorted = [...groundBoxes].sort((a, c) =>
+          (c.max.x - c.min.x) * (c.max.z - c.min.z) - (a.max.x - a.min.x) * (a.max.z - a.min.z));
+        for (const gb of sorted) {
+          const gm = gb.getCenter(new THREE.Vector3()), cand = [gm.x / FT, -gm.z / FT];
+          if (!insideBuilding(cand)) { pt = cand; break; }
+        }
+      }
+      const yardArea = Math.max(1, ((yardBox.max.x - yardBox.min.x) / FT) * ((yardBox.max.z - yardBox.min.z) / FT));
+      candidates.push({id:'yard:ground', owner:'yard', kind:'yard', area:yardArea,
+        centre:new THREE.Vector3(pt[0]*FT, groundAt(plan, pt[0], pt[1])*FT + 1.5, -pt[1]*FT)});
+    }
+    // Reserve one of each active kind (water, exterior, yard) within the 4-probe
+    // cap, then spend any remaining slots on the largest candidates.
     candidates.sort((a,b)=>b.area-a.area || a.id.localeCompare(b.id));
-    const chosen = ['water','exterior'].map(kind=>candidates.find(p=>p.kind===kind)).filter(Boolean);
+    const chosen = ['water','exterior','yard'].map(kind=>candidates.find(p=>p.kind===kind)).filter(Boolean);
     for (const p of candidates) if (chosen.length < 4 && !chosen.includes(p)) chosen.push(p);
     const box = new THREE.Box3().setFromObject(root);
     const lot = plan.site?.lot;
@@ -421,7 +500,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     box.min.y = Math.min(0,box.min.y); box.max.y = Math.max(30,box.max.y+10);
     // Horizontal ground reflects steep upward rays. Keep p.box at >=30 m for
     // window panes and info(), but cap ground's projection ceiling to the
-    // actual roof/wall height so overhead rays parallax onto the house instead
+    // actual mid-wall height so overhead rays parallax onto the house instead
     // of shooting past the roof into empty sky.
     let buildingTopY = 0;
     for (const b of plan.buildings || []) {
@@ -432,29 +511,27 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
     const groundBoxOf = centre => {
       const gb = box.clone();
-      // A vertical wall spans ground..roof; projecting steep ground rays onto
-      // the mid-wall height avoids overshooting the roof into empty sky.
-      if (buildingTopY > 0) gb.max.y = Math.min(box.max.y, Math.max(centre.y + 2.5, centre.y + (buildingTopY - centre.y) * .42));
+      if (buildingTopY > 0) gb.max.y = Math.min(box.max.y, Math.max(centre.y + 2.0, centre.y + (buildingTopY - centre.y) * .25));
       return gb;
     };
     const old = probes;
     probes = chosen.map(row => {
-      const previous = old.find(p=>p.id===row.id && p.centre.equals(row.centre) && p.box.equals(box));
+      // Match sky PMREM size (512 on high/max, 256 on medium) for the yard probe
+      // so swapping ground envMap from scene.environment to the yard probe keeps
+      // identical ENVMAP_SIZE/ENVMAP_MAX_LOD and avoids a second program compile.
+      const targetSize = row.kind === 'yard' && ['high', 'max'].includes(tier) ? 512 : 256;
+      const previous = old.find(p=>p.id===row.id && p.centre.equals(row.centre) && p.box.equals(box) && p.target.width===targetSize);
       if (previous) { previous.groundBox = groundBoxOf(row.centre); return previous; }
-      const target = new THREE.WebGLCubeRenderTarget(256, {type:THREE.HalfFloatType, colorSpace:THREE.LinearSRGBColorSpace,
+      const target = new THREE.WebGLCubeRenderTarget(targetSize, {type:THREE.HalfFloatType, colorSpace:THREE.LinearSRGBColorSpace,
         generateMipmaps:true, minFilter:THREE.LinearMipmapLinearFilter, magFilter:THREE.LinearFilter});
       const camera = new THREE.CubeCamera(.05, Math.max(100,box.getSize(new THREE.Vector3()).length()*2), target);
       camera.position.copy(row.centre);
-      return {...row, box:box.clone(), groundBox:groundBoxOf(row.centre), target, camera, captures:0, fresh:false};
+      return {...row, box:box.clone(), groundBox:groundBoxOf(row.centre), target, camera, captures:0, fresh:false, lastCaptureMs:0};
     });
     for (const p of old) if (!probes.includes(p)) p.target.dispose();
     for (const b of bindings) {
       if (b.kind === 'ground') {
-        const peers = probes.filter(p=>p.kind==='exterior');
-        const gbox = groundBoxes.get(b), own = candidates.find(p=>p.kind==='exterior' && p.owner===b.owner);
-        const targetCentre = gbox && !gbox.isEmpty() ? gbox.getCenter(new THREE.Vector3()) : own?.centre || null;
-        b.probe = (targetCentre && [...peers].sort((a,c)=>a.centre.distanceToSquared(targetCentre)-c.centre.distanceToSquared(targetCentre))[0])
-          || peers.find(p=>p.owner===b.owner) || peers[0] || null;
+        b.probe = probes.find(p=>p.kind==='yard') || probes.find(p=>p.kind==='exterior') || null;
       } else {
         const peers = probes.filter(p=>p.kind===b.kind), own = candidates.find(p=>p.kind===b.kind && p.owner===b.owner);
         b.probe = peers.find(p=>p.owner===b.owner) || (own && peers.sort((a,c)=>a.centre.distanceToSquared(own.centre)-c.centre.distanceToSquared(own.centre))[0]) || null;
@@ -464,7 +541,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     request();
   }
   function capture(p) {
-    const hidden = new Map(), shadows = [];
+    const hidden = new Map(), shadows = [], dimmed = [];
     let restoreCut = null;
     const save = {target:renderer.getRenderTarget(), face:renderer.getActiveCubeFace(), mip:renderer.getActiveMipmapLevel(),
       auto:renderer.autoClear, xr:renderer.xr.enabled, tone:renderer.toneMapping,
@@ -476,9 +553,21 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       shadow:renderer.shadowMap.enabled, shadowAuto:renderer.shadowMap.autoUpdate, shadowNeeds:renderer.shadowMap.needsUpdate,
       info:{...renderer.info.render}, infoAuto:renderer.info.autoReset};
     const hide = o => { if (o && !hidden.has(o)) { hidden.set(o,o.visible); o.visible = false; } };
+    const lp = new THREE.Vector3();
     try {
       scene.traverse(o => {
         if (o.shadow) { shadows.push([o.shadow,o.shadow.autoUpdate,o.shadow.needsUpdate]); o.shadow.autoUpdate = o.shadow.needsUpdate = false; }
+        // Exterior window panes are hidden during capture, exposing indoor
+        // walls directly to inverse-square PointLights (up to 40+ linear).
+        // Soften indoor lights during the yard capture so PMREM does not smear
+        // an unglassed interior wall hotspot into a bright blob on the patio.
+        if (p.kind === 'yard' && (o.isPointLight || o.isSpotLight) && o.intensity > 1.5 && buildingFootprints.length) {
+          o.getWorldPosition(lp);
+          if (buildingFootprints.some(poly => inPolygon(poly, lp.x / FT, -lp.z / FT))) {
+            dimmed.push([o, o.intensity]);
+            o.intensity = Math.min(o.intensity * .05, 1.5);
+          }
+        }
         if (excluded(o, p.kind==='exterior' ? p.owner : null)) hide(o);
       });
       extras().forEach(hide);
@@ -494,7 +583,9 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       // The cube already holds this hour's radiance. Environment intensity is
       // a material fill balance, never a second exposure on the captured sky.
       scene.backgroundIntensity = save.backgroundIntensity;
+      const t0 = now();
       p.camera.update(renderer,scene);
+      p.lastCaptureMs = now() - t0;
       // three prefilters a render-target cube once and reuses that result until
       // told the cube changed; without this, glass keeps its first capture forever.
       p.target.texture.needsPMREMUpdate = true;
@@ -503,6 +594,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     finally {
       restoreCut?.();
       for (const [o,value] of hidden) o.visible = value;
+      for (const [o,value] of dimmed) o.intensity = value;
       for (const [shadow,auto,needs] of shadows) { shadow.autoUpdate = auto; shadow.needsUpdate = needs; }
       scene.background = save.background;
       scene.backgroundIntensity = save.backgroundIntensity;

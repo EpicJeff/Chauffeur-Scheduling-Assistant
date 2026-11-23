@@ -63,7 +63,8 @@ await test('low_has_no_targets_shader_or_material_changes',async()=>{
  c.manager.dispose();
 });
 await test('water_shares_calm_draw_and_selects_own_basin_by_vertex_centre',async()=>{
- const c=await setup();const water=meshes(c.out).filter(o=>o.material.userData.waterSurface);
+ const p=fixture();p.buildings=[p.buildings[0]];
+ const c=await setup('medium',p);const water=meshes(c.out).filter(o=>o.material.userData.waterSurface);
  assert.equal(new Set(water.map(o=>o.material)).size,1,'calm water still shares one material');
  const centres=new Set(water.flatMap(o=>{const a=o.geometry.attributes.reflectionBodyCentre;assert.ok(a);return Array.from({length:a.count},(_,i)=>[a.getX(i),a.getY(i),a.getZ(i)].join(','));}));
  assert.equal(centres.size,2,'pool and spa carry independent centres through static merge');c.round();
@@ -89,7 +90,8 @@ for(const failure of [false,true])await test('capture_restores_hidden_objects_an
   assert.equal(c.cut.constant,1e6*.3048);
   assert.equal(c.scene.background,bg);assert.ok(c.scene.background.isCubeTexture);
   assert.equal(c.scene.backgroundIntensity,bi,'capture uses the drawn sky radiance, not the material fill scale');
-  for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.visible,false);
+  for(const o of meshes(c.out))if(o.material.userData.reflection)
+   assert.equal(o.visible,o.material.userData.reflection.kind==='ground','mirrors hidden, ground visible in probe capture');
  };
  c.round();assert.deepEqual(state(c.renderer),saved);assert.deepEqual(hidden.map(o=>o.visible),savedVis);assert.equal(sheet.visible,true);
  assert.equal(c.cut.constant,2,'the cut is back after the capture, even on a throw');
@@ -123,7 +125,8 @@ await test('no_captures_or_probe_maps_in_unlit_and_resume_requests_round',async(
  u.restore();u.dispose();c.manager.setUnlit(false);c.round();assert.ok(c.manager.info().probes.every(p=>p.captures===2));c.manager.dispose();
 });
 await test('targets_reused_on_rebuild_and_all_disposed_on_change_and_close',async()=>{
- const c=await setup();c.round();const targets=[...c.renderer.targets],disposed=new Set();targets.forEach(t=>t.addEventListener('dispose',()=>disposed.add(t)));
+ const base=fixture();base.buildings=[base.buildings[0]];
+ const c=await setup('medium',base);c.round();const targets=[...c.renderer.targets],disposed=new Set();targets.forEach(t=>t.addEventListener('dispose',()=>disposed.add(t)));
  for(const t of targets){assert.equal(t.width,256);assert.equal(t.texture.type,THREE.HalfFloatType);assert.equal(t.texture.colorSpace,THREE.LinearSRGBColorSpace);assert.equal(t.texture.generateMipmaps,true);assert.equal(t.texture.minFilter,THREE.LinearMipmapLinearFilter);}
  c.manager.rebuild(c.p,c.out.root);c.round();assert.deepEqual([...c.renderer.targets],targets);assert.ok(c.manager.info().probes.every(p=>p.captures===2));
  const p=structuredClone(c.p);p.site.pool=null;c.manager.rebuild(p,c.out.root);assert.equal(disposed.size,2);c.manager.dispose();assert.equal(disposed.size,4);assert.equal(c.manager.info().pending,false);
@@ -212,7 +215,8 @@ for(const failure of [false,true])await test('high_water_mirror_is_the_scene_see
  const saved=state(c.renderer);let virtual=null;c.renderer.failMirror=failure;
  c.renderer.inspectMirror=(s,v)=>{virtual=v;
   assert.ok(hidden.every(o=>!o.visible));assert.ok(!sheet.visible);
-  for(const o of meshes(c.out))if(o.material.userData.reflection)assert.equal(o.visible,false,'no mirror inside the mirror');
+  for(const o of meshes(c.out))if(o.material.userData.reflection)
+   assert.equal(o.visible,o.material.userData.reflection.kind==='ground','mirrors hidden, ground visible in planar mirror');
   assert.equal(c.renderer.shadowMap.autoUpdate,false);assert.equal(c.renderer.shadowMap.needsUpdate,false);
   assert.equal(c.renderer.xr.enabled,false);assert.equal(c.renderer.toneMapping,THREE.NoToneMapping);
   // Same plane count as the picture's own pass: no material is set up again per pass.
@@ -485,7 +489,7 @@ await test('mounted_cloud_drift_uses_payload_and_live_interval_but_weather_and_t
   assert.equal(view.renderer3.faces.length,baseline+96,'time of day bypasses cloud interval');
  } finally {view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
 });
-await test('ground_receivers_bind_nearest_exterior_probe_and_leave_non_receivers_unchanged',async()=>{
+await test('ground_receivers_bind_yard_probe_stay_visible_in_reflections_and_leave_non_receivers_unchanged',async()=>{
  const p=fixture();
  p.site.hardscape=[
   {id:'patio_a',polygon:square(4,28,10),material:'paving'},
@@ -494,18 +498,61 @@ await test('ground_receivers_bind_nearest_exterior_probe_and_leave_non_receivers
  p.site.terraces=[{id:'pad_b',polygon:square(62,26,16,12),height:3,
   edges:[{edge:'sharp',wall:{material:'stone',cap:{thickness_in:2,overhang_in:1},rail:{height:3}},
           stairs:[{at:6,width:4,steps:4}]},{edge:'blend'},{edge:'blend'},{edge:'blend'}]}];
- const c=await setup('medium',p);c.round();c.advance(700);c.manager.frame();
+ const c=await setup('high',p);
+ // Add an indoor lamp inside building a, an outdoor lamp in the yard, plus a bulb and lightWash.
+ const indoorLamp=new THREE.PointLight('#fff1c9',40);indoorLamp.position.set(10*.3048,3,-10*.3048);c.scene.add(indoorLamp);
+ const outdoorLamp=new THREE.PointLight('#fff1c9',12);outdoorLamp.position.set(20*.3048,2,-36*.3048);c.scene.add(outdoorLamp);
+ const bulb=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial());bulb.userData.bulb='dev-1';c.scene.add(bulb);
+ const wash=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial());wash.userData.lightWash=true;c.scene.add(wash);
+ let yardFaces=0,yardBuildingsVisible=false,yardIndoorDimmed=false,yardOutdoorFull=false,groundVisibleInAllCaptures=true;
+ const targetsSeen=[];
+ c.renderer.inspect=()=>{
+  const t=c.renderer.target;if(!targetsSeen.includes(t))targetsSeen.push(t);
+  const probe=c.manager.info().probes[targetsSeen.length-1];
+  assert.equal(bulb.visible,false,'bulb hidden in captures');
+  assert.equal(wash.visible,false,'lightWash hidden in captures');
+  for(const o of meshes(c.out))if(o.material.userData.reflection){
+   if(o.material.userData.reflection.kind==='ground'){if(!o.visible)groundVisibleInAllCaptures=false;}
+   else assert.equal(o.visible,false,'mirror surface hidden in captures');
+  }
+  if(probe.kind==='yard'){
+   yardFaces++;
+   const bldgOf=o=>{for(let p=o;p;p=p.parent)if(p.userData?.buildingId)return p.userData.buildingId;return null;};
+   const bldgVisible=id=>meshes(c.out).some(o=>bldgOf(o)===id&&o.material.name==='siding'&&!o.layers.isEnabled(31)&&visibleTree(o));
+   if(bldgVisible('a')&&bldgVisible('b'))yardBuildingsVisible=true;
+   if(indoorLamp.intensity<=1.5)yardIndoorDimmed=true;
+   if(outdoorLamp.intensity===12)yardOutdoorFull=true;
+  }
+ };
+ c.round();c.advance(700);c.manager.frame();
+ assert.equal(yardFaces,6,'yard probe captured all 6 faces');
+ assert.ok(yardBuildingsVisible,'every building stays visible during yard probe capture');
+ assert.ok(yardIndoorDimmed,'indoor point light softened during yard capture');
+ assert.ok(yardOutdoorFull,'outdoor point light keeps full intensity during yard capture');
+ assert.equal(indoorLamp.intensity,40,'indoor point light restored after capture');
+ assert.ok(groundVisibleInAllCaptures,'ground meshes remain visible during all probe captures');
+ // Ground also stays visible in the high-tier planar pool mirror while mirrors stay hidden.
+ const {camera}=poolCamera(c);let mirrorChecked=false;
+ c.renderer.inspectMirror=()=>{
+  mirrorChecked=true;
+  assert.equal(bulb.visible,false);assert.equal(wash.visible,false);
+  for(const o of meshes(c.out))if(o.material.userData.reflection)
+   assert.equal(o.visible,o.material.userData.reflection.kind==='ground');
+ };
+ c.manager.mirror(camera);assert.ok(mirrorChecked);
+ // High-tier yard probe is 512 (matching sky PMREM), while exterior/water remain 256.
+ const info=c.manager.info();
+ assert.equal(info.probes.length,4,'stays within 4-probe cap');
+ assert.ok(info.probes.some(pr=>pr.kind==='water')&&info.probes.some(pr=>pr.kind==='exterior')&&info.probes.some(pr=>pr.kind==='yard'));
  const all=meshes(c.out).filter(o=>!o.layers.isEnabled(31));
  const ground=all.filter(o=>o.material.userData.reflection?.kind==='ground');
- assert.ok(ground.length>=4,'hardscape, coping and retaining wall caps/treads bind as ground');
- const ownerOf=(pred)=>ground.filter(pred).map(o=>o.material.userData.reflection);
- const hard=ownerOf(o=>o.userData.yardPart==='hardscape');
- assert.ok(hard.some(r=>r.owner==='a'&&r.probe?.id==='exterior:a'),'patio near a binds exterior:a');
- assert.ok(hard.some(r=>r.owner==='b'&&r.probe?.id==='exterior:b'),'patio near b binds exterior:b');
- const coping=ownerOf(o=>o.userData.yardPart==='pool');
- assert.ok(coping.length&&coping.every(r=>r.probe?.id==='exterior:a'),'pool/spa coping binds nearest exterior');
- const rwGround=ownerOf(o=>o.userData.yardPart==='retaining_walls');
- assert.ok(rwGround.length&&rwGround.every(r=>r.probe?.id==='exterior:b'),'retaining wall caps/treads bind nearest exterior');
+ assert.ok(ground.some(o=>o.userData.yardPart==='hardscape'),'hardscape binds ground');
+ assert.ok(ground.some(o=>o.userData.yardPart==='pool'),'pool/spa coping binds ground');
+ assert.ok(ground.some(o=>o.userData.yardPart==='retaining_walls'),'retaining wall caps/treads bind ground');
+ assert.ok(ground.every(o=>o.material.userData.reflection.probe?.id==='yard:ground'),'all ground receivers bind yard:ground');
+ assert.equal(ground[0].material.userData.reflection.probe.target.width,512,'high-tier yard probe matches 512 sky PMREM');
+ const extProbe=meshes(c.out).find(o=>o.material.userData.reflection?.kind==='exterior').material.userData.reflection.probe;
+ assert.equal(extProbe.target.width,256,'exterior probes stay 256');
  const rwMeshes=all.filter(o=>o.userData.yardPart==='retaining_walls');
  assert.ok(rwMeshes.some(o=>!o.material.userData.reflection),'retaining wall faces/risers/rails stay unbound');
  // Non-receivers must remain completely untouched.
@@ -524,21 +571,19 @@ await test('ground_receivers_bind_nearest_exterior_probe_and_leave_non_receivers
  assert.ok(gs.fragmentShader.includes('probeRough')&&gs.fragmentShader.includes('probeGain'));
  assert.ok(!gs.fragmentShader.includes('paneMirror')&&!gs.fragmentShader.includes('waterPlanar'));
  assert.ok(gr.uniforms.probeMax.value.y<gr.probe.box.max.y,'ground proxy ceiling caps below 30 m lot sky');
- assert.ok(c.manager.info().probes.every(pr=>pr.box.max[1]>=30),'exterior probe box unchanged');
+ assert.ok(info.probes.every(pr=>pr.box.max[1]>=30),'probe box unchanged');
  c.manager.dispose();
- // Discarded building beyond 4-probe cap falls back to nearest kept exterior probe.
- const big=fixture();big.buildings.push(building('tiny',140),building('huge',220));
- big.buildings[2].levels[0].outline=square(0,0,2);big.buildings[3].levels[0].outline=square(0,0,90);
- big.site.hardscape=[{id:'near_tiny',polygon:square(138,10,8),material:'paving'}];
- const c2=await setup('high',big);c2.round();
- const tinyGround=meshes(c2.out).find(o=>o.userData.yardPart==='hardscape'&&o.material.userData.reflection?.kind==='ground');
- assert.ok(tinyGround.material.userData.reflection.probe?.kind==='exterior'&&tinyGround.material.userData.reflection.probe.id!=='exterior:tiny');
+ // Plan with hardscape spanning front & back of a building places yard:ground outside the building footprint.
+ const split=fixture();split.buildings=[building('a',0)];
+ split.site.hardscape=[
+  {id:'front_walk',polygon:square(12,-10,16,8),material:'paving'},
+  {id:'back_patio',polygon:square(8,28,24,18),material:'paving'},
+ ];
+ const c2=await setup('medium',split);
+ const yp=c2.manager.info().probes.find(pr=>pr.kind==='yard');
+ assert.ok(yp,'yard probe created');
+ assert.ok(yp.centre[2]<-24*.3048,'placed outside building over larger backyard patio');
  c2.manager.dispose();
- // Buildingless plan leaves ground unbound (sky fallback).
- const noBldg=fixture();noBldg.buildings=[];
- const c3=await setup('medium',noBldg);
- assert.ok(!meshes(c3.out).some(o=>o.material.userData.reflection?.kind==='ground'));
- c3.manager.dispose();
 });
 await test('ground_falls_back_to_sky_cross_fades_and_keeps_old_probe_on_recapture',async()=>{
  const c=await setup('medium');
@@ -606,7 +651,7 @@ await test('ground_horizon_damp_skip_and_uniform_sampler_budgets',()=>{
  const makePMREM=size=>{const t=new THREE.CubeTexture();t.isPMREMTexture=true;t.mipmaps=[];
   for(let l=0;l<=Math.log2(size)-3;l++)t.mipmaps.push({width:size>>l,height:size>>l});return t;};
  scene.environment=makePMREM(512);
- const probe256=makePMREM(256);
+ const probe512=makePMREM(512);
  const haze=installStageHaze(scene,{}),shadow=installCloudShadow(scene,{uniforms:createCloudUniforms()}),weather=installWeatherSurface(scene);
  const lights=makeLights();
  lights.directional=[{},{}];lights.directionalShadowMap=[{}];
@@ -622,11 +667,14 @@ await test('ground_horizon_damp_skip_and_uniform_sampler_budgets',()=>{
  ];
  for(const [label,factory] of cases){
   const mb=factory(),ma=factory();
-  reflectionMaterial(ma,'ground','a');ma.envMap=probe256;
+  reflectionMaterial(ma,'ground','yard');
   const ob=new THREE.Mesh(new THREE.BoxGeometry(),mb),oa=new THREE.Mesh(new THREE.BoxGeometry(),ma);
   ob.receiveShadow=oa.receiveShadow=true;scene.add(ob,oa);
   haze.prepare();shadow.prepare();weather.prepare();
-  const sb=programSource(renderer,cache,scene,ob,lights),sa=programSource(renderer,cache,scene,oa,lights);
+  const sb=programSource(renderer,cache,scene,ob,lights),saSky=programSource(renderer,cache,scene,oa,lights);
+  ma.envMap=probe512;
+  const sa=programSource(renderer,cache,scene,oa,lights);
+  assert.equal(saSky.key,sa.key,label+': 512 sky and 512 yard probe share one program cache key');
   const bb=uniformBudget(sb[2]),ba=uniformBudget(sa[2]);
   assert.equal(ba.samplers.length,bb.samplers.length,label+': zero added samplers');
   assert.ok(ba.samplers.length<=16,label+': samplers within 16');

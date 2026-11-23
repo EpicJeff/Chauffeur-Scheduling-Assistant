@@ -404,42 +404,19 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     return mesh;
   };
   const seedOf = (piece, ...rest) => piece?.id ? [piece.id, ...rest].join(':') : null;
-  const buildingCentres = (plan.buildings || []).map(b => {
-    const poly = buildingFootprint(b); if (!poly.length) return null;
-    const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
-    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-    const a = (b.rotation || 0) * Math.PI / 180, pos = b.position || [0, 0];
-    return { id: b.id, x: pos[0] + cx * Math.cos(a) - cy * Math.sin(a), y: pos[1] + cx * Math.sin(a) + cy * Math.cos(a) };
-  }).filter(Boolean);
-  const nearestBuilding = geometry => {
-    if (!buildingCentres.length) return null;
-    if (buildingCentres.length === 1) return buildingCentres[0].id;
-    geometry.computeBoundingBox();
-    const box = geometry.boundingBox;
-    if (!box || box.isEmpty()) return buildingCentres[0].id;
-    const cx = (box.min.x + box.max.x) / 2, cy = -(box.min.z + box.max.z) / 2;
-    let best = buildingCentres[0], bestD = Infinity;
-    for (const b of buildingCentres) {
-      const d = (b.x - cx) ** 2 + (b.y - cy) ** 2;
-      if (d < bestD) { bestD = d; best = b; }
-    }
-    return best.id;
-  };
   // Wet hard ground receivers (paving/patio/walks/driveway, pool/spa coping,
-  // wall caps, stair treads) bind to the nearest building's exterior probe on
+  // wall caps, stair treads) bind to the yard reflection probe on
   // medium/high/max tiers. Never alters low tier, bakeSource, lawn, roofs, walls or water.
-  const groundMat = (source, geometry) => {
-    if (tier === 'low' || bakeSource || !buildingCentres.length) return source;
+  const groundMat = source => {
+    if (tier === 'low' || bakeSource) return source;
     if (!source || source.userData.underwater || source.userData.waterSurface || source.userData.seasonLawn ||
         source.name === 'lawn' || source.userData.materialRole === 'lawn' || source.name === 'roof' || source.userData.materialRole === 'roof') return source;
-    const owner = nearestBuilding(geometry);
-    if (!owner) return source;
-    const key = 'reflection-ground:' + owner + ':' + source.uuid;
+    const key = 'reflection-ground:' + source.uuid;
     if (!mats.has(key)) {
       const target = source.clone();
       target.onBeforeCompile = source.onBeforeCompile;
       target.customProgramCacheKey = source.customProgramCacheKey;
-      reflectionMaterial(target, 'ground', owner);
+      reflectionMaterial(target, 'ground', 'yard');
       const sync = () => { for (const m of target.userData.reflection.materials) copyMaterialParams(source, m); };
       source.addEventListener('materialparamschange', sync);
       target.addEventListener('dispose', () => source.removeEventListener('materialparamschange', sync));
