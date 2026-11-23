@@ -1,6 +1,44 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.986 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.987 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.987 (2026-11-23, browser-checked on the editor harness, NOT device-verified): placed pieces can be moved between levels, between buildings, and between a building and the site with "Move to".** The owner's request: placed models were tied to their building or the site, so a piece placed in the house could not be moved outside or vice versa. Live Home 3D has explicit actions for this, and the owner chose explicit actions only, no re-linking on drag.
+
+(1) **Ops.** New `editor/move_to.js` is pure:
+- `moveTargets(plan, refs)` lists Site and every level of every building, as `'<building> · <level>'`, leaving out the pieces' current place.
+- `moveOps(plan, refs, targetKey)` returns one batch of existing server ops, or the refusals.
+  - Same building, other level: `move_hosted`.
+  - Other building: `delete` + `add_item`.
+  - To the site: `delete` + `add_site_item` (`furniture`, `require_inside`).
+  - From the site: `delete_site_item` + `add_item`.
+- The piece keeps its id, delete first then add in one batch. That keeps its selection, its hidden/locked state, and every property: tint, scale, shadow, object kind, light link.
+- It keeps its lot point and world facing. Building rotation is folded in both directions.
+- It keeps its height above the new support. The hosted `offset` is folded into `elevation`: added for floor and ground hosts, subtracted for ceiling hosts.
+- A ceiling piece lands on the ceiling of the room under it.
+- Refusal is all-or-nothing, naming each blocked piece:
+  - no room under it on the target level;
+  - wall and roof pieces;
+  - plants;
+  - ceiling pieces sent to the site;
+  - outside the lot;
+  - devices, openings and lights.
+- New `editor/lot_frame.js` now holds the lot/local frame helpers and `hostedAt`, which clipboard.js used to keep private copies of.
+
+(2) **UI.** New `editor/move_to_action.js` is the one shared builder:
+- A **Move to** button in the single-piece and multi-selection Properties cards. The single card's Move to and Delete row now spans the card.
+- A **Move to ▸** submenu beside Duplicate in the right-click menu. `context_menu.js` gained child menus with Back, Right/Left keys and focus restoration.
+- Wall/roof pieces show the entry disabled, with the reason in `title` and `aria-description`. The menu arrow is decoration only, so the accessible name stays "Move to".
+- One choice runs one `applyBatch`, which is one undo step. The editor then switches to the destination level, or to the exterior view for the site, and re-selects the moved pieces.
+- A refusal shows `showGlobalAlert` and applies nothing.
+- Argyle's edit tool description gained one line: delete or delete_site_item first, then add_item or add_site_item, in one batch, keeping the id.
+
+No server changes.
+
+Tests:
+- `test_twin_move_to_js.py` 18/18;
+- `test_twin_move_to_action_js.py` 6/6 + 2/2, including TestClient batches and revert;
+- `test_house_editor_move_to_live.py` 4/4 in Chromium: right-click to Site and one Ctrl+Z undo, hidden survives, locked survives, wall entry disabled;
+- `test_twin_clipboard_js.py` green.
 
 **v2.499.986 (2026-11-23, owner approved from Chromium captures, NOT device-verified): house viewer modes are toggles; the glance bar fits its tiles and is centred; nights are brighter with a per-device Night brightness slider; camera cones stop at walls and are far lighter.** From the owner's four viewer requests. (1) Modes: `live/modes.js` keeps a set of active modes instead of one. Each mode button toggles its mode; All turns every mode on, or every mode off when all are already on. A 500 ms long press, a right-click, Shift-click or Shift+Enter solos a mode (only that one on), as the owner asked. The set is remembered per device in localStorage `chauffeur.twin.modes.v1` (`live/mode_state.js`, `modeShows(mode, id)`); APIs `setModes`, `toggleMode`, `modes`, plus the legacy `setMode` for one-mode callers. `live.js`, `energy.js` and `security.js` read the set. (2) Glance bar (`house_twin.html`): sized to its content and centred at the bottom, matching the centred mode strip at the top, instead of full width. (3) Night: `sky/look.js` raises the night floor and adds `NIGHT_BRIGHTNESS_DEFAULT = 0.5`, stored per device under `chauffeur_twin_night_brightness`. Floor ambient .09 / .24 / .42 and environment .015 / .18 / .35 at 0 / 50 / 100%. The slider `#twin-night-brightness` sits with the time scrub (`sky/time_scrub.js` `mountNightBrightness`, `view.setNightBrightness`). (4) Camera cones: new `live/cone_occluder.js` builds a BVH of static scene geometry inside each cone's bounds and casts 289 rays per cone, so a cone stops at walls, floors, ceilings and roofs instead of poking through the house. Fill opacity is .018 and the rim .18, with depth testing on. Cones rebuild on `twinrebuilt` / `twinyardrebuilt` or a camera view change. Test fix: `test_house_twin_energy_live.py` `scenario_no_programs_on_second_entry_to_either_mode` now waits for a stable program count before it starts. With the brighter night floor, reflection probes land later, and their glass/water `box-reflection` programs were being counted as re-entry compiles. Tests: `test_twin_modes_js.py` (new), `test_twin_security_js.py` 9/9, `test_twin_sky_js.py` 12/12, the live mode, energy, glance, climate and cars node tests, and Chromium controls 4/4, texture units 1/1, weather 5/5, seasons 7/7, energy 7/7. Known reds that fail on main too: glance `scenario_second_idle_cycle_adds_no_shader_programs`, live_rooms `scenario_wall_recovers_when_home_assistant_returns`, energy_equipment solar-zone click timeout, real_lights `scenario_a_sky_arriving_in_lights_is_the_sky_after_all`.
 
