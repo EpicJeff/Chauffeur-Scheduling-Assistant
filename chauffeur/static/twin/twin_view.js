@@ -1849,7 +1849,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // scene: it contains sheets, handles and temporarily ghosted finishes.
       // The viewer's full-wall topology preserves its existing atlas keys.
       const bakePlan = plan;
-      let physical = null, physicalYard = null;
+      let physical = null, physicalYard = null, modelYardJob = null, physicalReady = false, modelYardWarned = false;
+      const ensurePhysical = () => {
+        if (!physical) {
+          // Medium model loading yields exactly full + lod1 (or full alone),
+          // independent of receiver quality; never lod2 or a heavy stand-in.
+          physical = buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true, modelTier: 'medium' });
+          const build = physical;
+          build.ready = build.ready.then(() => { if (physical === build) physicalReady = true; });
+        }
+        return physical;
+      };
       const yardMaterials = new Set();
       const copyReceivers = node => {
         const original = bakeAuthoredMaterial(yardGroup, node) || selectedMaterials.get(node) || faded.get(node) || node.material;
@@ -1873,22 +1883,48 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           // Authored viewer-shaped materials classify alpha and supply physical
           // reach inputs. Drawn editor fades, focus and selection never enter.
           alphaRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            ensurePhysical();
             physical.root.updateMatrixWorld(true);
             return [physical.root, ...(yardGroup ? [yardGroup] : [])];
           },
           receiverRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            ensurePhysical();
             if (!physicalYard && yardGroup) {
               physicalYard = copyReceivers(yardGroup) || new THREE.Group();
               physicalYard.matrixAutoUpdate = false; physicalYard.matrix.copy(yardGroup.matrixWorld);
             }
             return [physical.root, ...(physicalYard ? [physicalYard] : [])];
           },
+          modelRoot: () => physicalReady ? physical.root : null,
+          modelReady: async () => {
+            const build = ensurePhysical();
+            await build.ready;
+            if (physical !== build) return;
+            if (yardGroup) {
+              // The drawn editor yard has full-detail imports. Build only its
+              // placed models as a viewer so their mid LODs are available too.
+              modelYardJob ||= buildYard(bakePlan, kit, tier, { viewing: true, modelSource: true, modelTier: 'medium', skyCover: build.skyCover }).then(yard => {
+                if (physical !== build) { disposeObject(yard.group); return; }
+                const modelYard = yard.group;
+                build.root.updateMatrixWorld(true); yardGroup.updateWorldMatrix(true, true);
+                modelYard.matrixAutoUpdate = false;
+                modelYard.matrix.copy(build.root.matrixWorld).invert().multiply(yardGroup.matrixWorld);
+                build.root.add(modelYard);
+              }).catch(error => {
+                if (physical !== build) return;
+                modelYardJob = null;
+                if (!modelYardWarned) {
+                  modelYardWarned = true;
+                  console.warn('Bake yard models unavailable; continuing without their shadows.', error);
+                }
+              });
+              await modelYardJob;
+            }
+          },
           dispose: () => {
             if (physical) release(physical);
             if (physicalYard) disposeObject(physicalYard, { keepMaterials: yardMaterials });
-            physical = physicalYard = null; yardMaterials.clear();
+            physical = physicalYard = modelYardJob = null; physicalReady = false; yardMaterials.clear();
           } });
     }
     const host = document.getElementById('twin-controls');

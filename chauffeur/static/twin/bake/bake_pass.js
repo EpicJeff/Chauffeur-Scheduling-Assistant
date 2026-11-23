@@ -4,6 +4,7 @@ import { CANDELA } from '../live/real_lights.js';
 import { atlasMesh } from './atlas.js';
 import { bakeSamples, fillStrength } from './fixture_terms.js';
 import { chartReflectance } from './bindings.js';
+import { modelOccluderMeshes } from './model_occluder_meshes.js';
 
 const worldVertex = `varying vec3 wp;
 void main() { wp = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -142,7 +143,7 @@ function addTarget(renderer, from, to, camera) {
   quad.geometry.dispose(); quad.material.dispose();
 }
 
-export function occluders(view) {
+export function occluders(view, source, range) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
   (view.bake?.occlusionRoot?.() || view.scene).traverse(o => {
@@ -154,13 +155,19 @@ export function occluders(view) {
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
   });
+  for (const mesh of modelOccluderMeshes(view.bake?.modelRoot?.(), view.plan, source, range)) scene.add(mesh);
   return scene;
 }
 
 export async function renderPage(view, renderer, charts, size, light, layout, atlas,
   { deferBounce = false, deferSumEncoding = false, checkpoint = async () => {} } = {}) {
+  // The editor's model-bearing physical build loads imports asynchronously.
+  // Do not publish a fresh page made before those blockers exist.
+  await view.bake?.modelReady?.();
+  await checkpoint();
+  const { source, range: reach } = lightSource(view.plan, light), far = Math.max(reach * 2, 30);
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType });
-  const scene = proxies(charts, size, atlas), blockers = occluders(view);
+  const scene = proxies(charts, size, atlas), blockers = occluders(view, source, reach);
   const saved = { target: renderer.getRenderTarget(), color: renderer.getClearColor(new THREE.Color()),
     alpha: renderer.getClearAlpha(), tone: renderer.toneMapping, auto: renderer.autoClear, xr: renderer.xr.enabled };
   const controller = view.bake;
@@ -181,7 +188,6 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
   try {
     renderer.toneMapping = THREE.NoToneMapping; renderer.xr.enabled = false;
     renderer.setClearColor(0, 0); renderer.setRenderTarget(target); renderer.clear();
-    const { source, range: reach } = lightSource(view.plan, light), far = Math.max(reach * 2, 30);
     const samples = bakeSamples(view.plan, light);
     shadow = new THREE.WebGLCubeRenderTarget(512, { type: THREE.HalfFloatType,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });

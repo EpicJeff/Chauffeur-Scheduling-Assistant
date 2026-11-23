@@ -18,6 +18,10 @@ export function bakeReceiverRoots(root) {
   for (const node of roots) { if (node !== root) madeRoots.add(node); node.updateMatrixWorld(true); }
   return roots;
 }
+// The neutral receiving topology deliberately has no kit models. The editor
+// supplies its separate physical build, only after its imports have settled.
+export const bakeModelRoot = root => providers.get(root)?.modelRoot?.() || null;
+export const prepareBakeModels = async root => { await providers.get(root)?.modelReady?.(); };
 // Default kit finishes already have the neutral topology. Reuse their buffers
 // through detached clones instead of generating a second house on a cold bake.
 export function defaultBuildingFinishes(plan,kit) {
@@ -44,7 +48,7 @@ export function cloneBakeGeometry(root,children=root.children) {
   return group;
 }
 export function bakeAuthoredMaterial(root, mesh) { return providers.get(root)?.authoredMaterials.get(mesh); }
-export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,dispose=null}={}) {
+export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,modelRoot=null,modelReady=null,dispose=null}={}) {
   // Capture model-created materials before editor presentation swaps any mesh.
   // In particular, yard receivers must not inherit a focused-room fade.
   const authoredMaterials = new WeakMap(), alphaClasses = new WeakMap();
@@ -54,7 +58,7 @@ export function registerBakeSource(root, make, {extras=true,children=root.childr
     const m = mesh.material, mode = m.userData.alphaMode;
     alphaClasses.set(mesh, mode ? mode !== 'opaque' : !!(m.name === 'glass' || m.alphaTest > 0 || m.transparent && !m.userData.viewingOpaque));
   });
-  providers.set(root, {make,extras,receiverRoots,alphaRoots,dispose,authoredMaterials,alphaClasses,children:new Set(children)});
+  providers.set(root, {make,extras,receiverRoots,alphaRoots,modelRoot,modelReady,dispose,authoredMaterials,alphaClasses,children:new Set(children)});
 }
 export function bakeSource(root) {
   const entries = [];

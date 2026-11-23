@@ -13,7 +13,7 @@ import { workerCodec } from './worker_codec.js';
 import { covered } from './atlas_transport.js';
 import { sameSlots } from './slots.js';
 import { invalidateMaterialReach } from './reach.js';
-import { releaseBakeSource, bakeReceiverRoots } from './source.js';
+import { releaseBakeSource, bakeReceiverRoots, bakeModelRoot, prepareBakeModels } from './source.js';
 import { matchesEntry, pageDamage, cheapSignatures, realtimeCurrent } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
 
@@ -856,6 +856,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
     fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
     occlusionRoot: () => atlas?.sourceRoot || root,
+    modelRoot: () => bakeModelRoot(root),
+    modelReady: () => prepareBakeModels(root),
     snapshot: () => atlas && pages ? {key:atlas.key,layers,bankBase,banks:pages.banks,present:[...present],etags:[...etags],manifest:pageManifest} : null,
     refreshMaterials(ids) {
       if (inspectOnly && (!running || !atlas)) return;

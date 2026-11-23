@@ -366,7 +366,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan), bakeSource = false } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan), bakeSource = false, modelSource = false, modelTier = tier } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
@@ -830,7 +830,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           models.set(assetId, loadModel(assetId, kit, source => {
             if (root.userData.disposed) { disposeObject(source); return; }
             for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
-          }, { tier, editor: !viewing }));
+          }, { tier: modelTier, editor: !viewing }));
         }
         latePlacements.get(assetId).push(place);
         const source = await models.get(assetId);
@@ -879,6 +879,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
   const previousKeys = previous?.userData.yardPartKeys || {};
   for (const name of YARD_PARTS) {
+    if (modelSource && name !== 'furniture') continue;
     if (bakeSource && ['plants', 'grass', 'furniture'].includes(name)) continue;
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
@@ -1057,7 +1058,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   writeWeatherOpen(root, skyCover, FT);
-  if (!bakeSource) {
+  if (!bakeSource && !modelSource) {
     const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
     // Keep the neutral bake copy clipped to the same roof drip line whenever
     // a roof edit reuses the drawn yard and re-runs writeWeatherOpen.

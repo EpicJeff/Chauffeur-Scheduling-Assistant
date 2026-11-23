@@ -314,7 +314,7 @@ function materialKitWithRefs(kit, refs) {
 // Imported opening/item metadata/LODs, tier, viewing, showAnchors, the building's
 // editableLevel and global edit-mode object visibility also participate.
 // Keep the mutation guard alongside these inputs.
-function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = false, editableLevel = null } = {}) {
+function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = false, editableLevel = null, modelTier = tier } = {}) {
   const known = manifest(kit), refs = { ...plan.materials, ...b.materials };
   const materialKit = materialKitWithRefs(kit, refs);
   const roles = new Set(['floor', 'patio_concrete', 'base']);
@@ -389,7 +389,7 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
     fixed: JSON.stringify([b, finishes, grade, tier, viewing, showAnchors,
       editableLevel?.startsWith(b.id + ':') ? editableLevel : null, editorObjects && !!editableLevel]),
     finishes: JSON.stringify([finishes, tier]),
-    models: JSON.stringify(models),
+    models: JSON.stringify(modelTier === tier ? models : [...models, ['modelTier', modelTier]]),
   };
 }
 const keyFromParts = parts => JSON.stringify([parts.fixed, parts.models]);
@@ -483,7 +483,7 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   return next;
 }
 
-function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null, timing = null } = {}) {
+function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = null, viewing = false, reuseMaterials = null, timing = null, modelTier = tier } = {}) {
   let failedModel = false;
   const onAssetFailure = () => { failedModel = true; };
   const detail = timing?.detail;
@@ -944,7 +944,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), kindMat('window_frame', h), 0, kindRef('window_frame', h), 'window_frame');
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
-          pendingModels.push(loadModel(h.model, kit, undefined, { tier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
+          pendingModels.push(loadModel(h.model, kit, undefined, { tier: modelTier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
             if (!source) return;
             if (root.userData.disposed) { disposeObject(source); return; }
             const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
@@ -1798,7 +1798,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           models.set(asset, loadModel(asset, kit, model => {
             if (root.userData.disposed) { disposeObject(model); return; }
             for (const update of lateItems.get(asset)) update(model.clone(true), true);
-          }, { tier, editor: !viewing, onFailure: onAssetFailure }));
+          }, { tier: modelTier, editor: !viewing, onFailure: onAssetFailure }));
         }
         lateItems.get(asset).push(draw);
         source = await models.get(asset);
