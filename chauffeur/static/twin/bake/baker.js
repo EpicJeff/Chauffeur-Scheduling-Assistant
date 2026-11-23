@@ -1,7 +1,8 @@
 import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
 import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } from './bake_pass.js';
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
-import { reachLights } from './reach.js';
+import { reachLights, lightSource } from './reach.js';
+import { placedCopies, occluderHash } from './model_occluders.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 import { matchesEntry, cheapSignatures } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
@@ -9,9 +10,18 @@ import { keyInputs, sameKeyInputs } from './key_inputs.js';
 export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
+  return lampKey(atlas, light, slot, true);
+}
+
+export function gridKey(atlas, light, slot, bank) {
+  return lampKey(atlas, light, slot, false);
+}
+
+function lampKey(atlas, light, slot, models) {
   const hash=fingerprint();
-  // Fixture pages use the new layout; unsigned legacy shadowmasks keep main's keys.
+  // The grid sees receiving geometry only; pages also see placed occluders.
   hash.add(JSON.stringify([light.signature ? 'light-slots-9' : 'light-slots-8',light.reach || atlas.key,light.device,light.at,
+    ...(models ? [light.occluders || ''] : []),
     ...(light.signature ? ['fixtures-2', light.signature, ...(light.kind === 3 ? [] : [null])] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
@@ -34,9 +44,11 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     // a rebuild of every light; none of its published channels can be trusted.
     prior = new Map(); ownershipReset = true; published = {};
   }
-  lights = reachLights(atlas.room, lights).map(l => l.kind === 3 ? {...l,
-    scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
-      ? published[l.device].scale : undefined} : l);
+  const copies = placedCopies(atlas.room.plan);
+  lights = reachLights(atlas.room, lights).map(l => ({...l,
+    occluders: occluderHash(copies, lightSource(atlas.room.plan, l).source, l.range),
+    ...(l.kind === 3 ? {scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
+      ? published[l.device].scale : undefined} : {})}));
   const slots = assignChannels(atlas.room.rooms, lights, prior), banks = atlas.room.packBanks(lights, slots);
   let offset = 0;
   // Geometry reserves a fixed address stride, even when its trailing pages are
@@ -65,6 +77,7 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     entries[light.device] = { page: pages[0], pages, channel: s.channel,
       ...(light.kind === 3 ? {scale: light.scale} : {}),
       location: location.key(),
+      grid: gridKey(atlas, light, s, banks[s.bank]),
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
   return { lights, slots, banks, offsets, entries, pages: offset,

@@ -2,8 +2,8 @@ import { fingerprint } from './geometry_key.js';
 
 // Shared with the exact atlas/cache keys. Advance the generator stamp whenever
 // generated receiving geometry changes (including changes outside atlas.js).
-export const ATLAS_VERSION = 'reach-atlas-12';
-export const ATLAS_WORKER_VERSION = 'atlas-worker-reach-12';
+export const ATLAS_VERSION = 'reach-atlas-13';
+export const ATLAS_WORKER_VERSION = 'atlas-worker-reach-13';
 export const BAKE_GENERATOR_VERSION = 'wet-drip-line-1';
 
 const hash = value => { const h = fingerprint(); h.add(JSON.stringify(value)); return h.key(); };

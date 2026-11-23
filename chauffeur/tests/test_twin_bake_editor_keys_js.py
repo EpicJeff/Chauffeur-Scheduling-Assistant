@@ -74,6 +74,15 @@ if __name__ == '__main__':
         print(str(root)+'\n'+out)
         if code:sys.exit(code)
         results.append(json.loads(next(line[5:] for line in out.splitlines() if line.startswith('KEYS '))))
-    assert results[0]==results[1],f'Viewer key regression against read-only main: {results}'
-    print('  ok 4 viewer keys and chart counts unchanged against read-only main')
+    # Chart counts must match main. Keys must match too unless this tree
+    # deliberately migrated the atlas (a different ATLAS_VERSION), in which
+    # case they must differ: an unchanged key would mean the bump never landed.
+    import re
+    version=lambda root:re.search(r"ATLAS_VERSION\s*=\s*'([^']+)'",(Path(root)/'static/twin/bake/key_inputs.js').read_text(encoding='utf8')).group(1)
+    migrated=version(S.ROOT)!=version('E:/repositories/Chauffeur/chauffeur')
+    assert [r['charts'] for r in results[0]]==[r['charts'] for r in results[1]],f'Viewer chart count regression against read-only main: {results}'
+    for ours,theirs in zip(results[0],results[1]):
+        same=(ours['key'],ours['input'])==(theirs['key'],theirs['input'])
+        assert same!=migrated,f'Viewer keys {"unchanged despite" if migrated else "changed without"} an ATLAS_VERSION migration: {results}'
+    print('  ok 4 viewer chart counts unchanged against read-only main; keys '+('migrated' if migrated else 'unchanged'))
     code,out=run_node(EDITOR,data,timeout=480);print(out);sys.exit(code or 0)
