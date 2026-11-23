@@ -11,6 +11,38 @@ ROOT = Path(__file__).resolve().parents[1]
 DRIVER = PRELUDE + r"""
 const THREE=await import('three');
 const W=await import(file('static/twin/sky/weather.js'));
+await test('stop clock advances between fetches, latches a stream stop, resets on rain and degrades without HA',()=>{
+ const clock=W.createWeatherClock(),rain={state:'pouring',attributes:{}},dry={state:'sunny',attributes:{}};
+ const ground={updated:1000,rain_stopped_s:120,drying_min:60,source:{values:{rate:0}}};
+ assert.equal(clock(dry,ground,{},1010).rain_stopped_s,130);
+ assert.equal(clock(dry,ground,{},1030).rain_stopped_s,150);
+ assert.equal(W.weatherState(dry,{updated:0,rain_stopped_s:10},{},20).rain_stopped_s,30,'Unix zero is a valid snapshot time');
+ assert.equal(clock(rain,ground,{},1040).rain_stopped_s,0);
+ assert.equal(clock(dry,ground,{},1045).rain_stopped_s,0,'a dry server snapshot from before this shower cannot replace its local stop');
+ assert.equal(clock(dry,ground,{},1047).rain_stopped_s,2);
+ assert.equal(clock(rain,ground,{},1048).rain_stopped_s,0);
+ const lagging={...ground,rain_stopped_s:0,source:{values:{rate:1}}};
+ assert.equal(clock(dry,lagging,{},1050).rain_stopped_s,0);
+ assert.equal(clock(dry,lagging,{},1080).rain_stopped_s,30);
+ const known={...ground,updated:1080,rain_stopped_s:28};
+ assert.equal(clock(dry,known,{},1090).rain_stopped_s,38);
+ assert.equal(clock(dry,known,{},1090).drying_min,60);
+ assert.equal(clock(dry,known,{},1080+21601).rain_stopped_s,null);
+ assert.equal(clock(rain,known,{},23000).rain_stopped_s,0);
+ for(const e of [null,{}, {...rain,stale:true},{state:'unavailable'}]){
+  const value=clock(e,ground,{},24000);assert.equal(value.rain_stopped_s,null);assert.equal(value.drying_min,null);
+ }
+ assert.equal(W.neutralWeather().rain_stopped_s,null);assert.equal(W.neutralWeather().drying_min,null);
+});
+await test('Rain stopping pours for 20s, drains in real time for 30s, accelerates 45min, then holds dry',()=>{
+ for(const t of [0,10,19.99]){const v=W.previewWeather('rain-stopping',t);assert.equal(v.rate,1);assert.equal(v.rain_stopped_s,0);assert.equal(v.wetness,1);}
+ for(const t of [20,25,50]){const v=W.previewWeather('rain-stopping',t);assert.equal(v.rate,0);assert.equal(v.rain_stopped_s,t-20);assert.equal(v.drying_min,180);}
+ assert.equal(W.previewWeather('rain-stopping',70).rain_stopped_s,1365);
+ for(const t of [90,120,300]){const v=W.previewWeather('rain-stopping',t);assert.equal(v.rate,0);assert.equal(v.wetness,0);assert.equal(v.rain_stopped_s,2700);}
+ let now=0;const timers=new Map();const p=W.createWeatherPreview(()=>{},{now:()=>now,setTimer:(fn)=>{timers.set(1,fn);return 1;},clearTimer:id=>timers.delete(id)});
+ p.set('rain-stopping');now=300000;assert.equal(p.get().wetness,0);assert.equal(p.deadline,null);assert.equal(timers.size,0);
+ p.set(null);assert.equal(p.get(),null);p.stop();
+});
 const {mountTwin}=await import(file('static/twin/twin_view.js'));
 const {grassMaterial}=await import(file('static/twin/yard_grass.js'));
 const {installPlantWind,windVector}=await import(file('static/twin/sky/wind.js'));

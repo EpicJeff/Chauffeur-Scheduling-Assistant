@@ -1349,7 +1349,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const roofPlane = (a, c, start, end) => {
         const angle = Math.atan2(c[1] - a[1], c[0] - a[0]), length = Math.hypot(c[0] - a[0], c[1] - a[1]);
         const at = (g, offset = 0) => g.rotateZ(angle).translate((a[0] + c[0]) / 2 - Math.sin(angle) * offset, (a[1] + c[1]) / 2 + Math.cos(angle) * offset, -(start + end) / 2);
-        mesh(local.roof, at(new THREE.BoxGeometry(length, 0.4, end - start), 0.2), mat('roof'));
+        mesh(local.roof, at(new THREE.BoxGeometry(length, 0.4, end - start), 0.2), mat('roof')).userData.eaveAttachment = sections.indexOf(section);
         if (materialKit.materials.roof?.asset === 'standing_seam') for (let y = start + 0.75; y < end; y += 1.5) mesh(local.roof, at(new THREE.BoxGeometry(length, 0.08, 0.065), 0.44).translate(0, 0, -y + (start + end) / 2), mat('roof'));
         for (const y of [start, end]) mesh(local.roof, at(new THREE.BoxGeometry(length, 0.65, 0.14)).translate(0, 0, -y + (start + end) / 2), kindMat('fascia'));
       };
@@ -1402,7 +1402,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           return g.translate(u, height, depth / 2).applyMatrix4(frame);
         };
         const topMid = aw.eave + rise / 2;
-        mesh(local.roof, slopedBox(width, 0.3, aw.depth, -slope, 0, topMid - 0.15), mat('roof'));
+        mesh(local.roof, slopedBox(width, 0.3, aw.depth, -slope, 0, topMid - 0.15), mat('roof')).userData.eaveAttachment = sections.indexOf(section);
         if (materialKit.materials.roof?.asset === 'standing_seam') for (let u = -width / 2 + 0.75; u < width / 2; u += 1.5) {
           mesh(local.roof, slopedBox(0.065, 0.08, aw.depth, -slope, u, topMid + 0.04), mat('roof'));
         }
@@ -1819,7 +1819,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   // before material batching loses their independent transforms.
   for (const b of plan.buildings || []) {
     const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
-    const positions = [], slabs = [], a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+    const positions = [], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
     const capture = (o, target, ceiling = false, space = domain) => {
       if (!o.isMesh || o.userData.ghost || !o.geometry?.attributes.position) return;
       const p = o.geometry.attributes.position, index = o.geometry.index;
@@ -1839,12 +1839,20 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         for (const v of [a, c, d]) target.push(v.x, -v.z, v.y);
       }
     };
-    domain?.traverse(o => capture(o, positions));
+    domain?.traverse(o => {
+      capture(o, positions);
+      if(Number.isInteger(o.userData.eaveAttachment)){
+        const section=o.userData.eaveAttachment;
+        if(!attachments.has(section))attachments.set(section,[]);
+        capture(o, attachments.get(section));
+      }
+    });
     for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
       for (const space of group.children) space.traverse(o => {
         if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
       });
-    if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs});
+    if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,
+      eaveAttachments:[...attachments].map(([section,positions])=>({section,positions}))});
   }
   for (const g of mergeGroups) batch(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
   groups.gableCut.visible = false;

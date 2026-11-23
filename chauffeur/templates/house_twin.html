@@ -383,7 +383,7 @@
   {% call settings_drawer('twin', 'House', preview=true) %}
     {% call settings_section('twin-time-preview', 'Time preview') %}
       <button type="button" data-time="now" aria-pressed="true">Now</button><button type="button" data-time="day" aria-pressed="false">Day</button><button type="button" data-time="night" aria-pressed="false">Night</button>
-      {% for mode, label in [('clear', 'Clear'), ('rain', 'Rain'), ('pouring', 'Pouring'), ('snow', 'Snow'), ('fog', 'Fog'), ('thunderstorm', 'Thunderstorm')] %}
+      {% for mode, label in [('clear', 'Clear'), ('rain', 'Rain'), ('pouring', 'Pouring'), ('rain-stopping', 'Rain stopping'), ('snow', 'Snow'), ('fog', 'Fog'), ('thunderstorm', 'Thunderstorm')] %}
       <button type="button" data-weather-preview="{{ mode }}" aria-pressed="false">{{ label }}</button>
       {% endfor %}
       {% for mode, label in [('spring', 'Spring'), ('summer', 'Summer'), ('autumn', 'Autumn'), ('winter', 'Winter')] %}

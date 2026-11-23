@@ -28,13 +28,14 @@ import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from '
 import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
-import { weatherState, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey, sunAirVisibility, sunDiscVisibility } from './sky/weather.js';
+import { createWeatherClock, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey, sunAirVisibility, sunDiscVisibility } from './sky/weather.js';
 import { installPlantWind } from './sky/wind.js';
 import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
+import { createEaveStreams, eaveRunoff } from './sky/eave_streams.js';
 import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
 import { createSeasonTouches } from './sky/season_touches.js';
 import { mountTimeScrub } from './sky/time_scrub.js';
@@ -132,9 +133,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const weatherSurface = installWeatherSurface(scene);
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
+  const eaves = createEaveStreams(scene,{tier}),runoff={};
+  const eaveLamps=()=>view.live?.lights?.()||[];
   post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
   let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
+  let eavePlan=null,eaveRoofs=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -164,6 +168,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
   let weatherEntity = null, lastWeather = '', groundWeather = {}, weatherPoll = null;
+  const liveWeatherClock=createWeatherClock();
   const weatherPreview=createWeatherPreview(()=>{
     state.weatherPreview=weatherPreview.get()?.preview || null;
     updateTime(false,true);
@@ -187,7 +192,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const values=groundWeather.source?.values;
     const observed=entity && values?.condition===entity.state && Number.isFinite(values.precipitation)
       ? {...entity,normalizedRate:values.precipitation} : entity;
-    return weatherState(observed,groundWeather,sensors);
+    return liveWeatherClock(observed,groundWeather,sensors);
   }
   let bounds = { x: 19, y: 11, span: 38 };
   let framed = false, cameraMoved = false;
@@ -196,7 +201,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let probeRun = null, fps = 0, fpsFrames = 0, fpsSince = performance.now();
   let visibleLevels = null, sheet = null, sheetSpec = null, sheetRevision = 0;
   const reflections = createReflectionProbes({scene, renderer:renderer3, tier,
-    extras:() => [sky.object, precipitation.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
+    extras:() => [sky.object, precipitation.group, eaves.group, seasonTouches.group, sheet?.object, ...selectionLines], sky:() => sky.cube, uncut:() => viewing?.uncut?.()});
   reflections.setMirrorStillHz(stage?.mirror_still_hz ?? 10);
   reflections.setProbeCloudSeconds(stage?.probe_cloud_s ?? 30);
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
@@ -558,6 +563,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor,
       light:leafLight(),sunDirection:splashSunDirection,sunColour:splashSunColour,
       sunVisibility:timeLook?.sunClear>0?sunDiscVisibility(view.weather,timeLook.sun/timeLook.sunClear):0});
+    eaveRunoff(view.weather,runoff);
+    if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces){
+      // Optional HA absence and a dry neutral editor allocate no water mesh.
+      // Once rain needs it, build once for this immutable roof snapshot.
+      if(runoff.flow>.002&&runoff.wet>0){eaves.setPlan(plan,twin?.roofSurfaces,kit);eavePlan=plan;eaveRoofs=twin?.roofSurfaces;}
+      else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;}
+    }
+    eaves.update(runoff,performance.now()/1000,{camera,target:controls.target,
+      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,neutral:view.weather?.neutral,
+      fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps});
     const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
@@ -630,7 +645,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, eaves, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     weather:neutralWeather(), season:seasonState(clockNow(),resolveSite(site,clockNow()).lat,{}, {neutral:editor}), seasons,
     refreshWeather:()=>weatherPoll?.refresh(),
@@ -1673,7 +1688,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
       unlit.dispose();
-      seasonTouches.dispose(); precipitation.dispose(); weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
+      seasonTouches.dispose(); eaves.dispose(); precipitation.dispose(); weatherSurface.dispose(); cloudShadow.dispose(); stageHaze.dispose(); sky.dispose(); sun.shadow.dispose();
       post?.dispose();
       clouds.dispose();
       renderer3.dispose(); renderer3.forceContextLoss(); renderer3.domElement.remove();

@@ -69,18 +69,45 @@ export function weatherState(entity, ground={}, sensors={}, now=Date.now()/1000)
   // Retained diagnostic severity; rendering uses visibilityM/extinction below.
   const fog=valid ? Math.max(condition==='fog'?1:0,finite(a.visibility)?clamp((5-a.visibility)/4):0) : 0;
   const visibilityM=valid&&finite(a.visibility)&&a.visibility>0?a.visibility*1000:condition==='fog'?300:null;
-  return {condition,precip,rate:precip==='none'?0:rate,fog,visibilityM,windMps:clouds.windMps,windToDeg:clouds.windToDeg,
+  const elapsed=finite(ground.updated)?Math.max(0,now-ground.updated):0;
+  rate=precip==='none'?0:rate;
+  return {condition,precip,rate,fog,visibilityM,windMps:clouds.windMps,windToDeg:clouds.windToDeg,
     windMissing:!valid || wind===null,temperatureC:valid?temperatureC:null,
     wetness:valid?clamp(ground.wetness):0,snow_cm:valid&&finite(ground.snow_cm)?Math.max(0,ground.snow_cm):0,
     puddles:valid?clamp(ground.puddles):0,updated:finite(ground.updated)?ground.updated:0,
+    rain_stopped_s:!valid?null:rate>0?0:finite(ground.rain_stopped_s)&&ground.rain_stopped_s>=0
+      &&ground.rain_stopped_s+elapsed<=21600?ground.rain_stopped_s+elapsed:null,
+    drying_min:valid&&finite(ground.drying_min)&&ground.drying_min>0?ground.drying_min:null,
     clouds,preview:null,neutral:false};
+}
+
+// One latch per viewer. Stream observations can precede the server read; keep
+// that stop time until the server reports a known stop, never restart each frame.
+export function createWeatherClock() {
+  let wasRaining=false,stoppedAt=null,lastRainAt=null;
+  return (entity,ground={},sensors={},now=Date.now()/1000)=>{
+    const value=weatherState(entity,ground,sensors,now);
+    if(!entity||entity.stale||typeof entity.state!=='string'||['unknown','unavailable',''].includes(entity.state)){
+      wasRaining=false;stoppedAt=null;lastRainAt=null;return value;
+    }
+    if(value.rate>0){wasRaining=true;stoppedAt=null;lastRainAt=now;return value;}
+    if(wasRaining){stoppedAt=now;wasRaining=false;}
+    // A still-raining server snapshot has stopped_s=0. Prefer the in-session
+    // event until its next dry observation arrives.
+    if(finite(value.rain_stopped_s)&&ground.source?.values?.rate===0
+      &&(lastRainAt===null||now-value.rain_stopped_s>=lastRainAt)){
+      stoppedAt=now-value.rain_stopped_s;
+    }
+    if(stoppedAt!==null)value.rain_stopped_s=now-stoppedAt<=21600?Math.max(0,now-stoppedAt):null;
+    return value;
+  };
 }
 
 export function neutralWeather() { return {...weatherState(null),neutral:true}; }
 // Accumulation changes the surface uniforms, not the air or sun. In particular
 // a 90-second preview ramp must not repeat sky quadrature on every frame.
 export function weatherLightingKey(weather={}) {
-  const {wetness,snow_cm,puddles,updated,...air}=weather;
+  const {wetness,snow_cm,puddles,updated,rain_stopped_s,drying_min,...air}=weather;
   return JSON.stringify(air);
 }
 // HA visibility is kilometres; extinction is inverse metres. Rain and reported
@@ -112,9 +139,17 @@ export function sunDiscVisibility(weather={},cloudTransmittance=1) {
   const t=clamp(cloudTransmittance);
   return clamp(t*smooth(.15,.85,t)*sunAirVisibility(weather));
 }
-const previews={clear:'sunny',rain:'rainy',pouring:'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
+const previews={clear:'sunny',rain:'rainy',pouring:'pouring','rain-stopping':'pouring',snow:'snowy',fog:'fog',thunderstorm:'lightning-rainy'};
 export function previewWeather(name,elapsed=0) {
   if (!Object.hasOwn(previews,name)) return null;
+  if(name==='rain-stopping'){
+    const stopped=elapsed>=20;
+    const stoppedS=stopped?Math.min(2700,Math.max(0,elapsed-20)<=30?elapsed-20:30+(elapsed-50)*2670/40):0;
+    const dry=elapsed>=90;
+    return {...weatherState({state:stopped?'sunny':'pouring',attributes:{wind_speed:3,wind_speed_unit:'m/s',wind_bearing:270}},
+      {wetness:dry?0:Math.exp(-stoppedS/(180*60))*(1-smooth(80,90,elapsed)),puddles:dry?0:Math.exp(-stoppedS/(180*60))*(1-smooth(80,90,elapsed))}),
+      rate:stopped?0:1,rain_stopped_s:stoppedS,drying_min:180,preview:name};
+  }
   const wet=['rain','pouring','thunderstorm'].includes(name);
   const ramp=clamp(elapsed/90);
   return {...weatherState({state:previews[name],attributes:{wind_speed:name==='thunderstorm'?12:3,wind_speed_unit:'m/s',wind_bearing:270}},
@@ -127,7 +162,7 @@ export function createWeatherPreview(onChange,{setTimer=setTimeout,clearTimer=cl
   const set=name=>{
     if (name!==null && !Object.hasOwn(previews,name)) return;
     clear();value=previewWeather(name);
-    if(value){started=now();deadline=started+120000;timer=setTimer(()=>set(null),120000);}
+    if(value){started=now();if(name!=='rain-stopping'){deadline=started+120000;timer=setTimer(()=>set(null),120000);}}
     onChange();
   };
   return {set,get:()=>value?previewWeather(value.preview,Math.max(0,(now()-started)/1000)):null,get deadline(){return deadline;},stop(){clear();value=null;}};

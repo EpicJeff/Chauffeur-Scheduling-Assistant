@@ -64,6 +64,9 @@ def valid_record(record, now):
             and (record.get('puddle_amount') is None or type(record['puddle_amount']) in (int, float)
                  and number(record['puddle_amount']) is not None and 0 <= record['puddle_amount'] <= 1)
             and 0 <= now - record['updated'] <= MAX_RECORD_AGE
+            and ('raining' not in record or type(record['raining']) is bool)
+            and (record.get('rain_stopped_at') is None or type(record['rain_stopped_at']) in (int, float)
+                 and number(record['rain_stopped_at']) is not None and record['rain_stopped_at'] <= now)
             and (record.get('last_rain') is None or type(record['last_rain']) in (int, float)
                  and number(record['last_rain']) is not None and record['last_rain'] <= now))
 
@@ -77,6 +80,24 @@ def _valid_forcing(value):
     return (0 <= value['rate'] <= 1 and 0 <= value['cloud_cover'] <= 1
             and all(value.get(key) is None or type(value[key]) in (int, float) and number(value[key]) is not None
                     for key in ('temperature', 'humidity')))
+
+
+def drying_minutes(forcing):
+    """The same e-folding time for the ground integrator and roof consumers."""
+    temperature = forcing.get('temperature')
+    tau = 180 - 6 * max(0, min(20, temperature if temperature is not None else 0))
+    if forcing.get('sun_altitude', -1) > 0:
+        tau /= 2
+    if (forcing.get('humidity') or 0) > 90:
+        tau *= 2
+    return tau
+
+
+def rain_stopped_seconds(record, now):
+    if record.get('raining'):
+        return 0.
+    stopped = record.get('rain_stopped_at')
+    return now - stopped if stopped is not None and 0 <= now - stopped <= 6 * 3600 else None
 
 
 def advance(record, forcing, now):
@@ -121,16 +142,15 @@ def advance(record, forcing, now):
             puddle += rain_rate * eligible / .7
         wet += rain_rate * 1.5 * hours + .75 * melt_hours
     else:
-        tau = 180 - 6 * max(0, min(20, temperature if temperature is not None else 0))
-        if sun:
-            tau /= 2
-        if (forcing.get('humidity') or 0) > 90:
-            tau *= 2
-        drying = math.exp(-hours * 60 / tau)
+        drying = math.exp(-hours * 60 / drying_minutes(forcing))
         wet *= drying
         puddle *= drying
     return {'snow_cm': min(10000, max(0, snow)), 'wetness': max(0, min(1, wet)), 'updated': now,
             'puddle_amount': max(0, min(1, puddle)),
+            # Latch the first dry observation, including a zero-time event.
+            # last_rain deliberately retains its independent puddle semantics.
+            'raining': raining,
+            'rain_stopped_at': None if raining else now if record.get('raining') else record.get('rain_stopped_at'),
             'last_rain': now if raining else record.get('last_rain')}
 
 
@@ -404,6 +424,8 @@ def update(now=None):
         storage.set_app_state(KEY, stored)
         return {key: result[key] for key in ('snow_cm', 'wetness', 'updated')} | {
             'snow_cm': result['snow_cm'] if result['snow_cm'] >= .2 else 0.,
+            'rain_stopped_s': rain_stopped_seconds(result, now) if usable else None,
+            'drying_min': drying_minutes(forcing) if usable else None,
             'puddles': puddles(result, now), 'source': source, 'lawn': lawn, 'season': season_report}
 
 
