@@ -251,8 +251,8 @@
     #twin-time-preview button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinGlassStrong); }
     #twin-time-preview button[aria-pressed=true] { color:var(--twinSelectedText); background:var(--twinSelected); }
     #twin-time-preview label { display:block; margin:12px 0; }
-    #twin-time-scrub { display:block; width:100%; min-height:44px; accent-color:var(--twinSelected); }
-    #twin-time-scrub-value { color:var(--twinTextDim); font-size:12px; }
+    #twin-time-scrub, #twin-night-brightness { display:block; width:100%; min-height:44px; accent-color:var(--twinSelected); }
+    #twin-time-scrub-value, #twin-night-brightness-value { color:var(--twinTextDim); font-size:12px; }
     html[data-twin-idle] #twin-path, html[data-twin-idle] .twin-level-targets { visibility:hidden; }
     @media (max-width:800px) { #twin-path { max-width:calc(100vw - 32px); } #twin-controls { top:142px; right:16px; max-width:calc(100vw - 32px); } html[data-twin-wall] #twin-controls { top:72px; } }
     /* Mode icons, centred at the top (2c-2). Name as tooltip on hover; a long press shows it on touch. */
@@ -391,6 +391,8 @@
       {% endfor %}
       <label>Time of day <input id="twin-time-scrub" type="range" min="0" max="24" step="0.08333333333333333" value="12" aria-label="Time of day"></label>
       <output id="twin-time-scrub-value" for="twin-time-scrub">12:00</output>
+      <label>Night brightness <input id="twin-night-brightness" type="range" min="0" max="100" step="5" value="50" aria-label="Night brightness"></label>
+      <output id="twin-night-brightness-value" for="twin-night-brightness">50%</output>
     {% endcall %}
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' and request.query_params.get('tabs') is none %}
     {% call settings_section('twin-glance-settings', 'Live readings and idle face') %}
