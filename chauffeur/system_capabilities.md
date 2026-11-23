@@ -1,6 +1,8 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.987 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.988 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.988 (2026-11-23, NOT device-verified): eave streams show with one building focused.** The owner saw rain but no water pouring off the roof eaves. Their console snapshot showed the mesh was built, with 845 streams, but `visible: false`. The breadcrumb read "House › Pool House". With one building focused, the viewer level is `building`. `sky/eave_streams.js` showed streams only at the whole-house level, a check meant to hide them in floor and room cutaways, where the roof is gone. The building view is still an exterior view with its roof, so streams now show at `house` and `building` and still hide at `floor`/`room`. Test: `test_twin_eave_streams_js.py` adds the building-level case and passes.
 
 **v2.499.987 (2026-11-23, browser-checked on the editor harness, NOT device-verified): placed pieces can be moved between levels, between buildings, and between a building and the site with "Move to".** The owner's request: placed models were tied to their building or the site, so a piece placed in the house could not be moved outside or vice versa. Live Home 3D has explicit actions for this, and the owner chose explicit actions only, no re-linking on drag.
 
