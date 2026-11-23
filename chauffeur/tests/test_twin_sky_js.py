@@ -8,7 +8,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from twin_editor_dom import PRELUDE, run_node
 
 DRIVER = PRELUDE + r"""
-const {lookAt, modelDirection, resolveSite, previewDate} = await import(file('static/twin/sky/look.js'));
+const {lookAt, modelDirection, resolveSite, previewDate, NIGHT_BRIGHTNESS_DEFAULT, NIGHT_BRIGHTNESS_STORAGE_KEY, readNightBrightness, writeNightBrightness, clampNightBrightness} = await import(file('static/twin/sky/look.js'));
+const {mountNightBrightness} = await import(file('static/twin/sky/time_scrub.js'));
 const {mountTwin} = await import(file('static/twin/twin_view.js'));
 const {createPlace} = await import(file('static/twin/editor/place.js'));
 const {mountGlanceSettings} = await import(file('static/twin/live/glance_settings.js'));
@@ -221,6 +222,92 @@ await test('rooms under a roof take a fraction of the sky, and only where the su
     low.setTime('day'); low.render();
     assert.ok(indoor(low).length && indoor(low).every(m => m.envMap === null), 'low quality is untouched');
   } finally { high?.dispose(); low?.dispose(); location.search=previousQuery; }
+});
+await test('night floor is brighter than before, dusk stays continuous/monotonic, and setting range maps as specified', () => {
+  const darkest = lookAt(-20, undefined, { nightBrightness: 0 });
+  const def = lookAt(-20);
+  const brightest = lookAt(-20, undefined, { nightBrightness: 1 });
+  // 0 reproduces the original darkest night floor.
+  assert.deepEqual(darkest.background, [.035, .055, .10]);
+  assert.equal(darkest.ambient, .09);
+  assert.equal(darkest.environment, .015);
+  assert.equal(darkest.exposure, 1.2);
+  // Default (0.5) is clearly brighter than original; 1.0 is brighter still; exposure stays 1.2 so lamps keep contrast.
+  assert.ok(def.ambient > darkest.ambient && def.environment > darkest.environment);
+  assert.ok(brightest.ambient > def.ambient && brightest.environment > def.environment);
+  assert.equal(def.exposure, 1.2); assert.equal(brightest.exposure, 1.2);
+  assert.equal(def.lamps, true); assert.equal(brightest.lamps, true);
+  // Continuity across all four band edges and monotonicity through dusk for every slider value.
+  for (const nb of [0, .25, .5, .75, 1]) {
+    for (const shadows of [false, true]) {
+      for (const edge of [-12, -6, 0, 6]) {
+        const a = lookAt(edge - 1e-6, { altitude: .5, fraction: 1 }, { shadows, nightBrightness: nb });
+        const b = lookAt(edge + 1e-6, { altitude: .5, fraction: 1 }, { shadows, nightBrightness: nb });
+        for (const key of ['background', 'ambient', 'environment', 'exposure', 'sun', 'moon']) {
+          const aa = [].concat(a[key]), bb = [].concat(b[key]);
+          aa.forEach((v, i) => assert.ok(Math.abs(v - bb[i]) < 1e-4, `${key} at ${edge} nb=${nb}`));
+        }
+      }
+      let prevAmb = -1, prevEnv = -1;
+      for (let alt = -24; alt <= 12; alt += 1) {
+        const cur = lookAt(alt, undefined, { shadows, nightBrightness: nb });
+        assert.ok(cur.ambient >= prevAmb - 1e-9, `monotonic ambient at ${alt} nb=${nb}`);
+        assert.ok(cur.environment >= prevEnv - 1e-9, `monotonic env at ${alt} nb=${nb}`);
+        prevAmb = cur.ambient; prevEnv = cur.environment;
+      }
+      // Daytime is unchanged across the entire slider range.
+      const day = lookAt(40, undefined, { shadows, nightBrightness: nb });
+      assert.equal(day.ambient, shadows ? .5 : 1.8);
+      assert.equal(day.environment, shadows ? .4 : .65);
+    }
+  }
+});
+await test('night brightness persistence works and survives throwing localStorage', async () => {
+  const store = new Map();
+  const good = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) };
+  assert.equal(readNightBrightness(good), NIGHT_BRIGHTNESS_DEFAULT);
+  assert.equal(writeNightBrightness(0, good), 0);
+  assert.equal(readNightBrightness(good), 0);
+  assert.equal(writeNightBrightness(1.7, good), 1);
+  assert.equal(readNightBrightness(good), 1);
+  assert.equal(writeNightBrightness(-0.4, good), 0);
+  assert.equal(readNightBrightness(good), 0);
+  store.set(NIGHT_BRIGHTNESS_STORAGE_KEY, 'not-a-number');
+  assert.equal(readNightBrightness(good), NIGHT_BRIGHTNESS_DEFAULT);
+  assert.equal(clampNightBrightness(NaN), NIGHT_BRIGHTNESS_DEFAULT);
+  const broken = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('QuotaExceededError'); } };
+  assert.equal(readNightBrightness(broken), NIGHT_BRIGHTNESS_DEFAULT);
+  assert.equal(writeNightBrightness(.8, broken), .8);
+  // Mounted viewer + slider with a throwing global localStorage.
+  const origStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('blocked'); } });
+  const host = new Element(), slider = new Element('input'), output = new Element('output');
+  slider.id = 'twin-night-brightness'; output.id = 'twin-night-brightness-value';
+  document.body.append(host, slider, output);
+  let mounted, control;
+  try {
+    mounted = await mountTwin(host, { plan: input.plan, kit: { materials: {} }, tier: 'low', bake: false });
+    mounted.setTime('night');
+    control = mountNightBrightness(mounted, slider, { host, output });
+    const hemi = mounted.scene.children.find(o => o.isHemisphereLight);
+    assert.equal(mounted.nightBrightness, .5);
+    assert.equal(slider.value, '50'); assert.equal(output.textContent, '50%');
+    const midAmbient = hemi.intensity;
+    assert.ok(midAmbient > .09);
+    slider.value = '0'; await fire(slider, 'input'); await fire(slider, 'change');
+    assert.equal(mounted.nightBrightness, 0);
+    assert.equal(hemi.intensity, .09);
+    assert.equal(mounted.scene.environmentIntensity, .015);
+    assert.equal(output.textContent, '0%');
+    slider.value = '100'; await fire(slider, 'input'); await fire(slider, 'change');
+    assert.equal(mounted.nightBrightness, 1);
+    assert.ok(hemi.intensity > midAmbient);
+    assert.equal(output.textContent, '100%');
+  } finally {
+    control?.stop(); mounted?.dispose(); host.remove(); slider.remove(); output.remove();
+    if (origStorage) Object.defineProperty(globalThis, 'localStorage', origStorage);
+    else delete globalThis.localStorage;
+  }
 });
 finish();
 """

@@ -2,7 +2,7 @@
 const RAD = Math.PI / 180;
 const clamp = x => Math.max(0, Math.min(1, x));
 const smooth = x => { x = clamp(x); return x * x * (3 - 2 * x); };
-const mix = (a, b, t) => Array.isArray(a) ? a.map((v, i) => mix(v, b[i], t)) : a + (b - a) * t;
+const mix = (a, b, t) => Array.isArray(a) ? a.map((v, i) => mix(v, b[i], t)) : t <= 0 ? a : t >= 1 ? b : a + (b - a) * t;
 
 export function resolveSite(site = {}, date = new Date()) {
   const located = site.source !== 'default' && Number.isFinite(site.lat) && Number.isFinite(site.lon);
@@ -44,6 +44,52 @@ export function modelDirection(azimuth, altitude, frontBearing = 180) {
   return [horizontal * Math.sin(angle), Math.sin(altitude), -horizontal * Math.cos(angle)];
 }
 
+export const NIGHT_BRIGHTNESS_DEFAULT = 0.5;
+export const NIGHT_BRIGHTNESS_STORAGE_KEY = 'chauffeur_twin_night_brightness';
+
+export function clampNightBrightness(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : NIGHT_BRIGHTNESS_DEFAULT;
+}
+
+export function readNightBrightness(storage) {
+  try {
+    const store = storage === undefined ? globalThis.localStorage : storage;
+    const raw = store?.getItem?.(NIGHT_BRIGHTNESS_STORAGE_KEY);
+    if (raw === null || raw === undefined || raw === '') return NIGHT_BRIGHTNESS_DEFAULT;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : NIGHT_BRIGHTNESS_DEFAULT;
+  } catch {
+    return NIGHT_BRIGHTNESS_DEFAULT;
+  }
+}
+
+export function writeNightBrightness(value, storage) {
+  const clamped = clampNightBrightness(value);
+  try {
+    const store = storage === undefined ? globalThis.localStorage : storage;
+    store?.setItem?.(NIGHT_BRIGHTNESS_STORAGE_KEY, String(clamped));
+  } catch { /* Private or restricted storage keeps the value in memory only. */ }
+  return clamped;
+}
+
+// Night floor stops: 0 = original darkest night, 0.5 = default brighter night floor, 1 = brighter still.
+const NIGHT_STOPS = [
+  { background: [.035, .055, .10], ambient: .09, environment: .015 },
+  { background: [.050, .075, .13], ambient: .24, environment: .18 },
+  { background: [.070, .100, .17], ambient: .42, environment: .35 },
+];
+
+function nightFloor(nightBrightness) {
+  const n = clampNightBrightness(nightBrightness);
+  const [a, b, u] = n <= .5 ? [NIGHT_STOPS[0], NIGHT_STOPS[1], n * 2] : [NIGHT_STOPS[1], NIGHT_STOPS[2], (n - .5) * 2];
+  return {
+    background: mix(a.background, b.background, u),
+    ambient: mix(a.ambient, b.ambient, u),
+    environment: mix(a.environment, b.environment, u),
+  };
+}
+
 const bands = [
   [-12, { background: [.035, .055, .10], ambient: .09, environment: .015, exposure: 1.2, sunColor: [1, .46, .22] }],
   [-6, { background: [.18, .22, .34], ambient: .26, environment: .06, exposure: 1.15, sunColor: [1, .46, .22] }],
@@ -54,8 +100,21 @@ const bands = [
 // day, so shade reads about a stop under sunlit ground. Without sun shadows
 // that balance would only flatten the picture, so those views keep the fill.
 const shadowedBands = new Map([[0, { ambient: .5 }], [6, { ambient: .5, environment: .4 }]]);
-export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false, overcast = 0, sunTransmittance = 1, zenith = null, ground = null } = {}) {
-  const band = ([edge, look]) => [edge, shadows ? { ...look, ...shadowedBands.get(edge) } : look];
+export function lookAt(altitudeDeg, moon = { altitude: 0, fraction: 0 }, { shadows = false, overcast = 0, sunTransmittance = 1, zenith = null, ground = null, nightBrightness = NIGHT_BRIGHTNESS_DEFAULT } = {}) {
+  const floor = nightFloor(nightBrightness);
+  const band = ([edge, look]) => {
+    const merged = shadows ? { ...look, ...shadowedBands.get(edge) } : { ...look };
+    if (edge <= -12) {
+      merged.background = floor.background;
+      merged.ambient = floor.ambient;
+      merged.environment = floor.environment;
+    } else if (edge <= 0) {
+      merged.background = merged.background.map((v, i) => Math.max(v, floor.background[i]));
+      merged.ambient = Math.max(merged.ambient, floor.ambient);
+      merged.environment = Math.max(merged.environment, floor.environment);
+    }
+    return [edge, merged];
+  };
   let lower = band(bands[0]), upper = band(bands.at(-1));
   for (let i = 1; i < bands.length; i++) if (altitudeDeg <= bands[i][0]) { lower = band(bands[i - 1]); upper = band(bands[i]); break; }
   const t = smooth((altitudeDeg - lower[0]) / (upper[0] - lower[0]));
