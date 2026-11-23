@@ -67,6 +67,7 @@ class Node extends EventTarget {
   get textContent() { return this.text + this.children.map(n => n.textContent).join(' '); }
   append(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.push(node); } }
   prepend(...nodes) { for (const node of nodes) node.parentElement = this; this.children.unshift(...nodes); }
+  insertBefore(node, ref) { node.parentElement = this; this.children = this.children.filter(n => n !== node); const i = ref ? this.children.indexOf(ref) : -1; if (i < 0) this.children.push(node); else this.children.splice(i, 0, node); return node; }
   replaceChildren(...nodes) { this.children = []; this.text = ''; this.append(...nodes); }
   remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(n => n !== this); }
   get lastChild() { return this.children.at(-1); }
