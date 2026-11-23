@@ -61,7 +61,7 @@ export function presetTree(preset, seed) {
   return tree;
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts } from './twin_library.js';
+import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { registerBakeSource } from './bake/source.js';
@@ -404,6 +404,50 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     return mesh;
   };
   const seedOf = (piece, ...rest) => piece?.id ? [piece.id, ...rest].join(':') : null;
+  const buildingCentres = (plan.buildings || []).map(b => {
+    const poly = buildingFootprint(b); if (!poly.length) return null;
+    const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const a = (b.rotation || 0) * Math.PI / 180, pos = b.position || [0, 0];
+    return { id: b.id, x: pos[0] + cx * Math.cos(a) - cy * Math.sin(a), y: pos[1] + cx * Math.sin(a) + cy * Math.cos(a) };
+  }).filter(Boolean);
+  const nearestBuilding = geometry => {
+    if (!buildingCentres.length) return null;
+    if (buildingCentres.length === 1) return buildingCentres[0].id;
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (!box || box.isEmpty()) return buildingCentres[0].id;
+    const cx = (box.min.x + box.max.x) / 2, cy = -(box.min.z + box.max.z) / 2;
+    let best = buildingCentres[0], bestD = Infinity;
+    for (const b of buildingCentres) {
+      const d = (b.x - cx) ** 2 + (b.y - cy) ** 2;
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best.id;
+  };
+  // Wet hard ground receivers (paving/patio/walks/driveway, pool/spa coping,
+  // wall caps, stair treads) bind to the nearest building's exterior probe on
+  // medium/high/max tiers. Never alters low tier, bakeSource, lawn, roofs, walls or water.
+  const groundMat = (source, geometry) => {
+    if (tier === 'low' || bakeSource || !buildingCentres.length) return source;
+    if (!source || source.userData.underwater || source.userData.waterSurface || source.userData.seasonLawn ||
+        source.name === 'lawn' || source.userData.materialRole === 'lawn' || source.name === 'roof' || source.userData.materialRole === 'roof') return source;
+    const owner = nearestBuilding(geometry);
+    if (!owner) return source;
+    const key = 'reflection-ground:' + owner + ':' + source.uuid;
+    if (!mats.has(key)) {
+      const target = source.clone();
+      target.onBeforeCompile = source.onBeforeCompile;
+      target.customProgramCacheKey = source.customProgramCacheKey;
+      reflectionMaterial(target, 'ground', owner);
+      const sync = () => { for (const m of target.userData.reflection.materials) copyMaterialParams(source, m); };
+      source.addEventListener('materialparamschange', sync);
+      target.addEventListener('dispose', () => source.removeEventListener('materialparamschange', sync));
+      target.userData.ready = Promise.resolve(source.userData.ready).then(sync);
+      mats.set(key, target);
+    }
+    return mats.get(key);
+  };
   const plain = (name, color, extra = {}) => {
     if (!mats.has(name)) mats.set(name, extra.fireShader ? fireFlameMaterial() : new THREE.MeshStandardMaterial({ name, color, roughness: 0.85, ...extra }));
     return mats.get(name);
@@ -525,8 +569,11 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           if (pad.edges?.[edge]?.edge !== 'sharp') return;
           const wall = pad.edges[edge].wall;
           if (wall) surfaceMesh(target, retainingWallGeometry(plan, pad, edge), mat(retainingWallRole(wall.material), wall.materials?.face), seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}, yardRef(retainingWallRole(wall.material), wall.materials?.face), `edge:${edge}:face`);
-          buildPadEdge(plan, pad, edge, (geometry, part, role, slot) => surfaceMesh(target, geometry, mat(role, slot),
-            seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}, yardRef(role, slot), `edge:${edge}:${part}`));
+          buildPadEdge(plan, pad, edge, (geometry, part, role, slot) => {
+            const m = mat(role, slot);
+            return surfaceMesh(target, geometry, part === 'cap' || part === 'tread' ? groundMat(m, geometry) : m,
+              seedOf(pad, 'walls'), {kind:'retaining_wall', pieceId:pad.id}, yardRef(role, slot), `edge:${edge}:${part}`);
+          });
         });
         if (padParts) {
           offsetSurfaceUvParts(uvParts.splice(0));
@@ -547,7 +594,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             // The part survives material batching in snapRanges, so the stones stay findable.
             // No random uv offset: each stone carries exactly one tile of its material.
             const stone = mat(role, h.materials?.surface);
-            surfaceMesh(group, paverGeometry(plan, h, layout, stone.userData.tileFt), stone, null, {...owner, part:'pavers'}, yardRef(role,h.materials?.surface), 'surface');
+            const geo = paverGeometry(plan, h, layout, stone.userData.tileFt);
+            surfaceMesh(group, geo, groundMat(stone, geo), null, {...owner, part:'pavers'}, yardRef(role,h.materials?.surface), 'surface');
             if (joint === 'gravel' || joint === 'sand') {
               const fill = h.materials?.joint ? mat(joint === 'gravel' ? 'base' : 'paver_sand', h.materials.joint)
                 : joint === 'gravel' ? mat('base') : plain('paver_sand', '#cdb994', {roughness:.95});
@@ -555,21 +603,28 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             }
           } else {
             // Swept pieces retain user-drawn crossings without even/odd cancellation.
-            for (const poly of pathSurfacePolygons(h)) surfaceMesh(group, surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly)), mat(role, h.materials?.surface), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
+            const base = mat(role, h.materials?.surface);
+            for (const poly of pathSurfacePolygons(h)) {
+              const geo = surface(poly, h.elevation || 0, .3 + (h.elevation || 0), spasIn(poly));
+              surfaceMesh(group, geo, groundMat(base, geo), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
+            }
           }
           if (h.edging === 'curb') {
             const inner = pathBoundaries(h), outer = pathBoundaries(h, (h.width ?? 3) / 2 + .5);
+            const curbBase = mat('patio_concrete', h.materials?.edging);
             for (const side of ['left', 'right']) for (let i = 1; i < inner[side].length; i++) {
               const poly = [inner[side][i - 1], inner[side][i], outer[side][i], outer[side][i - 1]];
               // Both offsets have the same mitre/bevel topology.
-              const curb = surfaceMesh(group, surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spasIn(poly)), mat('patio_concrete', h.materials?.edging), seedOf(h, 'curb', side), owner, yardRef('patio_concrete',h.materials?.edging), 'curb:'+side);
+              const geo = surface(poly, .3 + (h.elevation || 0), .55 + (h.elevation || 0), spasIn(poly));
+              const curb = surfaceMesh(group, geo, groundMat(curbBase, geo), seedOf(h, 'curb', side), owner, yardRef('patio_concrete',h.materials?.edging), 'curb:'+side);
               curb.geometry.userData.pathCurb = true;
             }
           }
           continue;
         }
         const holes = [...(pool && pool.every(p => inside(p, h.polygon)) ? [pool] : []), ...spasIn(h.polygon)];
-        surfaceMesh(group, surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes), mat(role, h.materials?.surface), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
+        const geo = surface(h.polygon, h.elevation || 0, .3 + (h.elevation || 0), holes);
+        surfaceMesh(group, geo, groundMat(mat(role, h.materials?.surface), geo), seedOf(h), owner, yardRef(role,h.materials?.surface), 'surface');
       }
       stopHardscape();
       const stopBeds = part('hardscape');
@@ -906,7 +961,10 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         if (!mesh.isMesh || mesh.userData.part === 'water' || !poolBody) return;
         // Ledges/steps can also label a finish slot 'coping', below water.
         // Only the pool/spa rim is an always-above-water paving surface.
-        if (mesh.userData.bakePart === 'coping' && ['pool', 'spa'].includes(mesh.userData.kind)) return;
+        if (mesh.userData.bakePart === 'coping' && ['pool', 'spa'].includes(mesh.userData.kind)) {
+          mesh.material = groundMat(mesh.material, mesh.geometry);
+          return;
+        }
         const body = bodies.find(b => b.id === mesh.userData.waterBody) || poolBody;
         const simulation = simulations.get(body.id), source = mesh.material;
         const peers = simulation ? [] : bodies.filter(b => b.height === body.height && !simulations.has(b.id));

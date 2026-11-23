@@ -485,10 +485,174 @@ await test('mounted_cloud_drift_uses_payload_and_live_interval_but_weather_and_t
   assert.equal(view.renderer3.faces.length,baseline+96,'time of day bypasses cloud interval');
  } finally {view?.dispose();CaptureRenderer.prototype.setAnimationLoop=originalLoop;globalThis.Renderer=rendererClass;Object.defineProperty(performance,'now',{configurable:true,value:originalNow});}
 });
+await test('ground_receivers_bind_nearest_exterior_probe_and_leave_non_receivers_unchanged',async()=>{
+ const p=fixture();
+ p.site.hardscape=[
+  {id:'patio_a',polygon:square(4,28,10),material:'paving'},
+  {id:'patio_b',polygon:square(66,28,10),material:'paving'},
+ ];
+ p.site.terraces=[{id:'pad_b',polygon:square(62,26,16,12),height:3,
+  edges:[{edge:'sharp',wall:{material:'stone',cap:{thickness_in:2,overhang_in:1},rail:{height:3}},
+          stairs:[{at:6,width:4,steps:4}]},{edge:'blend'},{edge:'blend'},{edge:'blend'}]}];
+ const c=await setup('medium',p);c.round();c.advance(700);c.manager.frame();
+ const all=meshes(c.out).filter(o=>!o.layers.isEnabled(31));
+ const ground=all.filter(o=>o.material.userData.reflection?.kind==='ground');
+ assert.ok(ground.length>=4,'hardscape, coping and retaining wall caps/treads bind as ground');
+ const ownerOf=(pred)=>ground.filter(pred).map(o=>o.material.userData.reflection);
+ const hard=ownerOf(o=>o.userData.yardPart==='hardscape');
+ assert.ok(hard.some(r=>r.owner==='a'&&r.probe?.id==='exterior:a'),'patio near a binds exterior:a');
+ assert.ok(hard.some(r=>r.owner==='b'&&r.probe?.id==='exterior:b'),'patio near b binds exterior:b');
+ const coping=ownerOf(o=>o.userData.yardPart==='pool');
+ assert.ok(coping.length&&coping.every(r=>r.probe?.id==='exterior:a'),'pool/spa coping binds nearest exterior');
+ const rwGround=ownerOf(o=>o.userData.yardPart==='retaining_walls');
+ assert.ok(rwGround.length&&rwGround.every(r=>r.probe?.id==='exterior:b'),'retaining wall caps/treads bind nearest exterior');
+ const rwMeshes=all.filter(o=>o.userData.yardPart==='retaining_walls');
+ assert.ok(rwMeshes.some(o=>!o.material.userData.reflection),'retaining wall faces/risers/rails stay unbound');
+ // Non-receivers must remain completely untouched.
+ for(const o of all){
+  const m=o.material,r=m.userData.reflection;
+  if(o.userData.terrain||m.name==='lawn'||m.userData.seasonLawn||m.userData.materialRole==='lawn')assert.ok(!r,'lawn unbound');
+  if(m.name==='roof'||m.userData.materialRole==='roof')assert.ok(!r,'roof unbound');
+  if(m.name==='siding'||m.name==='interior_wall')assert.ok(!r,m.name+' unbound');
+  if(m.userData.underwater||m.name==='pool tile'||m.name==='waterline tile')assert.ok(!r,'underwater/tile unbound');
+  if(m.userData.waterSurface)assert.equal(r?.kind,'water','water keeps water kind');
+ }
+ const gm=ground[0].material,gs=compile(gm),gr=gm.userData.reflection;
+ assert.equal(gm.premultipliedAlpha,false);assert.equal(gm.depthWrite,true);
+ assert.ok(gs.fragmentShader.includes('#define REFLECTION_PROBE_GROUND'));
+ assert.ok(gs.fragmentShader.includes('reflectVec = probeDirection(reflectVec)'));
+ assert.ok(gs.fragmentShader.includes('probeRough')&&gs.fragmentShader.includes('probeGain'));
+ assert.ok(!gs.fragmentShader.includes('paneMirror')&&!gs.fragmentShader.includes('waterPlanar'));
+ assert.ok(gr.uniforms.probeMax.value.y<gr.probe.box.max.y,'ground proxy ceiling caps below 30 m lot sky');
+ assert.ok(c.manager.info().probes.every(pr=>pr.box.max[1]>=30),'exterior probe box unchanged');
+ c.manager.dispose();
+ // Discarded building beyond 4-probe cap falls back to nearest kept exterior probe.
+ const big=fixture();big.buildings.push(building('tiny',140),building('huge',220));
+ big.buildings[2].levels[0].outline=square(0,0,2);big.buildings[3].levels[0].outline=square(0,0,90);
+ big.site.hardscape=[{id:'near_tiny',polygon:square(138,10,8),material:'paving'}];
+ const c2=await setup('high',big);c2.round();
+ const tinyGround=meshes(c2.out).find(o=>o.userData.yardPart==='hardscape'&&o.material.userData.reflection?.kind==='ground');
+ assert.ok(tinyGround.material.userData.reflection.probe?.kind==='exterior'&&tinyGround.material.userData.reflection.probe.id!=='exterior:tiny');
+ c2.manager.dispose();
+ // Buildingless plan leaves ground unbound (sky fallback).
+ const noBldg=fixture();noBldg.buildings=[];
+ const c3=await setup('medium',noBldg);
+ assert.ok(!meshes(c3.out).some(o=>o.material.userData.reflection?.kind==='ground'));
+ c3.manager.dispose();
+});
+await test('ground_falls_back_to_sky_cross_fades_and_keeps_old_probe_on_recapture',async()=>{
+ const c=await setup('medium');
+ const gm=meshes(c.out).find(o=>o.material.userData.reflection?.kind==='ground').material;
+ const b=gm.userData.reflection;
+ // Pending first capture: sky fallback.
+ assert.equal(gm.envMap,null);assert.equal(b.uniforms.probeActive.value,0);
+ near(gm.envMapIntensity,c.scene.environmentIntensity);
+ // First capture starts smooth fade-in rather than popping straight to 1.
+ c.round();
+ assert.equal(gm.envMap,b.probe.target.texture);
+ const startActive=b.uniforms.probeActive.value;
+ assert.ok(startActive>0&&startActive<.1,'fresh capture starts cross-fade near 0');
+ c.advance(300);c.manager.frame();
+ const midActive=b.uniforms.probeActive.value;
+ assert.ok(midActive>.4&&midActive<.6,'mid-fade is smooth');
+ c.advance(300);c.manager.frame();
+ near(b.uniforms.probeActive.value,1);
+ // envMapIntensity tracks live scene.environmentIntensity changes.
+ c.scene.environmentIntensity=.42;c.manager.frame();near(gm.envMapIntensity,.42);
+ // Recaptures (explicit, lamp, sky) keep the previous cube bound at fade=1 without dipping.
+ const boundTex=gm.envMap;
+ for(const trigger of [()=>c.manager.request(),()=>c.manager.requestLamp(),()=>c.manager.requestSky()]){
+  trigger();c.manager.frame();
+  assert.equal(gm.envMap,boundTex,'old capture stays bound while pending');
+  near(b.uniforms.probeActive.value,1,'no fade dip during pending recapture');
+ }
+ c.advance(1500);for(let i=0;i<4;i++)c.manager.frame();
+ assert.equal(gm.envMap,boundTex);near(b.uniforms.probeActive.value,1);
+ // Capture failure and unlit fall back cleanly to sky.
+ c.renderer.fail=true;c.manager.request();c.round();
+ assert.equal(gm.envMap,null);assert.equal(b.uniforms.probeActive.value,0);
+ c.renderer.fail=false;c.manager.request();c.round();
+ assert.equal(gm.envMap,boundTex);assert.ok(b.uniforms.probeActive.value<.1,'recovery re-fades cleanly');
+ c.advance(600);c.manager.frame();near(b.uniforms.probeActive.value,1);
+ c.manager.setUnlit(true);assert.equal(gm.envMap,null);assert.equal(b.uniforms.probeActive.value,0);
+ c.manager.setUnlit(false);c.round();c.advance(600);c.manager.frame();
+ assert.equal(gm.envMap,boundTex);near(b.uniforms.probeActive.value,1);
+ c.manager.dispose();
+});
+await test('standard_shader_box_patch_chains_hooks_cache_and_clones_ground',()=>{
+ const source=new THREE.MeshStandardMaterial({roughness:.85});let calls=0;
+ source.onBeforeCompile=s=>{calls++;s.uniforms.library={value:1};};source.customProgramCacheKey=()=>'library-key';
+ const m=R.reflectionMaterial(source,'ground','a'),s=compile(m);
+ assert.equal(calls,1);assert.ok(s.uniforms.library);assert.ok(s.fragmentShader.includes('probeBox('));
+ assert.ok(s.fragmentShader.includes('#define REFLECTION_PROBE_GROUND'));
+ assert.equal(m.premultipliedAlpha,false);assert.equal(m.depthWrite,true);
+ const clone=m.clone(),cs=compile(clone);
+ assert.equal(calls,2);assert.equal(cs.uniforms.probeCentre,s.uniforms.probeCentre);
+ assert.equal(clone.customProgramCacheKey(),m.customProgramCacheKey());
+ const other=R.reflectionMaterial(new THREE.MeshStandardMaterial(),'ground','other');
+ assert.equal(other.customProgramCacheKey().split('|box-reflection')[1],m.customProgramCacheKey().split('|box-reflection')[1]);
+});
+finish();
+"""
+
+from test_twin_cloud_shadow_js import DRIVER as CLOUD_DRIVER
+
+BUDGET_DRIVER = CLOUD_DRIVER.split("await test('lazy CPU texels")[0] + r"""
+const {installWeatherSurface}=await import(file('static/twin/sky/weather_surface.js'));
+await test('ground_horizon_damp_skip_and_uniform_sampler_budgets',()=>{
+ const renderer=new Renderer(),scene=new THREE.Scene();
+ renderer.toneMapping=THREE.ACESFilmicToneMapping;
+ renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;
+ const makePMREM=size=>{const t=new THREE.CubeTexture();t.isPMREMTexture=true;t.mipmaps=[];
+  for(let l=0;l<=Math.log2(size)-3;l++)t.mipmaps.push({width:size>>l,height:size>>l});return t;};
+ scene.environment=makePMREM(512);
+ const probe256=makePMREM(256);
+ const haze=installStageHaze(scene,{}),shadow=installCloudShadow(scene,{uniforms:createCloudUniforms()}),weather=installWeatherSurface(scene);
+ const lights=makeLights();
+ lights.directional=[{},{}];lights.directionalShadowMap=[{}];
+ lights.point=Array.from({length:4},()=>({}));lights.pointShadowMap=[{},{}];
+ lights.spot=[{},{}];lights.spotShadowMap=[{}];lights.rectArea=[{}];lights.hemi=[{}];
+ const cache=programs(renderer);
+ const cases=[
+  ['solid Standard',()=>new THREE.MeshStandardMaterial({name:'paving'})],
+  ['solid mapped',()=>new THREE.MeshStandardMaterial({name:'paving',map:new THREE.Texture(),normalMap:new THREE.Texture(),roughnessMap:new THREE.Texture(),aoMap:new THREE.Texture()})],
+  ['coping Physical',()=>new THREE.MeshPhysicalMaterial({name:'paving',map:new THREE.Texture(),normalMap:new THREE.Texture(),roughnessMap:new THREE.Texture(),aoMap:new THREE.Texture()})],
+  ['baked 2-bank 8-lamp stress',()=>{const m=new THREE.MeshStandardMaterial({name:'paving',map:new THREE.Texture(),normalMap:new THREE.Texture(),roughnessMap:new THREE.Texture(),aoMap:new THREE.Texture()});
+   patchLightmaps([m],{banks:Array.from({length:2},()=>new THREE.DataArrayTexture(new Uint8Array(64),4,4,1))},lightmapUniforms(1,8,{fixtures:true}));return m;}],
+ ];
+ for(const [label,factory] of cases){
+  const mb=factory(),ma=factory();
+  reflectionMaterial(ma,'ground','a');ma.envMap=probe256;
+  const ob=new THREE.Mesh(new THREE.BoxGeometry(),mb),oa=new THREE.Mesh(new THREE.BoxGeometry(),ma);
+  ob.receiveShadow=oa.receiveShadow=true;scene.add(ob,oa);
+  haze.prepare();shadow.prepare();weather.prepare();
+  const sb=programSource(renderer,cache,scene,ob,lights),sa=programSource(renderer,cache,scene,oa,lights);
+  const bb=uniformBudget(sb[2]),ba=uniformBudget(sa[2]);
+  assert.equal(ba.samplers.length,bb.samplers.length,label+': zero added samplers');
+  assert.ok(ba.samplers.length<=16,label+': samplers within 16');
+  assert.ok(ba.vectors-bb.vectors<=4,label+': at most 4 added uniform vectors');
+  assert.ok(ba.vectors<=224,label+': fragment uniform vectors within 224');
+  assert.ok(preprocess(sa[2]).includes('radiance*=mix(weatherHorizonDamp,1.0,probeActive);'),label+': skips horizon damp when probe active');
+  assert.ok(preprocess(sb[2]).includes('radiance*=weatherHorizonDamp;'),label+': non-ground keeps horizon damp');
+ }
+ // Roof and lawn also retain plain horizon damp.
+ for(const [name,role] of [['roof','roof'],['lawn','lawn']]){
+  const m=new THREE.MeshStandardMaterial({name});m.userData.materialRole=role;
+  const o=new THREE.Mesh(new THREE.BoxGeometry(),m);o.receiveShadow=true;scene.add(o);
+  haze.prepare();shadow.prepare();weather.prepare();
+  const s=programSource(renderer,cache,scene,o,lights);
+  assert.ok(preprocess(s[2]).includes('radiance*=weatherHorizonDamp;'),name+': keeps horizon damp');
+  assert.ok(!preprocess(s[2]).includes('REFLECTION_PROBE_GROUND'),name+': no ground probe define');
+ }
+ weather.dispose();shadow.dispose();haze.dispose();
+});
 finish();
 """
 
 if __name__ == '__main__':
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'editable': True})
-    print(output)
-    sys.exit(code or 0)
+    for script in (DRIVER, BUDGET_DRIVER):
+        code, output = run_node(script, {'root': ROOT.as_posix(), 'editable': True})
+        print(output)
+        if code:
+            sys.exit(code)
+    sys.exit(0)

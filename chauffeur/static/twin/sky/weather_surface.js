@@ -472,7 +472,7 @@ weatherWorld=instanceMatrix*weatherWorld;
 vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
   THREE.ShaderChunk.lights_pars_begin=WEATHER_GLSL+THREE.ShaderChunk.lights_pars_begin;
   THREE.ShaderChunk.normal_fragment_maps+=APPLY;
-  THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\nradiance*=weatherHorizonDamp;\n#endif\n';
+  THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\n#ifdef REFLECTION_PROBE_GROUND\nradiance*=mix(weatherHorizonDamp,1.0,probeActive);\n#else\nradiance*=weatherHorizonDamp;\n#endif\n#endif\n';
 }
 
 function patchLit(mode,instanceExposure=false) {

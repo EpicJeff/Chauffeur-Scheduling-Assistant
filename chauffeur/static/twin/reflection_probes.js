@@ -44,12 +44,17 @@ vec3 waterProbeSample(int index, vec3 direction, float roughness) {
 }
 `;
 
+// Fade duration (ms) when a ground binding transitions from sky to a freshly captured probe.
+const GROUND_FADE_MS = 600;
+const GROUND_SAMPLE_ANCHOR = 'vec4 envMapColor = textureLod( envMap, envMapRotation * reflectVec, roughnessToMip( roughness ) );\n\t\t\treturn envMapColor.rgb * envMapIntensity;';
+
 // Install before batching. A binding's uniforms are shared by viewing/bake/ghost
 // clones. Calm water keeps its shared draw and selects by body centre instead.
 // Different buildings never share a binding. No per-probe program.
 export function reflectionMaterial(material, kind, owner) {
   if (material.userData.reflection) { material.userData.reflection.owners.add(owner); return material; }
-  const binding = {kind, owner, owners:new Set([owner]), materials: new Set(), probe: null, uniforms: {
+  const binding = {kind, owner, owners:new Set([owner]), materials: new Set(), probe: null,
+    fade: 0, fadeFrom: 0, fadeAt: -Infinity, wasActive: false, uniforms: {
     probeCentre: {value: new THREE.Vector3()}, probeMin: {value: new THREE.Vector3()},
     probeMax: {value: new THREE.Vector3()}, probeActive: {value: 0},
   }};
@@ -68,7 +73,7 @@ export function reflectionMaterial(material, kind, owner) {
     shader.vertexShader = 'varying vec3 vProbeWorld;\n' + shader.vertexShader;
     replace(shader, 'vertexShader', '#include <project_vertex>',
       'vProbeWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#include <project_vertex>');
-    shader.fragmentShader = declarations + shader.fragmentShader;
+    shader.fragmentShader = (kind === 'ground' ? '#define REFLECTION_PROBE_GROUND\n' : '') + declarations + shader.fragmentShader;
     // Vendored r187 uses PMREM for standard materials, including explicit cubes.
     const chunk = {fragmentShader: THREE.ShaderChunk.envmap_physical_pars_fragment};
     const anchor = 'reflectVec = transformDirectionByInverseViewMatrix( reflectVec, viewMatrix );';
@@ -109,6 +114,23 @@ if (waterProbeCount > 0) {
   reflectedLight.directDiffuse *= 1.0 - waterMirror;
   reflectedLight.indirectDiffuse *= 1.0 - waterMirror;
 }`);
+    } else if (kind === 'ground') {
+      replace(chunk, 'fragmentShader', anchor, anchor + '\nreflectVec = probeDirection(reflectVec);');
+      replace(chunk, 'fragmentShader', GROUND_SAMPLE_ANCHOR,
+        `// Match SSR's wet blur across puddles (.03) and damp concrete (~.43) while
+\t\t\t// leaving dry paving (~.85) unchanged. Start a fresh probe blurred at
+\t\t\t// ENVMAP_MAX_LOD and sharpen across the fade so sky->probe never pops.
+\t\t\tfloat probeRough = mix( roughness, roughness * mix( .80, 1.0, smoothstep( .35, .65, roughness ) ), probeActive );
+\t\t\tfloat probeLod = mix( float( ENVMAP_MAX_LOD ), roughnessToMip( probeRough ), probeActive );
+\t\t\tvec4 envMapColor = textureLod( envMap, envMapRotation * reflectVec, mix( roughnessToMip( roughness ), probeLod, step( .001, probeActive ) ) );
+\t\t\t// Soft-shoulder extreme unglassed interior lamp spikes (>1.5 linear) so
+\t\t\t// wet puddles reflect warm window glow without blooming into white flares.
+\t\t\tvec3 probeExcess = max( envMapColor.rgb - 1.5, 0.0 );
+\t\t\tvec3 probeRgb = mix( envMapColor.rgb, envMapColor.rgb - probeExcess * probeExcess / ( probeExcess + 1.5 ), probeActive );
+\t\t\t// Dry and damp ground keep scene.environmentIntensity (preserving dry parity
+\t\t\t// and SSR damp weight); standing puddles rise toward 1.0 to match SSR.
+\t\t\tfloat probeGain = mix( envMapIntensity, 1.0, probeActive * ( 1.0 - smoothstep( .05, .45, roughness ) ) );
+\t\t\treturn probeRgb * probeGain;`);
     } else replace(chunk, 'fragmentShader', anchor, anchor + '\nreflectVec = probeDirection(reflectVec);');
     replace(shader, 'fragmentShader', '#include <envmap_physical_pars_fragment>', chunk.fragmentShader);
     if (kind === 'exterior') {
@@ -186,7 +208,20 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       (owner && d.buildingId===owner) ||
       [].concat(o.material || []).some(m=>m.userData.waterSurface || m.userData.reflection || m.depthTest===false || m.name==='sheet');
   };
+  function syncGround() {
+    if (!enabled || disposed) return;
+    const envIntensity = scene.environmentIntensity ?? 1;
+    for (const b of bindings) if (b.kind === 'ground') {
+      if (!unlit && b.wasActive && b.fade < 1) {
+        const t = Math.max(0, Math.min(1, (now() - b.fadeAt) / GROUND_FADE_MS));
+        b.fade = b.fadeFrom + (1 - b.fadeFrom) * t * t * (3 - 2 * t);
+        b.uniforms.probeActive.value = Math.max(.002, b.fade);
+      }
+      for (const m of b.materials) m.envMapIntensity = envIntensity;
+    }
+  }
   function mirror(camera) {
+    syncGround();
     if (!planar) return;
     const water = probes.find(p=>p.kind==='water');
     let on = false;
@@ -283,10 +318,20 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
   }
   function apply(binding) {
     const p = binding.probe, active = !unlit && !!p?.fresh;
-    binding.uniforms.probeActive.value = active ? 1 : 0;
+    if (binding.kind === 'ground') {
+      if (active) {
+        if (!binding.wasActive) { binding.wasActive = true; binding.fadeFrom = binding.fade || 0; binding.fadeAt = now(); }
+        const t = Math.max(0, Math.min(1, (now() - binding.fadeAt) / GROUND_FADE_MS));
+        binding.fade = binding.fadeFrom + (1 - binding.fadeFrom) * t * t * (3 - 2 * t);
+        binding.uniforms.probeActive.value = Math.max(.002, binding.fade);
+      } else {
+        binding.wasActive = false; binding.fade = 0; binding.uniforms.probeActive.value = 0;
+      }
+    } else binding.uniforms.probeActive.value = active ? 1 : 0;
     if (p) {
+      const pb = binding.kind === 'ground' && p.groundBox ? p.groundBox : p.box;
       binding.uniforms.probeCentre.value.copy(p.centre);
-      binding.uniforms.probeMin.value.copy(p.box.min); binding.uniforms.probeMax.value.copy(p.box.max);
+      binding.uniforms.probeMin.value.copy(pb.min); binding.uniforms.probeMax.value.copy(pb.max);
     }
     const waters = probes.filter(p=>p.kind==='water');
     if (binding.kind==='water') {
@@ -297,6 +342,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
         binding.uniforms['waterProbe'+i].value = p.target.texture;
       });
     }
+    const envIntensity = binding.kind === 'ground' ? (scene.environmentIntensity ?? 1) : 1;
     for (const material of binding.materials) {
       const map = binding.kind==='water'
         ? (!unlit && waters.length && waters.every(p=>p.fresh) ? waters[0].target.texture : null)
@@ -304,7 +350,9 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
       if (material.envMap !== map) { material.envMap = map; material.needsUpdate = true; }
       // Captures already contain current scene lighting. Explicit envMap intensity
       // is independent of scene.environmentIntensity (three's standard contract).
-      material.envMapIntensity = 1;
+      // Ground retains scene.environmentIntensity for diffuse/dry IBL and ramps
+      // wet specular in the shader so dry paving never shifts brightness.
+      material.envMapIntensity = envIntensity;
     }
   }
   function request() {
@@ -329,11 +377,18 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     if (!enabled || disposed) return;
     root.updateMatrixWorld(true);
     bindings = new Set();
-    const waterVisible = new Set();
+    const waterVisible = new Set(), groundBoxes = new Map();
     root.traverse(o => {
       for (const m of o.material ? [].concat(o.material) : []) {
         const b = m.userData.reflection;
-        if (b) { bindings.add(b); if (b.kind === 'water' && visible(o)) b.owners.forEach(id=>waterVisible.add(id)); }
+        if (b) {
+          bindings.add(b);
+          if (b.kind === 'water' && visible(o)) b.owners.forEach(id=>waterVisible.add(id));
+          if (b.kind === 'ground' && o.isMesh && !o.layers.isEnabled(31)) {
+            if (!groundBoxes.has(b)) groundBoxes.set(b, new THREE.Box3());
+            groundBoxes.get(b).expandByObject(o);
+          }
+        }
       }
     });
     const candidates = [];
@@ -364,20 +419,46 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     }
     if (box.isEmpty()) box.set(new THREE.Vector3(-20,0,-20), new THREE.Vector3(20,30,20));
     box.min.y = Math.min(0,box.min.y); box.max.y = Math.max(30,box.max.y+10);
+    // Horizontal ground reflects steep upward rays. Keep p.box at >=30 m for
+    // window panes and info(), but cap ground's projection ceiling to the
+    // actual roof/wall height so overhead rays parallax onto the house instead
+    // of shooting past the roof into empty sky.
+    let buildingTopY = 0;
+    for (const b of plan.buildings || []) {
+      const levels = b.levels || [];
+      if (!levels.length) continue;
+      const top = buildingBase(plan, b) + Math.max(...levels.map(l => (l.elevation || 0) + (l.wall_height || 9)));
+      buildingTopY = Math.max(buildingTopY, top * FT);
+    }
+    const groundBoxOf = centre => {
+      const gb = box.clone();
+      // A vertical wall spans ground..roof; projecting steep ground rays onto
+      // the mid-wall height avoids overshooting the roof into empty sky.
+      if (buildingTopY > 0) gb.max.y = Math.min(box.max.y, Math.max(centre.y + 2.5, centre.y + (buildingTopY - centre.y) * .42));
+      return gb;
+    };
     const old = probes;
     probes = chosen.map(row => {
       const previous = old.find(p=>p.id===row.id && p.centre.equals(row.centre) && p.box.equals(box));
-      if (previous) return previous;
+      if (previous) { previous.groundBox = groundBoxOf(row.centre); return previous; }
       const target = new THREE.WebGLCubeRenderTarget(256, {type:THREE.HalfFloatType, colorSpace:THREE.LinearSRGBColorSpace,
         generateMipmaps:true, minFilter:THREE.LinearMipmapLinearFilter, magFilter:THREE.LinearFilter});
       const camera = new THREE.CubeCamera(.05, Math.max(100,box.getSize(new THREE.Vector3()).length()*2), target);
       camera.position.copy(row.centre);
-      return {...row, box:box.clone(), target, camera, captures:0, fresh:false};
+      return {...row, box:box.clone(), groundBox:groundBoxOf(row.centre), target, camera, captures:0, fresh:false};
     });
     for (const p of old) if (!probes.includes(p)) p.target.dispose();
     for (const b of bindings) {
-      const peers = probes.filter(p=>p.kind===b.kind), own = candidates.find(p=>p.kind===b.kind && p.owner===b.owner);
-      b.probe = peers.find(p=>p.owner===b.owner) || (own && peers.sort((a,c)=>a.centre.distanceToSquared(own.centre)-c.centre.distanceToSquared(own.centre))[0]) || null;
+      if (b.kind === 'ground') {
+        const peers = probes.filter(p=>p.kind==='exterior');
+        const gbox = groundBoxes.get(b), own = candidates.find(p=>p.kind==='exterior' && p.owner===b.owner);
+        const targetCentre = gbox && !gbox.isEmpty() ? gbox.getCenter(new THREE.Vector3()) : own?.centre || null;
+        b.probe = (targetCentre && [...peers].sort((a,c)=>a.centre.distanceToSquared(targetCentre)-c.centre.distanceToSquared(targetCentre))[0])
+          || peers.find(p=>p.owner===b.owner) || peers[0] || null;
+      } else {
+        const peers = probes.filter(p=>p.kind===b.kind), own = candidates.find(p=>p.kind===b.kind && p.owner===b.owner);
+        b.probe = peers.find(p=>p.owner===b.owner) || (own && peers.sort((a,c)=>a.centre.distanceToSquared(own.centre)-c.centre.distanceToSquared(own.centre))[0]) || null;
+      }
       apply(b);
     }
     request();
@@ -442,6 +523,7 @@ export function createReflectionProbes({scene, renderer, tier, extras = () => []
     setUnlit(on) { if (unlit===on) return; unlit=on; for (const b of bindings) apply(b); if (!on) request(); },
     frame() {
       if (!enabled || unlit || disposed) return;
+      syncGround();
       // Live light uniforms may change without a model rebuild. Observe their
       // result, excluding sun/moon (the time-look minute gate owns those).
       // Twice a second is plenty: lamp requests wait at least 1.5 seconds,
