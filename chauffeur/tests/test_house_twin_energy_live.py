@@ -236,6 +236,17 @@ def scenario_no_programs_on_second_entry_to_either_mode():
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=high&test=1&panel=true&kiosk=true')
+        # Reflection probes land asynchronously and bind their own program variants (glass, water,
+        # ground). At night, with the brighter night floor, they capture too; let them settle first
+        # so the check measures mode re-entry, not a probe landing mid-scenario.
+        stable, last = 0, -1
+        for _ in range(40):
+            count = page.evaluate('() => window.__twin.renderer3.info.programs.length')
+            stable = stable + 1 if count == last else 0
+            last = count
+            if stable >= 3:
+                break
+            page.wait_for_timeout(1000)
         for mode in ('Energy', 'Security'):
             page.get_by_role('button', name=mode, exact=True).click(modifiers=['Shift'])
             page.wait_for_timeout(750)
