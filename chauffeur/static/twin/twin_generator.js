@@ -752,24 +752,42 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
 
     const isBlocked = (spout.flags || []).includes('outlet-blocked');
     if (isBlocked) {
-      // Outlet jammed against a lower roof: emit only a flush 2 x 3 in outlet hole collar in the gutter bottom.
+      // Outlet jammed against a lower roof: emit only a flush 2 x 3 in outlet hole collar seated on the gutter floor.
       const outArr = owningSeg?.outward ? unitXZ([owningSeg.outward[0], 0, -owningSeg.outward[1]]) : unitXZ(dirLocal(spout.outlet?.dir || [0, 0, 1]));
       const V = new THREE.Vector3(outArr[0], 0, outArr[2]).normalize();
-      const U = new THREE.Vector3(-V.z, 0, V.x).normalize();
+      // Match emitBoxTube handedness: T = (0, -1, 0) and T x U = V => U = (V.z, 0, -V.x).
+      const U = new THREE.Vector3(V.z, 0, -V.x).normalize();
       const c = rawPts[0];
       if (c && c.every(Number.isFinite)) {
+        const segA = owningSeg ? toLocal(owningSeg.a) : null;
+        const segB = owningSeg ? toLocal(owningSeg.b) : null;
+        const eaveY = segA && segB ? Math.min(segA[1], segB[1]) : c[1] + GUTTER.profileIn / 12;
+        const gutterBotY = eaveY - GUTTER.profileIn / 12;
         const rimW = halfW + 0.03, rimD = halfD + 0.03, collarH = 0.018;
-        const pt = (u, v, y) => [c[0] + u * U.x + v * V.x, y, c[2] + u * U.z + v * V.z];
-        const yTop = c[1], yBot = c[1] - collarH;
+        // Keep the collar tucked cleanly inside open gutter end caps when blocked.top lies on an endpoint.
+        let cx = c[0], cz = c[2];
+        if (segA && segB) {
+          const sdx = segB[0] - segA[0], sdz = segB[2] - segA[2], sLen = Math.hypot(sdx, sdz);
+          const inset = rimW + 0.02;
+          if (sLen > 2 * inset) {
+            const tx = sdx / sLen, tz = sdz / sLen;
+            const t = (cx - segA[0]) * tx + (cz - segA[2]) * tz;
+            const tc = Math.max(inset, Math.min(sLen - inset, t));
+            cx += (tc - t) * tx;
+            cz += (tc - t) * tz;
+          }
+        }
+        const pt = (u, v, y) => [cx + u * U.x + v * V.x, y, cz + u * U.z + v * V.z];
+        const yBot = Math.min(c[1], gutterBotY), yTop = yBot + collarH;
         const outR = CORNERS.map(([cu, cv]) => [cu * rimW, cv * rimD]);
         const inR = CORNERS.map(([cu, cv]) => [cu * halfW, cv * halfD]);
         for (let k = 0; k < 4; k++) {
           const n = (k + 1) % 4;
           const aTop = pt(outR[k][0], outR[k][1], yTop), bTop = pt(outR[n][0], outR[n][1], yTop);
           const aBot = pt(outR[k][0], outR[k][1], yBot), bBot = pt(outR[n][0], outR[n][1], yBot);
-          const aiBot = pt(inR[k][0], inR[k][1], yBot), biBot = pt(inR[n][0], inR[n][1], yBot);
+          const aiTop = pt(inR[k][0], inR[k][1], yTop), biTop = pt(inR[n][0], inR[n][1], yTop);
           pushQuad(aTop, bTop, bBot, aBot, [0, 0], [0.2, 0], [0.2, collarH], [0, collarH]);
-          pushQuad(aBot, bBot, biBot, aiBot, [0, 0], [0.2, 0], [0.2, 0.03], [0, 0.03]);
+          pushQuad(aTop, aiTop, biTop, bTop, [0, 0], [0, 0.03], [0.2, 0.03], [0.2, 0]);
         }
       }
       continue;

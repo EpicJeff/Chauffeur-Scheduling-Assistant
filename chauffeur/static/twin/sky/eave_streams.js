@@ -296,10 +296,11 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
       if(isBlocked){
         // Blocked gutter outlet jammed against a lower roof: short forward spill onto the receiving roof.
         pourForward=.30*FT;
-        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.08,top[2]+pourDir[2]*pourForward]);
-        const fall=Math.max(.08*FT,Math.min(.55*FT,top[1]-hit.height));
-        bottom=Math.min(top[1]-.02,hit.height);
-        if(top[1]-bottom<.02)bottom=top[1]-fall;
+        const hitAt=sample([top[0],top[1]+.08,top[2]]);
+        const hitFwd=sample([top[0]+pourDir[0]*pourForward,top[1]+.08,top[2]+pourDir[2]*pourForward]);
+        const surfaceY=Math.max(hitAt.height,hitFwd.height);
+        const fall=Math.max(.08*FT,Math.min(.55*FT,top[1]-surfaceY));
+        bottom=top[1]-fall;
       }else if(isHang){
         const hit=sample(top);
         bottom=Math.min(top[1]-.12,hit.height);

@@ -741,14 +741,47 @@ await test('test_outlet_blocked_hole_and_spill_no_nan_or_zero_area', async () =>
       const area = bPt.clone().sub(a).cross(c.clone().sub(a)).length() * 0.5;
       assert.ok(area > 1e-9, `zero-area triangle found (area=${area})`);
     }
-    // Outlet hole collar exists right at blocked.top, and NO pipe sweeps down below gutterBottom - 0.04*FT.
+    // Outlet hole collar sits flush on the gutter bottom (even when blocked.top is raised),
+    // with all faces wound outward (FrontSide) and NO downward pipe sweep.
     const run = twin.gutters.runs.find(r => r.id === blocked.run);
     const gutterBotM = run.segments[0].a[1] - (G.GUTTER.profileIn / 12) * FT;
-    const floorLimit = Math.min(gutterBotM, blocked.top[1]) - 0.04 * FT;
-    const nearHole = tris.flat().filter(pt =>
-      Math.hypot(pt[0] - blocked.top[0], pt[2] - blocked.top[2]) < 0.15 && Math.abs(pt[1] - blocked.top[1]) < 0.03
+    assert.ok(blocked.top[1] > gutterBotM + 0.05 * FT, 'fixture exercises raised blocked.top above gutter bottom');
+    const maxEdgeLen = tri => Math.max(
+      Math.hypot(tri[1][0] - tri[0][0], tri[1][1] - tri[0][1], tri[1][2] - tri[0][2]),
+      Math.hypot(tri[2][0] - tri[1][0], tri[2][1] - tri[1][1], tri[2][2] - tri[1][2]),
+      Math.hypot(tri[0][0] - tri[2][0], tri[0][1] - tri[2][1], tri[0][2] - tri[2][2]),
     );
-    assert.ok(nearHole.length >= 8, `expected outlet hole collar geometry near blocked.top, got ${nearHole.length} verts`);
+    const collarTris = tris.filter(tri =>
+      maxEdgeLen(tri) < 0.15 && tri.every(pt =>
+        Math.hypot(pt[0] - blocked.top[0], pt[2] - blocked.top[2]) < 0.18 && pt[1] <= gutterBotM + 0.05 * FT
+      )
+    );
+    assert.equal(collarTris.length, 16, `expected 16 outlet collar triangles seated on gutter floor, got ${collarTris.length}`);
+    const collarPts = collarTris.flat();
+    const collarYs = collarPts.map(pt => pt[1]);
+    const collarMinY = Math.min(...collarYs), collarMaxY = Math.max(...collarYs);
+    const collarCenterX = (Math.min(...collarPts.map(p => p[0])) + Math.max(...collarPts.map(p => p[0]))) / 2;
+    const collarCenterZ = (Math.min(...collarPts.map(p => p[2])) + Math.max(...collarPts.map(p => p[2]))) / 2;
+    near(collarMinY / FT, gutterBotM / FT, 1e-4);
+    near(collarMaxY / FT, gutterBotM / FT + 0.018, 1e-4);
+    let sideFaces = 0, topFaces = 0;
+    for (const tri of collarTris) {
+      const a = new THREE.Vector3(...tri[0]), bPt = new THREE.Vector3(...tri[1]), c = new THREE.Vector3(...tri[2]);
+      const n = bPt.clone().sub(a).cross(c.clone().sub(a)).normalize();
+      const mid = a.clone().add(bPt).add(c).multiplyScalar(1 / 3);
+      if (Math.abs(n.y) > 0.9) {
+        topFaces++;
+        assert.ok(n.y > 0.99, `collar top rim face must face upward (+Y), got ny=${n.y.toFixed(4)}`);
+      } else {
+        sideFaces++;
+        const outDot = (mid.x - collarCenterX) * n.x + (mid.z - collarCenterZ) * n.z;
+        assert.ok(outDot > 0.01, `collar outer wall must face outward, got dot=${outDot.toFixed(5)}`);
+      }
+    }
+    assert.equal(sideFaces, 8, '8 outward-facing collar wall triangles');
+    assert.equal(topFaces, 8, '8 upward-facing collar top rim triangles');
+
+    const floorLimit = gutterBotM - 0.04 * FT;
     const belowHole = tris.flat().filter(pt =>
       Math.hypot(pt[0] - blocked.top[0], pt[2] - blocked.top[2]) < 0.15 && pt[1] < floorLimit
     );
@@ -761,6 +794,68 @@ await test('test_outlet_blocked_hole_and_spill_no_nan_or_zero_area', async () =>
     assert.ok(spill.top.every(Number.isFinite) && Number.isFinite(spill.bottom), 'spill coordinates are finite');
     assert.ok(spill.top[1] > spill.bottom && spill.top[1] - spill.bottom <= 0.6 * FT,
       `spill fall should be short (${((spill.top[1] - spill.bottom) / FT).toFixed(3)} ft)`);
+  } finally { disposeTwin(twin); }
+});
+
+await test('test_outlet_blocked_spill_clamps_when_receiving_roof_ends_just_past_outlet', async () => {
+  // Fix round 3 (M-2): when the receiving roof ends within 0.30 ft outward of a blocked outlet,
+  // the spill must still clamp to a short spill onto that roof and never plunge to ground below.
+  _gutterPlacementStats.clearCache();
+  const p = house(20, 'gable', rect(0, 0, 20, 16), 1);
+  const b = p.buildings[0];
+  b.roofs[0].edges[2].gutter = false;
+  delete b.roof.sections[0].gutters.y1;
+  b.levels[0].elevation = 10;
+  b.levels[0].ceiling = 10;
+  b.roof.sections[0].plate = 20;
+  b.roof.sections[0].pitch = 6; // y0 eave at y = -1.0 ft, gutter trough centred at y = -1.23 ft, gutterBot = 19.083 ft
+  // Receiving roof extends only 0.12 ft past the outlet centre (-1.35 ft), so 0.30 ft forward (-1.53 ft) misses the roof!
+  b.roof.sections.push({
+    id: 'low_narrow', roof: 'low_narrow', kind: 'flat', ridge: 'x', pitch: 0, plate: 19.2, overhang: 0, level: 'L1',
+    rect: [-4, -1.35, 24, 0], plane_edges: { y0: 0, x1: 1, y1: 2, x0: 3 },
+  });
+  b.roofs.push({
+    id: 'low_narrow', area: rect(-4, -1.35, 24, 0), overhang: 0,
+    edges: [0, 1, 2, 3].map(() => ({ setting: 'gable', gutter: false })),
+  });
+  const twin = buildTwin(p, input.kit, 'high');
+  await twin.ready;
+  try {
+    const run = twin.gutters.runs[0];
+    assert.ok(run, 'gutter run exists on y0');
+    // Verify with an explicit outlet-blocked spout right over the narrow receiving roof edge
+    // (outlet at y = -1.23 ft is over [-1.35, 0], while +0.30 ft outward at y = -1.53 ft drops 19 ft to ground).
+    const outletY = -1.23;
+    const blockedSpout = {
+      id: `${run.id}:blocked-edge`, run: run.id,
+      edge: { roof: 'r', edge: 0, porch: null, fraction: 0.1 },
+      top: [2 * FT, 19.2833 * FT, -outletY * FT],
+      mount: 'hang',
+      path: [[2 * FT, 19.2833 * FT, -outletY * FT], [2 * FT, 19.2833 * FT, -outletY * FT]],
+      outlet: { at: [2 * FT, 19.2833 * FT, -outletY * FT], dir: [0, 0, 1], lands: 'roof' },
+      share: 1, source: 'auto', flags: ['hang', 'stub', 'outlet-blocked'],
+    };
+    const res = E.eaveInstances(p, twin.roofSurfaces, input.kit, { runs: twin.gutters.runs, spouts: [blockedSpout] });
+    const spill = res.pours.find(pr => pr.spout.id === blockedSpout.id);
+    assert.ok(spill, 'short spill emitted for blocked outlet near roof edge');
+    const fallFt = (spill.top[1] - spill.bottom) / FT;
+    assert.ok(fallFt >= 0.08 - 1e-4 && fallFt <= 0.12,
+      `spill must land on the narrow receiving roof (~0.083 ft), not plunge past its edge (got ${fallFt.toFixed(3)} ft)`);
+    near(spill.bottom / FT, 19.20, 0.04);
+
+    // Even if both the outlet and forward ray miss the narrow roof entirely, fall must still clamp at <= 0.55 ft.
+    const pastEdgeSpout = {
+      ...blockedSpout, id: `${run.id}:blocked-past`,
+      top: [2 * FT, 19.2833 * FT, -(-1.45) * FT],
+      path: [[2 * FT, 19.2833 * FT, -(-1.45) * FT], [2 * FT, 19.2833 * FT, -(-1.45) * FT]],
+      outlet: { at: [2 * FT, 19.2833 * FT, -(-1.45) * FT], dir: [0, 0, 1], lands: 'roof' },
+    };
+    const resPast = E.eaveInstances(p, twin.roofSurfaces, input.kit, { runs: twin.gutters.runs, spouts: [pastEdgeSpout] });
+    const spillPast = resPast.pours.find(pr => pr.spout.id === pastEdgeSpout.id);
+    assert.ok(spillPast, 'short spill emitted even when past edge');
+    const fallPastFt = (spillPast.top[1] - spillPast.bottom) / FT;
+    assert.ok(fallPastFt >= 0.08 - 1e-4 && fallPastFt <= 0.55 + 1e-4,
+      `blocked spill clamp must cap fall at 0.55 ft (got ${fallPastFt.toFixed(3)} ft)`);
   } finally { disposeTwin(twin); }
 });
 
