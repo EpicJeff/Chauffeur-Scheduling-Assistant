@@ -20,7 +20,7 @@ import house_twin_live_harness as L
 H, check = L.H, L.check
 TIMEOUT = 40000
 NOON = '2026-06-21T12:00:00Z'
-SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\round2')
+SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\elbow')
 
 
 def synthetic_plan(gutters_on=True):
@@ -368,7 +368,7 @@ def scenario_gutters_pours_and_programs():
             check(cam_outlet['dist'] <= 2.5, ('outlet close-up within 2.5 m', cam_outlet))
             page.screenshot(path=str(SHOTS_DIR / 'corner_outlet_elbows.png'))
 
-            # Close-up 2a: <= 2.0 m from front-right kick-out & clear-water pour in overcast heavy rain (rain particles ON).
+            # Close-up 2a: ~1.5 m side profile of corner downspout curved elbow & pour in overcast heavy rain (rain particles ON).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
@@ -379,8 +379,8 @@ def scenario_gutters_pours_and_programs():
               const pour = pours.find(p => p.mount === 'wall' && p.top[0] > 9 && p.top[0] < 12 && p.top[2] > -2) || pours[0];
               if (!pour) return;
               const [x, y, z] = pour.top;
-              const target = [x, y + 0.04, z - 0.12];
-              const pos = [x + 1.35, y + 0.32, z + 0.90];
+              const target = [x, y + 0.04, z - 0.06];
+              const pos = [x + 1.42, y + 0.18, z + 0.36];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
@@ -388,10 +388,10 @@ def scenario_gutters_pours_and_programs():
               const v = window.__twin, c = v.cameraState();
               return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]), eaveFlow: v.eaves.uniforms.eaveFlow.value };
             }""")
-            check(cam_kick['dist'] <= 2.5, ('kickout close-up within 2.5 m', cam_kick))
-            page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_overcast_rain.png'))
+            check(cam_kick['dist'] <= 2.5, ('elbow close-up within 2.5 m', cam_kick))
+            page.screenshot(path=str(SHOTS_DIR / 'corner_elbow_overcast_rain.png'))
 
-            # Close-up 2b: same <= 2.0 m kick-out camera with rain particles off and bright sunlit sky (clear-water pour in day).
+            # Close-up 2b: same ~1.5 m side-profile elbow camera in bright day with rain particles off so the curve reads crisply.
             page.evaluate("""() => {
               const v = window.__twin;
               if (v.precipitation?.group) v.precipitation.group.visible = false;
@@ -404,14 +404,14 @@ def scenario_gutters_pours_and_programs():
               v.setClock('2026-06-21T12:00:00Z');
             }""")
             H.settle(page, 20)
-            page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_day.png'))
+            page.screenshot(path=str(SHOTS_DIR / 'corner_elbow_side.png'))
             page.evaluate("""() => {
               const v = window.__twin;
               if (v.__savedWeather && v.weather) Object.assign(v.weather, v.__savedWeather);
               v.setClock('2026-06-21T12:00:00Z');
             }""")
 
-            # Close-up 3: <= 2.4 m porch-post downspout (particles off so gutter elbow, column-mounted pipe & kick-out pour all show).
+            # Close-up 3: ~1.5 m porch-post downspout bottom curved elbow & pour (particles off).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
@@ -421,9 +421,9 @@ def scenario_gutters_pours_and_programs():
               const pours = (v.eaves.data.instances || []).filter(i => i.pour);
               const post = pours.find(p => p.mount === 'post');
               if (!post) return;
-              const sTop = post.spout.top, [ox, oy, oz] = post.top;
-              const target = [ox + 0.12, oy + 0.45, oz - 0.15];
-              const pos = [target[0] - 1.45, target[1] + 0.35, target[2] + 1.85];
+              const [ox, oy, oz] = post.top;
+              const target = [ox, oy + 0.04, oz - 0.08];
+              const pos = [target[0] - 1.28, target[1] + 0.22, target[2] + 0.68];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
@@ -432,7 +432,7 @@ def scenario_gutters_pours_and_programs():
               return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]) };
             }""")
             check(cam_post['dist'] <= 2.5, ('porch-post close-up within 2.5 m', cam_post))
-            page.screenshot(path=str(SHOTS_DIR / 'porch_post_downspout.png'))
+            page.screenshot(path=str(SHOTS_DIR / 'porch_post_elbow.png'))
 
             # Close-up 4: <= 2.0 m outlet-blocked spill (jammed gutter over flat carport roof -> outlet hole + short spill).
             page.evaluate("""() => {

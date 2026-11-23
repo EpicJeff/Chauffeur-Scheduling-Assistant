@@ -306,35 +306,14 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
         bottom=Math.min(top[1]-.12,hit.height);
         pourForward=.04*FT;
       }else{
-        // Match the renderer's ~4% downward kick-out pitch when path leaves the wall elbow flat.
-        const path=spout.path||[];
-        if(path.length>=3){
-          let lastVert=-1;
-          for(let i=path.length-2;i>=0;i--){
-            const dx=path[i+1][0]-path[i][0],dy=path[i+1][1]-path[i][1],dz=path[i+1][2]-path[i][2],l=Math.hypot(dx,dy,dz);
-            if(l>1e-4&&Math.abs(dy)/l>.95){lastVert=i;break;}
-          }
-          if(lastVert>=0&&lastVert+2<path.length){
-            const elbowBot=path[lastVert+1],mouth=path[path.length-1];
-            if(Math.abs(mouth[1]-elbowBot[1])<.02*FT){
-              let kickLenFt=0;
-              for(let i=lastVert+1;i+1<path.length;i++)
-                kickLenFt+=Math.hypot(path[i+1][0]-path[i][0],path[i+1][2]-path[i][2])/FT;
-              top[1]-=Math.min(.12,kickLenFt*.04)*FT;
-            }
-          }
-        }
-        if(spout.outlet.lands==='roof'){
-          pourForward=.25*FT;
-          const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
-          const fall=Math.max(.20*FT,Math.min(1.5*FT,top[1]-hit.height));
-          bottom=top[1]-fall;
-        }else{
-          pourForward=.30*FT;
-          const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
-          const fall=Math.max(.22*FT,Math.min(1.2*FT,top[1]-hit.height));
-          bottom=top[1]-fall;
-        }
+        // Pour leaves the curved elbow mouth along outlet.dir and lands shortly beyond the mouth (~0.4-0.6 ft from wall).
+        const isRoof=spout.outlet.lands==='roof';
+        const probeHit=sample([top[0]+pourDir[0]*.18*FT,top[1]+.05,top[2]+pourDir[2]*.18*FT]);
+        const dropFt=isRoof&&probeHit.kind!=='roof'?4/12:Math.max(.20,Math.min(1.5,(top[1]-probeHit.height)/FT));
+        pourForward=Math.max(.16,Math.min(.28,dropFt*.45))*FT;
+        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
+        const fall=isRoof&&hit.kind!=='roof'?4/12*FT:Math.max(.20*FT,Math.min(1.5*FT,top[1]-hit.height));
+        bottom=top[1]-fall;
       }
       if(top[1]-bottom<(isBlocked?.015:.05))continue;
       const pourWidth=.016+.028*share;

@@ -194,7 +194,7 @@ await test('test_gutter_follows_run_with_mitres_and_end_caps', async () => {
   } finally { disposeTwin(twinOff); disposeTwin(twinOn); }
 });
 
-await test('test_downspout_path_and_kickout', async () => {
+await test('test_downspout_ends_in_curved_elbow', async () => {
   const p = house(30, 'gable', rect(0, 0, 30, 20), 1.5);
   const twin = buildTwin(p, input.kit, 'high'); await twin.ready;
   try {
@@ -206,21 +206,62 @@ await test('test_downspout_path_and_kickout', async () => {
 
     for (const s of spouts) {
       assert.equal(s.mount, 'wall');
-      // Vertices must exist near every waypoint along path (offset elbows, wall drop, kick-out).
-      for (const wp of s.path) {
-        const dMin = Math.min(...pts.map(pt => Math.hypot(pt[0] - wp[0], pt[1] - wp[1], pt[2] - wp[2])));
-        assert.ok(dMin < 0.08, `no downspout vertex near path node ${wp.map(v => v.toFixed(3))} (min dist ${dMin.toFixed(4)} m)`);
+      const wallBot = s.path.at(-2), out = s.outlet.at;
+      const dx = out[0] - wallBot[0], dz = out[2] - wallBot[2];
+      const reachFt = Math.hypot(dx, dz) / FT;
+      // 1) Mouth reaches 0.5 ft out along outlet.dir, with no straight extension.
+      near(reachFt, G.GUTTER.elbowFt, 0.01);
+      const dotDir = (dx * s.outlet.dir[0] + dz * s.outlet.dir[2]) / Math.hypot(dx, dz);
+      assert.ok(dotDir > 0.999, `elbow outlet aligns with outlet.dir: dot=${dotDir}`);
+      // 2) Mouth centre is ~4 in above surface; rendered mouth bottom lip is 3-4 in above surface.
+      near(out[1] / FT, 4 / 12, 0.02);
+      // Extract the lower-elbow triangles around this spout (y < 1.2 ft, within 0.6 m XZ of wallBot).
+      const elbowTris = tris.filter(tri =>
+        tri.every(pt => pt[1] < 1.2 * FT && Math.hypot(pt[0] - wallBot[0], pt[2] - wallBot[2]) < 0.6)
+      );
+      assert.ok(elbowTris.length >= 32, `curved elbow needs >= 4 segments (>= 32 tris), got ${elbowTris.length}`);
+      const elbowPts = elbowTris.flat();
+      // No straight extension: max outward reach of any elbow vertex is ~0.55 ft (< 0.75 ft, never 3 ft).
+      const outDistsFt = elbowPts.map(pt => ((pt[0] - wallBot[0]) * s.outlet.dir[0] + (pt[2] - wallBot[2]) * s.outlet.dir[2]) / FT);
+      const maxOutFt = Math.max(...outDistsFt);
+      assert.ok(maxOutFt >= 0.45 && maxOutFt <= 0.65, `mouth reaches ~0.5 ft with no straight extension (maxOut=${maxOutFt.toFixed(3)} ft)`);
+      // Bottom of the mouth is 3-4 in above the receiving surface (0 ft).
+      const mouthPts = elbowPts.filter(pt => {
+        const d = ((pt[0] - wallBot[0]) * s.outlet.dir[0] + (pt[2] - wallBot[2]) * s.outlet.dir[2]) / FT;
+        return d > maxOutFt - 0.08;
+      });
+      assert.ok(mouthPts.length >= 4, 'rendered mouth ring vertices present');
+      const mouthBottomIn = (Math.min(...mouthPts.map(pt => pt[1])) / FT) * 12;
+      const mouthCenterIn = ((Math.min(...mouthPts.map(pt => pt[1])) + Math.max(...mouthPts.map(pt => pt[1]))) / 2 / FT) * 12;
+      assert.ok(mouthBottomIn >= 2.8 && mouthBottomIn <= 4.1, `mouth bottom must be 3-4 in above surface (got ${mouthBottomIn.toFixed(2)} in)`);
+      assert.ok(mouthCenterIn >= 3.0 && mouthCenterIn <= 4.3, `mouth centre must be ~4 in above surface (got ${mouthCenterIn.toFixed(2)} in)`);
+
+      // 3) Measure actual curved elbow segments directly from outer-bend face normals in the (outDir, y) plane:
+      //    each segment of the bend has a distinct outward normal rotating from horizontal (+outDir, 0) to tilted (+outDir, +y).
+      const alongX = -s.outlet.dir[2], alongZ = s.outlet.dir[0];
+      const bendAngles = [];
+      for (const tri of elbowTris) {
+        const a = new THREE.Vector3(...tri[0]), bPt = new THREE.Vector3(...tri[1]), c = new THREE.Vector3(...tri[2]);
+        const n = bPt.clone().sub(a).cross(c.clone().sub(a));
+        if (n.length() < 1e-9) continue;
+        n.normalize();
+        // Keep only the convex outer-bend wall faces (normal strictly in the (outDir, y) plane, facing outward & upward).
+        const nAlong = Math.abs(n.x * alongX + n.z * alongZ);
+        const nOut = n.x * s.outlet.dir[0] + n.z * s.outlet.dir[2];
+        if (nAlong > 0.05 || nOut < 0.05 || n.y < -0.05) continue;
+        const deg = (Math.atan2(Math.max(0, n.y), nOut) * 180) / Math.PI;
+        if (!bendAngles.some(prev => Math.abs(prev - deg) < 1.0)) bendAngles.push(deg);
       }
-      // Check kick-out last segment runs along outlet.dir out to outlet.at.
-      const prev = s.path.at(-2), out = s.outlet.at;
-      const segVec = [out[0] - prev[0], 0, out[2] - prev[2]];
-      const segLen = Math.hypot(...segVec);
-      assert.ok(segLen > 0.5, 'kick-out segment should have length');
-      const dotDir = (segVec[0] * s.outlet.dir[0] + segVec[2] * s.outlet.dir[2]) / segLen;
-      assert.ok(dotDir > 0.99, `kick-out segment does not align with outlet.dir: dot=${dotDir}`);
+      bendAngles.sort((a, b) => a - b);
+      // Expect vertical drop (0 deg) + >= 4 curved arc segments + mouth (75 deg) -> >= 5 distinct angles.
+      assert.ok(bendAngles.length >= 5, `curved elbow must have >= 4 bend segments (>= 5 face orientations), got ${JSON.stringify(bendAngles.map(a => +a.toFixed(1)))}`);
+      assert.ok(bendAngles.at(-1) >= 60 && bendAngles.at(-1) <= 80, `mouth exit angle should be 60-80 deg from vertical, got ${bendAngles.at(-1).toFixed(1)} deg`);
+      for (let i = 0; i + 1 < bendAngles.length; i++) {
+        const step = bendAngles[i + 1] - bendAngles[i];
+        assert.ok(step < 30, `elbow bend step ${i} must be < 30 deg, got ${step.toFixed(1)} deg`);
+      }
 
       // Verify 2x3 in cross-section on vertical drop (slice triangles at mid-wall height) with 3 in side along wall.
-      const wallBot = s.path.at(-2);
       const midY = (s.top[1] + wallBot[1]) / 2;
       const slicePts = [];
       for (const tri of tris) {
@@ -236,12 +277,41 @@ await test('test_downspout_path_and_kickout', async () => {
         }
       }
       assert.ok(slicePts.length >= 4, 'vertical wall drop cross-section present at mid-wall');
-      // For y0/y1 eaves, wall runs along X (3 in = 0.0762 m) and outward is +/-Z (2 in = 0.0508 m).
       const spanX = Math.max(...slicePts.map(pt => pt[0])) - Math.min(...slicePts.map(pt => pt[0]));
       const spanZ = Math.max(...slicePts.map(pt => pt[2])) - Math.min(...slicePts.map(pt => pt[2]));
       near(spanX, 3 / 12 * FT, 0.008);
       near(spanZ, 2 / 12 * FT, 0.008);
     }
+  } finally { disposeTwin(twin); }
+});
+
+await test('test_elbow_swivels_toward_grass_beside_walkway', async () => {
+  _gutterPlacementStats.clearCache();
+  const p = house(30, 'gable', rect(0, 0, 30, 20), 1);
+  // Pin y0 spout to corner x=0 with a narrow walkway directly in front of the straight mouth; grass lies just to the side.
+  p.buildings[0].roofs[0].edges[0].downspouts = [0];
+  p.buildings[0].roof.sections[0].downspouts = { y0: [0] };
+  p.site = { hardscape: [{ id: 'walk', kind: 'walkway', polygon: rect(-0.25, -7, 0.25, 0) }] };
+  const twin = buildTwin(p, input.kit, 'high'); await twin.ready;
+  try {
+    const s = twin.gutters.spouts.find(v => v.edge.edge === 0);
+    assert.ok(s && s.mount === 'wall', 'y0 wall spout exists');
+    assert.equal(s.outlet.lands, 'grass', 'swiveled elbow reaches grass beside walkway');
+    assert.ok(Math.abs(s.outlet.dir[0]) > 0.5, `elbow must swivel sideways off walkway (dir=${JSON.stringify(s.outlet.dir)})`);
+    assert.ok(s.outlet.dir[2] >= -1e-4, 'swivel angle stays within 90 deg of outward normal');
+    const wb = s.path.at(-2), out = s.outlet.at;
+    near(Math.hypot(out[0] - wb[0], out[2] - wb[2]) / FT, G.GUTTER.elbowFt, 0.01);
+
+    // Drawn elbow mouth and water pour both match the swiveled outlet position and direction.
+    const res = E.eaveInstances(p, twin.roofSurfaces, input.kit, twin.gutters);
+    const pour = res.pours.find(pr => pr.spout.id === s.id);
+    assert.ok(pour && pour.lands === 'grass', 'pour lands on grass from swiveled elbow');
+    assert.ok(Math.abs(pour.pourDir[0] - s.outlet.dir[0]) < 1e-4 && Math.abs(pour.pourDir[2] - s.outlet.dir[2]) < 1e-4);
+    const { tris } = gutterTriangles(twin.root);
+    const minDist = Math.min(...tris.flat().map(pt =>
+      Math.hypot(pt[0] - pour.top[0], pt[1] - pour.top[1], pt[2] - pour.top[2])
+    ));
+    assert.ok(minDist < 0.06, `drawn swiveled elbow mouth matches pour top (dist=${minDist.toFixed(4)} m)`);
   } finally { disposeTwin(twin); }
 });
 
@@ -357,11 +427,11 @@ await test('test_pours_follow_runoff_and_share', async () => {
   assert.equal(pours1.length, 2);
   assert.equal(pours2.length, 4);
 
-  // Kick-out pour shape: falls ~0.4 ft, lands ~0.3 ft forward along outlet.dir.
+  // Curved elbow pour shape: falls ~4 in (0.33 ft), throws ~0.16-0.25 ft forward along outlet.dir.
   for (const pr of pours1) {
     near(pr.share, 1.0, 1e-4);
-    near(pr.top[1] - pr.bottom, 0.4 * FT, 0.05);
-    near(pr.pourForward, 0.3 * FT, 0.03);
+    near(pr.top[1] - pr.bottom, (4 / 12) * FT, 0.03);
+    assert.ok(pr.pourForward >= 0.14 * FT && pr.pourForward <= 0.30 * FT, `pourForward=${(pr.pourForward / FT).toFixed(3)} ft`);
     assert.ok(Math.abs(Math.hypot(...pr.pourDir) - 1) < 1e-4);
   }
   // Share scaling: share=1.0 pour has strictly larger width and share magnitude than share=0.5 pour.
@@ -588,8 +658,8 @@ await test('test_downspout_sweeps_path_directly_without_inside_stub', async () =
     toW(x0, yTrough, gutterBotY),
     toW(x0, yTrough, Math.min(gutterBotY, soffitY) - G.GUTTER.soffitClearIn / 12),
     toW(x0, yWall, Math.min(gutterBotY, soffitY) - G.GUTTER.soffitClearIn / 12 - (yWall - yTrough)),
-    toW(x0, yWall, 0.4),
-    toW(x0, yWall - 3, 0.4),
+    toW(x0, yWall, 0.5),
+    toW(x0, yWall - 0.5, 4 / 12),
   ];
   const spouts = [{
     id: 'b:r:0:0', run: 'b:r:0', edge: { roof: 'r', edge: 0, porch: null, fraction: 0.05 },
