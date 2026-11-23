@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.990 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.991 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.991 (2026-11-23, NOT device-verified): eave streams stay with a yard room focused, and wait for the roof to wet through.** Two owner reports on v.990.
+
+(1) "The streams just disappear when you click a yard room." A focused yard room reports `level: 'room'` with no building, the same level as an indoor room cutaway. The stream, rain and seasonal-touch gates only looked at the level. A yard room is outdoors, with every roof in view, and `levels.js` never cuts the house for it. `twin_view.js` now derives one `weatherLevel`, which maps a focused yard room to `house`, and uses it for precipitation, eave streams and season touches.
+
+(2) "The streams show up too early... while the roof is just getting droplets and small rivulets." Streams followed the rain rate alone, while the roof's look waits on wetness. New `eaveRunoff({flow, wet})` in `sky/roof_water.js` returns `flow * smoothstep(0.25, 0.75, wet)`, the same wetness ramp as the roof film. Beads pour nothing, rivulets trickle, and a full film pours fully. `twin_view.js` feeds it to the streams. The drying ladder still drains them after the rain.
+
+Tests: `test_twin_roof_water_js.py` 9/9 (new runoff staging case); `test_twin_eave_streams_js.py` 9/9 + 1/1 (new: streams visible with a yard room focused); weather live, seasons live and controls live all pass.
 
 **v2.499.990 (2026-11-23, owner approved on Chromium clips of the owner's house, NOT device-verified): eave streams redone. They come and go, are clear water with ripples moving at falling speed, break into drops lower down, pour as a curtain off straight edges in heavy flow, and stay visible from the normal overview.**
 
