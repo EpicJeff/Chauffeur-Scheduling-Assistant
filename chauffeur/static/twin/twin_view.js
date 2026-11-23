@@ -33,6 +33,7 @@ import { installPlantWind } from './sky/wind.js';
 import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
+import { createRoofWater } from './sky/roof_water.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
 import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
@@ -130,6 +131,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const cloudShadow = installCloudShadow(scene, clouds);
   const plantWind = installPlantWind(scene,{tier});
   const weatherSurface = installWeatherSurface(scene);
+  const roofWater = createRoofWater();
   const seasons = installSeasons(scene);
   const precipitation = createPrecipitation(scene,{tier});
   post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
@@ -547,7 +549,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       sunDirection: sun.position.clone().sub(sun.target.position).normalize(),
     });
     yardGroup?.userData.grass?.update(performance.now() / 1000,view.weather,site.front_bearing_deg ?? 180,camera);
-    weatherSurface.update(view.weather,performance.now()/1000);
+    const weatherNow = performance.now() / 1000;
+    const roofState = roofWater.update(view.weather, weatherNow);
+    weatherSurface.update(view.weather, weatherNow, roofState);
     if(precipitationPlan!==plan || precipitationRoofs!==twin?.roofSurfaces || precipitationCover!==twin?.skyCover){
       seasonTouches.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);
       precipitation.setPlan(plan,twin?.roofSurfaces,twin?.skyCover);precipitationPlan=plan;precipitationRoofs=twin?.roofSurfaces;precipitationCover=twin?.skyCover;
@@ -630,7 +634,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   const observer = new ResizeObserver(resize); observer.observe(el);
   const view = {
-    ready: false, scene, post, clouds, cloudShadow, weatherSurface, precipitation, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
+    ready: false, scene, post, clouds, cloudShadow, weatherSurface, roofWater, precipitation, seasonTouches, emitterGain: post ? EMITTER_GAIN : 1, renderer: rendererName(renderer3.getContext()), renderer3, camera, controls, state, tier,
     groups: null, roomLights: [], plan, round,
     weather:neutralWeather(), season:seasonState(clockNow(),resolveSite(site,clockNow()).lat,{}, {neutral:editor}), seasons,
     refreshWeather:()=>weatherPoll?.refresh(),

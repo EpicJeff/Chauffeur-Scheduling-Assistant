@@ -438,7 +438,7 @@ await test('built house and household: every lit kind, grass, baked lamps, water
    if(m.name==='roof'||m.userData.materialRole==='roof'){
     // A 4:12 roof has normal.y=.949 and passes .9; slope alone cannot exclude it.
     assert.ok(!f.includes('weatherPuddle(weatherUp'),row.label+' roof never collects puddles');
-    assert.ok(f.includes('weatherRoofRivulets(')&&f.includes('weatherRoofSheetWaves('),row.label+' roof rivulets and sheet waves');
+    assert.ok(f.includes('weatherRoofRivulets(')&&f.includes('weatherRoofFilm('),row.label+' roof rivulets and moving water film');
    }
    if(row.label==='grass'){
     assert.ok(f.indexOf('roughnessFactor = mix(.96, .53, vGrass.x)')<f.indexOf('roughnessFactor=weatherRoughness'),'weather follows grass roughness override');
