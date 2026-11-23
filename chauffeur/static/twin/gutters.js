@@ -35,6 +35,9 @@
 // Stacked eaves at different heights stay distinct. Authored overrides precede
 // automatic claims. Colliding overrides keep one spout, flagged 'merged-override',
 // with merged: [{run, fraction}] recording each dropped run and authored fraction.
+// Override records also carry authoredFraction: the stored request before it
+// snaps to edge.fraction. Editors use it to move/remove the winning request
+// without deleting another override that snaps to the same corner.
 // Corners use the union of footprints below the eave and above the receiving
 // roof (when a drop ends on one), sampled at local (+/-0.3, +/-0.3) ft:
 // one occupied quadrant is outside, three inner. Filled inner vertices vanish.
@@ -628,6 +631,7 @@ export function downspouts(plan={},runs=[]){
     selected.forEach((c,k)=>{const {value,segment}=c;
       output.push({id:`${run.id}:${k}`,run:run.id,edge:{roof:segment.roof,edge:segment.edge,porch:segment.porch,fraction:edgeFraction(ctx,segment,c.at)},
         top:value.top,mount:value.mount,path:value.path,outlet:value.outlet,share:1/selected.length,source:c.source,
+        ...(c.source==='override'?{authoredFraction:c.overrideFraction}:{}),
         flags:[...value.flags,...(c.merged?.length?['merged-override']:[])],
         ...(c.merged?.length?{merged:c.merged.sort((a,b)=>compare(a.run,b.run)||a.fraction-b.fraction)}:{})});});
   }

@@ -42,6 +42,8 @@ export function sceneRows(plan) {
     for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[b.porches,'porch']])
       // A porch is also a room of the same id (its floor, walls and openings hang there); list it once.
       for (const p of collection || []) if (!(kind === 'porch' && rooms.has(p.id))) add(p, kind, levels.get(p.level) || building, b.id);
+    for (const p of (b.roof?.extensions || []).filter(p => p.kind === 'awning'))
+      add(p, 'awning', levels.get(p.level) || building, b.id);
     for (const p of fixtures.filter(p => p.building === b.id)) {
       assignedFixtures.add(p.id); add(p, p.sceneKind, parentFor(p), b.id, label(p, p.sceneKind === 'effect_fixture' ? 'effect' : 'light'), { piece: p });
     }

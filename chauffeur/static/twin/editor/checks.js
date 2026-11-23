@@ -1,5 +1,6 @@
 import { createFlags } from './flags.js';
 import { report } from './api.js';
+import { gutterCheckItems } from './gutter_controls.js';
 
 const key = item => !item ? '' : item.kind === 'pause' ? `pause:${item.build}:${item.id || item.step}`
   : item.kind === 'flag' ? `flag:${item.building}:${item.index}:${item.flag.text}` : `proposal:${item.building}:${item.id}`;
@@ -26,7 +27,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   // The queue opens from Check it (or when a build pauses), never by itself on load: opening it
   // moves the camera and the floor, which must not happen before the person asks.
   let rows = [], selected = null, signature = '', busy = false, dismissed = true, framing = false, emptyOpen = false, frame;
-  let seenModel, seenBuild, waiting = false;
+  let seenModel, seenBuild, seenPlan, waiting = false;
   const sceneHost = view.renderer3?.domElement?.parentElement;
   const isHidden = () => dismissed || !selected && !emptyOpen || !canEdit();
   // While a flag or proposal check is open its card takes the piece card's slot, so the piece card
@@ -40,6 +41,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
         stepInfo: build.steps?.find(s => s.id === build.pause.step) }] : []),
       ...buildings.flatMap(b => (b.flags || []).map((flag, index) => ({ kind: 'flag', building: b.id, index, flag }))),
       ...buildings.flatMap(b => (b.proposals || []).map(p => ({ ...p, kind: 'proposal', building: b.id, id: p.id || p.piece.id }))),
+      ...gutterCheckItems(getPlan()),
     ];
   };
   function button(text, action, always = false) {
@@ -63,6 +65,11 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     framing = true;
     try {
       if (selected.kind === 'pause') { review.dismiss(); pauses?.show(); }
+      else if (selected.kind === 'gutter') {
+        pauses?.dismiss(); review.dismiss();
+        tools.select({ id: selected.roof || selected.porch, building: selected.building });
+        tools.focusDownspout?.(selected);
+      }
       else { pauses?.dismiss(); review.review(selected); }
     } finally { framing = false; }
   }
@@ -88,10 +95,18 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     } else {
       const text = document.createElement('p');
       text.textContent = item.kind === 'pause' ? item.why || 'Check this part of your house.'
-        : item.kind === 'flag' ? item.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
+        : item.kind === 'gutter' ? item.reason : item.kind === 'flag' ? item.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
       card.append(title, close, text);
     }
-    if (item.kind === 'proposal') {
+    if (item.kind === 'gutter') {
+      // Use the Check card's existing button builder, with one plain reason per
+      // run/downspout issue. Geometry-derived issues disappear when corrected.
+      for (const entry of rows.filter(r => r.kind === 'gutter')) {
+        const row = button(`${entry.run}: ${entry.reason}`, () => { selected = entry; focus(); draw(); });
+        row.dataset.gutterCheck = entry.id; row.setAttribute('aria-pressed', String(key(entry) === key(item))); card.append(row);
+      }
+      card.append(button('Fix it', () => { focus(); dismiss(); }));
+    } else if (item.kind === 'proposal') {
       card.append(button('Use this', () => save(() => op({ op: 'accept_proposal', building: item.building, id: item.id }))),
         button('Dismiss', () => save(() => op({ op: 'dismiss_proposal', building: item.building, id: item.id }))));
     } else {
@@ -181,8 +196,8 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   // Each frame only notices a new model or build (the editor replaces them, never edits them in
   // place) or a change in whether the card may show; the queue is rebuilt only then.
   function tick() {
-    const model = getModel(), build = getBuild();
-    if (model !== seenModel || build !== seenBuild) { seenModel = model; seenBuild = build; sync(); }
+    const model = getModel(), build = getBuild(), plan = getPlan();
+    if (model !== seenModel || build !== seenBuild || plan !== seenPlan) { seenModel = model; seenBuild = build; seenPlan = plan; sync(); }
     else if (card.hidden !== isHidden()) draw();
     frame = requestAnimationFrame(tick);
   }

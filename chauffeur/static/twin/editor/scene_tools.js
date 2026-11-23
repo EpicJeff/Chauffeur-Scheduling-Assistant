@@ -535,9 +535,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       selectionStore.clear();
     });
   }
-  listen(canvas, 'contextmenu', event => {
+  listen(canvas, 'contextmenu', async event => {
     event.preventDefault();
     if (ownsGesture) return;
+    try { if (await handles.removeAt(event)) return; } catch (error) { report(error); return; }
     contextPicking = true;
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
     let materialSurface = null;
@@ -1106,6 +1107,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (button.dataset.editorCamera === 'top' && floor()) view.setTopCamera(floor().key);
     else view.setCamera(button.dataset.editorCamera);
   }));
+  function focusDownspout(item) {
+    if (view.ready === false) {
+      canvas.parentElement.addEventListener('twinrebuilt', () => {
+        if (selection?.pieceId === (item.roof || item.porch)) focusDownspout(item);
+      }, { once: true, signal });
+      return;
+    }
+    view.setView('ext'); view.showLevels(null); drawFloors();
+    if (item.roof && Number.isInteger(item.edge)) cards.showRoofEdge({ id: item.roof, building: item.building, edge: item.edge });
+    if (!item.top || !view.camera || !view.controls) return;
+    // Keep the viewing direction while framing the outlet closely enough to
+    // see its handle and mounting; top is already in world metres.
+    const target = view.controls.target.clone().set(...item.top), direction = view.camera.position.clone().sub(view.controls.target);
+    direction.setLength(Math.min(14, Math.max(5, direction.length())));
+    view.setCameraState({ position: target.clone().add(direction).toArray(), target: target.toArray() });
+  }
   return {
     clipboard,
     visibility,
@@ -1118,6 +1135,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     applyBatch,
     drawMaterialsList(host, options) { return drawMaterialsList(host, { getPlan, getKit, selectionStore, applyBatch, canEdit, library, queue: cards.queue, loadNames: cards.loadNames, report, view, visibility, ...options }); },
     select, pick, selected: () => selection, selection: roomSelection.current,
+    focusDownspout,
     selectionStore, selectedMembers: () => selectionStore.members(),
     dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     gizmo, handles: () => [...handles.handles(), ...gizmo.handles()],

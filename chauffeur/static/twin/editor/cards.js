@@ -18,6 +18,7 @@ import { siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
 import { drawMoveToButton } from './move_to_action.js';
+import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout } from './gutter_controls.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -50,7 +51,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   }
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
-  let edgeIndex = null, cardMembers = [], setCard = null, setCache = null;
+  let edgeIndex = null, edgePlan = null, cardMembers = [], setCard = null, setCache = null;
   let haSection = null;
   const slots = [];
   const ownSlot = row => slots.push(row);
@@ -146,7 +147,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
-    const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null]);
+    const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
+      roof?.edges, record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -219,6 +221,15 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         const note = document.createElement('p'); note.textContent = flag.text; host.append(note);
       }
       if (roof && op) {
+        const allGutters = enabled => queue(async () => {
+          if (!canEdit()) return;
+          const b = getPlan().buildings.find(b => b.id === building.id), r = b?.roofs.find(r => r.id === roof.id);
+          if (!r) return;
+          const edges = enabled ? eaveEdges(b, r) : r.edges.flatMap((e, i) => e.gutter ? [i] : []);
+          if (edges.length) await op({ op: 'batch', ops: edges.map(i => edgeOperation(b.id, r.id, i, { gutter: enabled })) });
+          layout = null; draw();
+        });
+        host.append(button('Gutters on all eaves', () => allGutters(true)), button('Remove all gutters', () => allGutters(false)));
         roof.edges.forEach((edge, index) => host.append(button(`Edge ${index + 1}: ${edge.setting === 'clip' ? 'Clipped' : edge.setting === 'gable' ? 'Gable' : 'Sloped'}`, () => {
           edgeIndex = index; layout = null; draw();
         })));
@@ -252,6 +263,14 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
+    if (kind === 'porch' || kind === 'awning' || kind === 'room' && piece.kind === 'porch') {
+      const detail = kind === 'room' ? building.porches?.find(p => p.id === piece.id) || piece : piece;
+      gutterToggle(!!detail.gutter, value => queue(async () => {
+        if (!canEdit()) return;
+        await op({ op: 'set', building: building.id, id: piece.id, field: 'gutter', value });
+        layout = null; draw();
+      }));
+    }
     if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { library, ownSlot, canEdit, queue, op, report,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id), devices: haLink?.state()?.devices || [] });
     if (siteShapeKinds.includes(kind) || record.poolId) {
@@ -405,27 +424,63 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   function drawEdge(next, record, roof) {
     const edge = roof.edges[edgeIndex];
     if (!edge) { edgeIndex = null; layout = null; draw(next); return; }
-    const signature = `edge:${edgeIndex}:${JSON.stringify(edge)}:${canEdit()}`;
+    const signature = `edge:${edgeIndex}:${JSON.stringify([roof.edges, roof.area, record.building.roof?.sections])}:${canEdit()}`;
     selection = next; host.hidden = false;
     dock?.properties.render(host, { crumbs: [...propertyPath(record, getSelection(), select).crumbs, `Edge ${edgeIndex + 1}`], reveal: layout !== signature,
       back: () => { edgeIndex = null; layout = null; draw(); } });
-    if (layout === signature) return;
-    layout = signature; disposeSlots(); host.replaceChildren(); inputs = new Map();
+    if (layout === signature && edgePlan === getPlan()) return;
+    edgePlan = getPlan(); layout = signature; disposeSlots(); host.replaceChildren(); inputs = new Map();
     const heading = document.createElement('h3'); heading.textContent = `Roof edge ${edgeIndex + 1}`;
     host.append(heading, button('Back to roof', () => { edgeIndex = null; layout = null; draw(); }));
     const index = edgeIndex, building = record.building.id;
     const save = change => {
       if (!canEdit()) return;
-      pending = pending.then(() => {
+      pending = pending.then(async () => {
+        if (!canEdit()) return;
         const current = getPlan().buildings.find(b => b.id === building)?.roofs.find(r => r.id === roof.id);
-        return op({ op: 'set_roof_edge', building, roof: roof.id, edge: index,
-          setting: current?.edges[index].setting || roof.edges[index].setting, ...change });
-      }).catch(report).finally(() => draw());
+        const operation = fields => edgeOperation(building, roof.id, index, fields);
+        if (current?.edges[index].gutter && ['gable', 'clip'].includes(change.setting)) {
+          if (!await window.promptConfirm('Remove this gutter?', "Changing this edge removes its gutter and its downspout overrides.", 'Remove and change', 'Cancel')) return;
+          if (!canEdit()) return;
+          return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: [] }), operation(change)] });
+        }
+        // Pitch-only writes still include the current setting for the op contract.
+        return op(operation('pitch' in change ? { setting: current?.edges[index].setting || edge.setting, ...change } : change));
+      }).catch(report).finally(() => { layout = null; draw(); });
       return pending;
     };
     for (const [setting, label] of [['sloped', 'Sloped'], ['gable', 'Gable'], ['clip', 'Clipped']]) {
       const choice = button(label, () => save({ setting }));
       choice.setAttribute('aria-pressed', String(edge.setting === setting)); host.append(choice);
+    }
+    if (eaveEdges(record.building, roof).includes(index)) gutterToggle(!!edge.gutter, gutter => save({ gutter }));
+    if (edge.gutter) {
+      const runs = gutterSnapshot(getPlan()).runs.filter(r => r.building === building && r.segments.some(s => s.roof === roof.id && s.edge === index));
+      for (const run of runs) {
+        const note = document.createElement('p'); note.textContent = `Gutter run ${run.id}`; host.append(note);
+      }
+      const values = downspoutValues(getPlan(), building, roof.id, index);
+      const add = button('Add downspout', () => {
+        const next = addDownspout(downspoutValues(getPlan(), building, roof.id, index));
+        if (next) return save({ downspouts: next });
+      });
+      add.disabled = !canEdit() || values.length >= 8;
+      host.append(add, button('Reset to automatic', () => save({ downspouts: null })));
+      // Numeric hand path also exposes overrides that placement has merged.
+      values.forEach((fraction, i) => {
+        const label = document.createElement('label'); label.textContent = `Downspout ${i + 1} fraction`;
+        const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '1'; input.step = 'any';
+        input.value = fraction; input.disabled = !canEdit(); input.setAttribute('aria-label', label.textContent);
+        input.addEventListener('change', () => {
+          const value = Number(input.value);
+          if (!input.value.trim() || !Number.isFinite(value) || value < 0 || value > 1) { report(new Error('Choose a fraction from 0 to 1.')); return; }
+          const next = downspoutValues(getPlan(), building, roof.id, index); next[i] = value;
+          save({ downspouts: next });
+        });
+        label.append(input); host.append(label, button(`Remove downspout ${i + 1}`, () => {
+          const next = downspoutValues(getPlan(), building, roof.id, index); next.splice(i, 1); return save({ downspouts: next });
+        }));
+      });
     }
     const label = document.createElement('label'); label.textContent = 'Pitch';
     const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '24'; input.step = 'any';
@@ -447,6 +502,13 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const node = document.createElement('button'); node.type = 'button'; node.textContent = text;
     node.disabled = !canEdit();
     node.addEventListener('click', () => Promise.resolve().then(action).catch(report)); return node;
+  }
+  function gutterToggle(value, save) {
+    const label = document.createElement('label'); label.textContent = 'Gutter';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = value;
+    input.disabled = !canEdit(); input.setAttribute('aria-label', 'Gutter');
+    input.addEventListener('change', () => { if (canEdit()) Promise.resolve(save(input.checked)).catch(report); });
+    label.append(input); host.append(label);
   }
   function kindIsEquipment(record) { return record.kind === 'anchor' && ['charger', 'parking'].includes(record.piece.kind); }
   // A change from outside the fields (the area pick, Use, a device placement)
