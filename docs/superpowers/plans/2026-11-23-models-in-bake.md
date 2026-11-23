@@ -175,6 +175,8 @@
 - Consumes: everything from Task 4; `sample.emitter` and `sample.visibilityWeight ?? sample.weight` (fixture_terms.js:40-69; legacy lamps use emitter 0); `entries[device].grid` from Task 1; the Task 3 routes.
 - Produces:
   - On the first page of each stale light, the baker builds the layout once per bake (cached on the layout hash). It then creates an accumulator for `pointsInRange` and calls `sample` from `onSample`. It writes 255 into every value of masked points.
+  - `encodeGridChunk`/`decodeGridChunk` are async (ruling after Task 4): `await` them. The uploaded chunk is gzip-wrapped MVG1, at most 8 MiB on the wire.
+  - Build the inside-mask BVH from `collectStaticOccluders` WITHOUT a `bounds` crop (ray parity needs whole solids), and record `insideMask` time in `state().grid.ms` alongside the accumulation time.
   - It POSTs the chunk to `${path}/grid/${entry.grid}.bin` before the manifest PUT, and only when no chunk with that name is already listed in the manifest.
   - The manifest entry gains `grid` and `gridLayout`.
   - Lamps excluded from the grid: palette line lamps (`paletteLineEntities`, real_lights.js:10-13). Their entries carry no `grid`.
@@ -202,6 +204,7 @@
 - Consumes: the layout and decoded chunks (Task 4); emitter records from `bakeLights` (runtime.js:118-137), with fields from `resolveEmitters` (live/emitters.js:235-267): `shape`, `position`, `range` (ft), `aim`, `cone_deg`, `softness`, `size_ft`, `rotation_deg`, `width_in`, `output_lm`, `output_fraction`. Legacy markers become one point emitter at `at` with `range`.
 - Produces:
   - `emitterTable(lights, freshIds) -> [{id:'<device>#<i>', device, index, shape:0 point|1 spot|2 rect|3 line, position, range, axis, cosOuter, cosInner, halfSize:[w,h], rotation:Quaternion, outputScale}]`. Only fresh lights with a `grid`; palette lines are never included.
+  - Decoded chunks come from the async `decodeGridChunk` (await it). Block cell coordinates: `block.toLocal` maps world metres to cell space with centres at i+0.5. For yard blocks the z it returns is worldY/spacing, so subtract the bilinearly interpolated `ground[iy*nx+ix]/spacing` to get the height cell.
   - `sampleGrid(grid, p:Vector3, emitterId) -> number|null`: trilinear over the block containing `p`, skipping 255 with renormalised weights; `null` when all 8 are invalid or there is no block.
   - `chooseEmitters(centre, table, grid, max=8) -> {ids, folded, dropped}`. Ranked by `outputScale * falloff * visibility` at the centre. Over 8: the weaker emitters of one device fold into that device's strongest (their outputScale is summed into it), then the excess is dropped.
   - `buildBrick(grid, box:Box3, ids) -> Uint8Array(5*5*5*8)`, laid out as two RGBA texels per point; null samples are filled from the nearest valid brick point, else 0.
@@ -255,7 +258,7 @@
 - Consumes: Tasks 1 and 4-7; `snapRanges` on merged model meshes (`bakeExcluded`); `userData.modelLod` LOD copies.
 - Produces:
   - `mountModelLighting(view, {manifest, layout, fresh, tints, api}) -> {update(fresh), setTint(device, linearColor), rebuild(), stop()}`.
-  - It GETs the chunks of fresh lights whose `entry.gridLayout === layout.hash`, decodes them, and builds the emitter table.
+  - It GETs the chunks of fresh lights whose `entry.gridLayout === layout.hash`, decodes them (async `decodeGridChunk`, awaited), and builds the emitter table.
   - For each placed copy (merged snap range or LOD copy) it computes world bounds, chooses emitters, writes a brick, and writes `mvBrick = brickIndex + 1` over the copy's vertex range. Merged meshes get a post-merge `mvBrick` attribute; LOD copies get a shallow per-copy geometry (Ruling 2). It then patches the copy's materials.
   - Each brick's fill is `fillFor(manifest, atlasRoom, tints)`, where `atlasRoom` comes from the room block containing the copy's bounds centre. Yard copies and copies outside any room block get no fill. Fills are rewritten on every `setTint`.
   - `rebuild()` runs on `twinrebuilt` / `twinyardrebuilt`. `stop()` disposes the textures and restores nothing else (materials keep the patch with brick 0).
