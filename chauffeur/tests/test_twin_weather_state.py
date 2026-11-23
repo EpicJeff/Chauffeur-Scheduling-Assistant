@@ -25,6 +25,35 @@ def sample(condition='sunny', temperature=0, **extra):
 
 
 class ModelTests(unittest.TestCase):
+    def test_rain_stop_clock_legacy_validation_and_shared_drying_time(self):
+        rain = dict(sample('rainy'), rate=1)
+        record = weather.advance(None, rain, 10000)
+        self.assertEqual(weather.rain_stopped_seconds(record, 10000), 0)
+        record = weather.advance(record, rain, 10600)
+        record = weather.advance(record, sample(), 10607)
+        self.assertEqual(record['last_rain'], 10600, 'puddle timestamp is unchanged')
+        self.assertEqual(record['rain_stopped_at'], 10607, 'first dry observation, not last wet tick')
+        record = weather.advance(record, sample(), 11200)
+        self.assertEqual(weather.rain_stopped_seconds(record, 11200), 593)
+        self.assertIsNone(weather.rain_stopped_seconds(record, 10607 + 7 * 3600))
+        restarted = weather.advance(record, rain, 11205)
+        self.assertEqual(weather.rain_stopped_seconds(restarted, 11205), 0)
+        self.assertIsNone(restarted['rain_stopped_at'])
+        legacy = {'snow_cm': 0, 'wetness': 1, 'last_rain': 10000, 'updated': 10000}
+        self.assertTrue(weather.valid_record(legacy, 10000))
+        self.assertIsNone(weather.rain_stopped_seconds(weather.advance(legacy, sample(), 10000), 10000))
+        for field, value in [('raining', 1), ('raining', 'yes'), ('rain_stopped_at', True),
+                             ('rain_stopped_at', float('nan')), ('rain_stopped_at', 10001)]:
+            self.assertFalse(weather.valid_record(dict(legacy, **{field: value}), 10000))
+        for temp in (None, -10, 0, 10, 20, 40):
+            for sun in (-1, 1):
+                for humidity in (50, 90, 91):
+                    forcing = dict(sample(temperature=temp), sun_altitude=sun, humidity=humidity)
+                    tau = (180 - 6 * max(0, min(20, temp or 0))) / (2 if sun > 0 else 1) * (2 if humidity > 90 else 1)
+                    self.assertEqual(weather.drying_minutes(forcing), tau)
+                    dried = weather.advance(legacy, forcing, 10600)
+                    self.assertAlmostEqual(dried['wetness'], math.exp(-10 / tau))
+
     def test_rain_builds_and_puddles_follow_duration_not_instant_wetness(self):
         for condition, rate, factor in [('pouring', 1, 1), ('rainy', .45, 1), ('snowy-rainy', .5, .5)]:
             forcing = dict(sample(condition), rate=rate)
@@ -239,6 +268,24 @@ class DeliveryTests(unittest.TestCase):
     def entity(self, condition='snowy', **attrs):
         return {'entity_id': 'weather.home', 'state': condition, 'attributes': attrs,
                 'last_updated': '2020-01-01T00:00:00Z'}
+
+    def test_real_route_delivers_stop_and_drying_fields_across_events_and_reload(self):
+        self.rows = [self.entity('pouring', temperature=10, humidity=95)]
+        with patch.object(weather.time, 'time', return_value=10000):
+            body = self.client.get('/api/house/twin/weather-state', headers=self.panel).json()
+        self.assertEqual(body['rain_stopped_s'], 0)
+        self.assertEqual(body['drying_min'], weather.drying_minutes(body['source']['values']))
+        self.rows = [self.entity('sunny', temperature=20)]
+        body = weather.update(now=10607)
+        self.assertEqual(body['rain_stopped_s'], 0)
+        self.assertEqual(storage.get_app_state(weather.KEY)['rain_stopped_at'], 10607)
+        importlib.reload(weather)
+        self.assertEqual(weather.update(now=10700)['rain_stopped_s'], 93)
+        self.assertIsNone(weather.update(now=10607 + 7 * 3600)['rain_stopped_s'])
+        self.rows = []
+        body = weather.update(now=10607 + 7 * 3600 + 1)
+        self.assertIsNone(body['rain_stopped_s'])
+        self.assertIsNone(body['drying_min'])
 
     def test_live_rain_ramp_survives_reloads_and_transition_uses_previous_interval(self):
         self.rows = [self.entity('pouring')]
