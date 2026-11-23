@@ -8,9 +8,20 @@ from twin_editor_dom import run_node
 ROOT = Path(__file__).resolve().parents[1]
 
 DRIVER = PREFIX + r"""
-const {createRoofWater}=await import(file('static/twin/sky/roof_water.js'));
+const {createRoofWater,eaveRunoff}=await import(file('static/twin/sky/roof_water.js'));
 const {installWeatherSurface}=await import(file('static/twin/sky/weather_surface.js'));
 const close=(a,b,msg='',eps=1e-6)=>assert.ok(Math.abs(a-b)<=eps,`${msg?msg+': ':''}${a} != ${b}`);
+
+await test('eave runoff waits for the roof to wet through: beads none, rivulets trickle, film full',()=>{
+ const rw=createRoofWater();
+ const beads=rw.update({precip:'rain',rate:1,wetness:.15},1);
+ close(eaveRunoff(beads),0,'heavy rain on a barely wet roof pours nothing yet');
+ const rivulets=rw.update({precip:'rain',rate:1,wetness:.45},2);
+ const r=eaveRunoff(rivulets);assert.ok(r>.1&&r<.7,`rivulet stage trickles: ${r}`);
+ const film=rw.update({precip:'rain',rate:1,wetness:.9},3);
+ close(eaveRunoff(film),1,'saturated roof in heavy rain pours fully');
+ close(eaveRunoff({flow:.3,wet:1}),.3,'light rain on a wet roof follows the rain rate');
+});
 
 await test('raining gives flow = rate, wet = wetness, stoppedS = 0, and film ramps light 0 -> steady moderate -> heavy 1',()=>{
  const rw=createRoofWater();

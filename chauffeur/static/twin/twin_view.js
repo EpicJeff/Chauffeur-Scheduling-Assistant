@@ -33,7 +33,7 @@ import { installPlantWind } from './sky/wind.js';
 import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
-import { createRoofWater } from './sky/roof_water.js';
+import { createRoofWater, eaveRunoff } from './sky/roof_water.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
 import { createEaveStreams } from './sky/eave_streams.js';
@@ -564,13 +564,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     splashSunDirection.copy(sun.position).sub(sun.target.position).normalize();
     splashSunColour.copy(sun.color).multiplyScalar(sun.intensity);
+    // A focused yard room is outdoors with every roof in view (levels.js never
+    // cuts the house for it), so weather treats it like the whole-house view.
+    const levelSnap=view.levels?.snapshot();
+    const weatherLevel=levelSnap ? (levelSnap.level==='room'&&levelSnap.building==null ? 'house' : levelSnap.level)
+      : (state.view==='ext'?'house':'floor');
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor,
+      level:weatherLevel,unlit:state.unlit,colour:timeLook?.skyColor,
       light:leafLight(),sunDirection:splashSunDirection,sunColour:splashSunColour,
       sunVisibility:timeLook?.sunClear>0?sunDiscVisibility(view.weather,timeLook.sun/timeLook.sunClear):0});
     // Eave runoff follows the roof's own drying ladder (roof_water.js), so the
     // streams thin to drips and stop as the roof drains after the rain.
-    runoff.flow=roofState.flow;runoff.wet=roofState.wet;
+    runoff.flow=eaveRunoff(roofState);runoff.wet=roofState.wet;
     if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces){
       // Optional HA absence and a dry neutral editor allocate no water mesh.
       // Once rain needs it, build once for this immutable roof snapshot.
@@ -578,10 +583,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;}
     }
     eaves.update(runoff,performance.now()/1000,{camera,target:controls.target,
-      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,neutral:view.weather?.neutral,
+      level:weatherLevel,unlit:state.unlit,neutral:view.weather?.neutral,
       fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps,
       viewportHeight:renderer3.domElement.height||el.clientHeight||720});
-    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||weatherLevel==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,

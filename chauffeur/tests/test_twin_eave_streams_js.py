@@ -270,6 +270,13 @@ await test('real household viewer wires Rain stopping, cutaway hiding, rebuild a
   stamp+=25000;v.render();assert.equal(v.weather.rate,0);assert.equal(v.weather.rain_stopped_s,5);assert.ok(v.eaves.uniforms.eaveFlow.value>.9);
   stamp+=65000;v.render();assert.equal(v.weather.wetness,0);assert.equal(v.eaves.group.visible,false);
   const b=v.plan.buildings.find(b=>b.rooms.length),r=b.rooms[0];v.setWeatherPreview('rain-stopping');v.levels.go({building:b.id,floor:r.level},{immediate:true});v.render();assert.equal(v.eaves.group.visible,false);
+  // A focused yard room is outdoors with the roofs in view: streams stay.
+  v.plan.site=v.plan.site||{};const px=b.position?.[0]||0,py=b.position?.[1]||0;
+  v.plan.site.yard_rooms=[...(v.plan.site.yard_rooms||[]),{id:'yard-test',name:'Yard test',polygon:[[px+60,py],[px+80,py],[px+80,py+20],[px+60,py+20]]}];
+  assert.ok(v.levels.go({room:'yard-test'},{immediate:true})!==false,'yard room is reachable');
+  v.setCameraState({target:[mid[0],mid[1]-1,mid[2]],position:[mid[0]+edge.outward[0]/n*6,mid[1]-.5,mid[2]+edge.outward[2]/n*6]});v.render();
+  assert.equal(v.levels.snapshot().room,'yard-test');assert.equal(v.levels.snapshot().building??null,null);
+  assert.equal(v.eaves.group.visible,true,'eave streams stay visible with a yard room focused');
   const old=v.eaves.streams.geometry;let released=false;old.addEventListener('dispose',()=>released=true);
   const next=structuredClone(v.plan);next.buildings[0].roof.sections[0].plate+=1;
   await v.rebuild(next);v.render();assert.notEqual(v.eaves.streams.geometry,old);assert.ok(released,'rebuilding releases stale landing data');
