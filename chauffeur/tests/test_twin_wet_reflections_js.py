@@ -8,7 +8,85 @@ from test_twin_weather_surface_js import PREFIX
 from test_twin_reflection_probes_js import DRIVER as REFLECTION_DRIVER
 
 ROOT = Path(__file__).resolve().parents[1]
-DRIVER = PRELUDE + r"""
+# Frozen pre-fix march: first-hit identity and regression failure evidence.
+BASELINE_MARCH = r"""
+vec2 ssrProject(vec3 position) {
+  vec4 p=ssrProjection*vec4(position,1.0);
+  return p.xy/p.w*.5+.5;
+}
+float ssrGap(vec3 position,vec2 uv) {
+  return -position.z-ssrLinearDepth(texture2D(ssrDepth,uv).r);
+}
+// Metres in view space, 24 growing steps, then four bisections. A miss carries
+// zero confidence so the lit material's existing sky reflection survives.
+vec3 ssrMarch(vec3 origin,vec3 direction) {
+  if(direction.z>=0.0)return vec3(0.0);
+  float previous=0.0,travel=.2,stride=.2,previousGap=-1.0;
+  for(int i=0;i<24;i++){
+    vec3 position=origin+direction*travel;
+    vec2 uv=ssrProject(position);
+    if(any(lessThanEqual(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))break;
+    float gap=ssrGap(position,uv);
+    if(travel>.3&&gap>=0.0&&previousGap<0.0){
+      float lo=previous,hi=travel;
+      for(int j=0;j<4;j++){
+        float middle=(lo+hi)*.5;
+        vec3 point=origin+direction*middle;
+        vec2 sampleUV=ssrProject(point);
+        if(ssrGap(point,sampleUV)>=0.0)hi=middle;else lo=middle;
+      }
+      position=origin+direction*hi;uv=ssrProject(position);
+      float depth=ssrLinearDepth(texture2D(ssrDepth,uv).r);
+      float thickness=min(.4,.18+depth*.002);
+      float delta=-position.z-depth;
+      if(delta>=0.0&&delta<thickness&&depth<ssrCamera.y-.01){
+        float edge=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));
+        float confidence=smoothstep(0.0,.06,edge)*(1.0-smoothstep(32.0,64.0,hi));
+        return vec3(uv,confidence);
+      }
+      return vec3(0.0);
+    }
+    previous=travel;previousGap=gap;stride*=1.2;travel=min(64.0,travel+stride);
+    if(previous>=64.0)break;
+  }
+  return vec3(0.0);
+}
+"""
+
+MARCH_HELPERS = r"""
+// Execute production GLSL, adapting only vector/texture syntax and preprocessing.
+function marchSource(source,debug=false){
+ const out=[];let active=true;
+ for(const line of source.split('\n')){
+  if(line.trim()==='#ifdef SSR_DEBUG_REASONS'){active=debug;continue;}
+  if(line.trim()==='#else'){active=!active;continue;}
+  if(line.trim()==='#endif'){active=true;continue;}
+  if(active)out.push(line);
+ }
+ return out.join('\n');
+}
+function marchEvaluator(source,{project,gap,far=100,debug=false}){
+ const shader=marchSource(source,debug);
+ const body=name=>{
+  const start=shader.indexOf(name+'(');assert.ok(start>=0,name);
+  const open=shader.indexOf('{',start);let end=open+1,depth=1;
+  while(depth){depth+=(shader[end]==='{')-(shader[end]==='}');end++;}
+  return shader.slice(open+1,end-1);
+ };
+ const adapt=text=>text
+  .replaceAll('any(lessThanEqual(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0)))','uv.x<=0||uv.y<=0||uv.x>=1||uv.y>=1')
+  .replaceAll('vec3(0.0)','new THREE.Vector3()')
+  .replaceAll('vec3(0.0,0.0,reason)','new THREE.Vector3(0,0,reason)')
+  .replaceAll('vec3(uv,confidence)','new THREE.Vector3(uv.x,uv.y,confidence)')
+  .replace(/origin\+direction\*(travel|middle|hi)/g,'origin.clone().addScaledVector(direction,$1)')
+  .replaceAll('ssrLinearDepth(texture2D(ssrDepth,uv).r)','-position.z-ssrGap(position,uv)')
+  .replace(/\b(float|vec2|vec3|int|bool)\s+/g,'let ');
+ const miss=shader.includes('vec3 ssrMiss(')?new Function('THREE','reason',adapt(body('ssrMiss'))).bind(null,THREE):null;
+ return new Function('THREE','ssrProject','ssrGap','ssrCamera','min','smoothstep','ssrMiss',
+  `return (origin,direction)=>{${adapt(body('ssrMarch'))}}`)(THREE,project,gap,{y:far},Math.min,smoothstep,miss);
+}
+"""
+DRIVER = PRELUDE + MARCH_HELPERS + r"""
 const THREE=await import('three');
 const {createPost}=await import(file('static/twin/post.js'));
 const {WetReflectionPass,SSR_MARCH_GLSL}=await import(file('static/twin/wet_reflections.js'));
@@ -170,20 +248,102 @@ await test('execute GLSL march with a synthetic wall/floor depth buffer, sky mis
   }
   return -p.z-distance;
  };
- // Execute the shipped loop and branches. Only vector arithmetic/projection
- // and texture fetch syntax is adapted to THREE's CPU vectors/depth sampler.
- let body=SSR_MARCH_GLSL.split('vec3 ssrMarch(vec3 origin,vec3 direction) {')[1].split('\n}')[0];assert.ok(body);
- const edgeTest='any(lessThanEqual(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0)))';assert.ok(body.includes(edgeTest));
- body=body.replace(edgeTest,'uv.x<=0||uv.y<=0||uv.x>=1||uv.y>=1')
-  .replaceAll('vec3(0.0)','new THREE.Vector3()').replace('vec3(uv,confidence)','new THREE.Vector3(uv.x,uv.y,confidence)')
-  .replace(/origin\+direction\*(travel|middle|hi)/g,'origin.clone().addScaledVector(direction,$1)')
-  .replace('ssrLinearDepth(texture2D(ssrDepth,uv).r)','-position.z-ssrGap(position,uv)')
-  .replace(/\b(float|vec2|vec3|int)\s+/g,'let ');
- const march=new Function('THREE','ssrProject','ssrGap','ssrCamera','min','smoothstep',`return (origin,direction)=>{${body}}`)(THREE,project,gap,{y:100},Math.min,smoothstep);
+ const march=marchEvaluator(SSR_MARCH_GLSL,{project,gap});
  const hit=march(origin,direction);assert.ok(hit.z>.9,'on-screen wall receives a hit');close(hit.x,.5);assert.ok(hit.y>.5);
  assert.ok(reads<=29,'at most 24 march, four refine, one thickness read');console.log('WALL_HIT',hit.toArray(),reads);
  empty=true;assert.equal(march(origin,direction).z,0);empty=false;wall=false;assert.equal(march(origin,direction).z,0);
  reads=0;assert.equal(march(origin,new THREE.Vector3(0,0,1)).z,0);assert.equal(reads,0);
+});
+
+await test('rejected thin foreground crossing continues to the wall; long-stride overshoot refines to a hit',()=>{
+ const origin=new THREE.Vector3(0,0,-3),direction=new THREE.Vector3(.6,0,-.8);
+ // Orthographic projection maps travel to screen X. The foreground post is
+ // a narrow depth-buffer strip; its silhouette lies well in front of the ray.
+ const project=p=>new THREE.Vector2(.15+p.x*.01,.5);
+ const sample=uv=>{const travel=(uv.x-.15)/.006;return travel>=.35&&travel<1.3?2:12;};
+ let reads=0;
+ const gap=(p,uv)=>{reads++;return -p.z-sample(uv);};
+ const march=marchEvaluator(SSR_MARCH_GLSL,{project,gap}),old=marchEvaluator(input.baselineMarch,{project,gap});
+ assert.equal(old(origin,direction).z,0,'baseline stops behind the post');
+ reads=0;const hit=march(origin,direction),cost=reads;
+ assert.ok(hit.z>.99,'wall behind rejected post is found');assert.ok(Math.abs(hit.x-.2175)<.002);close(hit.y,.5);
+ const debug=marchEvaluator(SSR_MARCH_GLSL,{project,gap,debug:true});assert.deepEqual(debug(origin,direction),hit);
+ console.log('POST_THEN_WALL',hit.toArray(),cost);
+ // A late wall needs sub-stride refinement: four bisections alone leave a
+ // valid crossing outside its thickness. Test multiple depths, not one point.
+ let rescued=0;
+ for(let wall=35;wall<54;wall+=.1){
+  const wallGap=p=>-p.z-wall;
+  const before=marchEvaluator(input.baselineMarch,{project,gap:wallGap})(origin,direction);
+  const after=marchEvaluator(SSR_MARCH_GLSL,{project,gap:wallGap})(origin,direction);
+  assert.ok(after.z>0,'every reachable wall hits at '+wall);
+  if(before.z===0){rescued++;const depthAtHit=3+.8*(after.x-.15)/.006;assert.ok(depthAtHit>=wall&&depthAtHit-wall<Math.min(.4,.18+wall*.002));}
+ }
+ assert.ok(rescued>20);console.log('OVERSHOOT_RESCUED',rescued);
+});
+await test('accepted first-crossing hits retain exact UV/confidence and texture cost outside facing fade',()=>{
+ const origin=new THREE.Vector3(0,0,-3),direction=new THREE.Vector3(.6,0,-.8);
+ const project=p=>new THREE.Vector2(.15+p.x*.01,.5);
+ let checked=0;
+ for(let wall=3.4;wall<54;wall+=.137){
+  let reads=0;const gap=p=>{reads++;return -p.z-wall;};
+  const old=marchEvaluator(input.baselineMarch,{project,gap})(origin,direction),beforeReads=reads;
+  if(old.z<=0)continue;
+  reads=0;const hit=marchEvaluator(SSR_MARCH_GLSL,{project,gap})(origin,direction);
+  assert.deepEqual(hit,old,'same first accepted crossing at '+wall);assert.equal(reads,beforeReads);
+  const debug=marchEvaluator(SSR_MARCH_GLSL,{project,gap,debug:true})(origin,direction);assert.deepEqual(debug,hit);
+  checked++;
+ }
+ assert.ok(checked>200);console.log('IDENTICAL_FIRST_HITS',checked);
+});
+await test('unit ray confidence fades continuously before toward-camera cutoff, with existing 6% edge fade',()=>{
+ const origin=new THREE.Vector3(0,0,-3),project=()=>new THREE.Vector2(.5,.5);
+ let previous=1;
+ for(let i=200;i>=0;i--){
+  const z=-i/1000,direction=new THREE.Vector3(Math.sqrt(1-z*z),0,z);
+  const depth=3-z*10,gap=p=>-p.z-depth;
+  const hit=marchEvaluator(SSR_MARCH_GLSL,{project,gap})(origin,direction);
+  close(hit.z,smoothstep(0,.2,-z));assert.ok(hit.z<=previous&&previous-hit.z<.008);previous=hit.z;
+ }
+ for(const z of [0,.000001,.1,1])assert.equal(marchEvaluator(SSR_MARCH_GLSL,{project,gap:()=>-1})(origin,new THREE.Vector3(1,0,z)).z,0);
+ const direction=new THREE.Vector3(.6,0,-.8),gap=p=>-p.z-12;
+ for(const axis of ['x','y'])for(const side of [0,1])for(const distance of [.000001,.001,.015,.03,.045,.06,.08]){
+  const uv=new THREE.Vector2(.5,.5);uv[axis]=side?1-distance:distance;
+  const hit=marchEvaluator(SSR_MARCH_GLSL,{project:()=>uv,gap})(origin,direction);
+  close(hit.z,smoothstep(0,.06,distance));
+ }
+});
+await test('debug reasons encode all terminal outcomes; shipping preprocess has no reason state',()=>{
+ const origin=new THREE.Vector3(0,0,-3),direction=new THREE.Vector3(.6,0,-.8),project=p=>new THREE.Vector2(.15+p.x*.01,.5);
+ const cases=[
+  {reason:-2,project,gap:()=>-1,direction:new THREE.Vector3(0,0,1)},
+  {reason:-3,project:p=>new THREE.Vector2(2,.5),gap:()=>-1},
+  {reason:-4,project,gap:()=>-1},
+  {reason:-1,project,gap:(p,uv)=>(uv.x-.15)/.006<.35?-1:-p.z-2},
+  {reason:-1,project:p=>new THREE.Vector2(.15+p.x,.5),gap:p=>p.x<.21?-1:-p.z-2}
+ ];
+ for(const c of cases){
+  const debug=marchEvaluator(SSR_MARCH_GLSL,{...c,debug:true})(origin,c.direction||direction);
+  const ship=marchEvaluator(SSR_MARCH_GLSL,c)(origin,c.direction||direction);
+  assert.equal(debug.z,c.reason);assert.equal(ship.z,0);
+ }
+ const shipping=marchSource(SSR_MARCH_GLSL).replace(/\/\/[^\n]*/g,'');assert.ok(!shipping.includes('rejected')&&!shipping.includes('return vec3(0.0,0.0,reason)'));
+ let reads=0,maxTravel=0;
+ const exhausted=marchEvaluator(SSR_MARCH_GLSL,{project,gap:p=>{reads++;maxTravel=Math.max(maxTravel,p.x/.6);return -1;},debug:true})(origin,direction);
+ assert.equal(exhausted.z,-4);assert.equal(reads,23);close(maxTravel,64);
+});
+await test('debugReasons toggles gather recompilation only, leaving default and composite unchanged',()=>{
+ const c=setup();try{
+  const pass=c.post.wetReflections,[gather,composite]=pass.materials,source=gather.fragmentShader;
+  const v=gather.version,cv=composite.version,key=gather.customProgramCacheKey();
+  assert.equal(pass.debugReasons,false);assert.equal(gather.defines.SSR_DEBUG_REASONS,undefined);
+  pass.debugReasons=false;assert.equal(gather.version,v);
+  pass.debugReasons=true;assert.equal(gather.defines.SSR_DEBUG_REASONS,1);assert.equal(gather.version,v+1);
+  pass.debugReasons=true;assert.equal(gather.version,v+1);
+  pass.debugReasons=false;assert.equal(gather.defines.SSR_DEBUG_REASONS,undefined);assert.equal(gather.version,v+2);
+  assert.equal(gather.fragmentShader,source);assert.equal(gather.customProgramCacheKey(),key);
+  assert.equal(composite.version,cv);assert.equal(composite.defines.SSR_DEBUG_REASONS,undefined);
+ }finally{c.dispose();}
 });
 await test('mounted high-tier view shares weather and field references; raw capture draws no SSR',async()=>{
  location.search='?test=1';const v=await mountTwin(new Element(),{plan:structuredClone(input.plan),kit:{materials:{}},tier:'high',bake:false});
@@ -291,6 +451,16 @@ await test('r187 final post sources assemble; no lit uniform, sampler, chunk or 
    assert.ok(source[1]&&!source[2].includes('#include'));const budget=uniformBudget(source[2]);
    assert.equal(budget.samplers.length,quad===pass.gather?6:7);console.log(quad.material.name,budget);
   }
+  const shipping=programSource(r,cache,scene,pass.gather._mesh,lights),composite=programSource(r,cache,scene,pass.composite._mesh,lights);
+  assert.ok(!preprocess(shipping[2]).includes('bool rejected='));
+  pass.debugReasons=true;
+  const debug=programSource(r,cache,scene,pass.gather._mesh,lights);
+  assert.ok(debug[2].includes('#define SSR_DEBUG_REASONS 1'));assert.notEqual(debug.key,shipping.key);
+  assert.ok(preprocess(debug[2]).includes('bool rejected=false;'));
+  assert.deepEqual(uniformBudget(debug[2]),uniformBudget(shipping[2]));
+  assert.equal(programSource(r,cache,scene,pass.composite._mesh,lights).key,composite.key);
+  pass.debugReasons=false;
+  const restored=programSource(r,cache,scene,pass.gather._mesh,lights);assert.equal(restored[2],shipping[2]);assert.equal(restored.key,shipping.key);
   for(const [wet,puddle] of [[0,0],[1,0],[0,1],[1,1],[0,0]]){
    weather.uniforms.weatherSurface.value.set(wet,0,puddle,0);post.render();
    const after=programSource(r,cache,scene,object,lights);
@@ -309,7 +479,7 @@ if __name__ == '__main__':
     plan = flatten(assemble(fixture)[0])
     failed = False
     for driver in [DRIVER, SOURCE_DRIVER, CAPTURE_DRIVER]:
-        code, output = run_node(driver, {'root': ROOT.as_posix(), 'plan': plan}, timeout=180)
+        code, output = run_node(driver, {'root': ROOT.as_posix(), 'plan': plan, 'baselineMarch': BASELINE_MARCH}, timeout=180)
         print(output)
         failed |= bool(code)
     sys.exit(1 if failed else 0)

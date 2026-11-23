@@ -85,15 +85,37 @@ vec2 ssrProject(vec3 position) {
 float ssrGap(vec3 position,vec2 uv) {
   return -position.z-ssrLinearDepth(texture2D(ssrDepth,uv).r);
 }
-// Metres in view space, 24 growing steps, then four bisections. A miss carries
-// zero confidence so the lit material's existing sky reflection survives.
+// Debug-only miss payloads; the shipping preprocessor removes all reason state.
+// -1: a crossing was rejected and no later hit survived (even on screen exit),
+// -2: toward camera, -3: screen exit without rejection, -4: march exhausted.
+vec3 ssrMiss(float reason) {
+#ifdef SSR_DEBUG_REASONS
+  return vec3(0.0,0.0,reason);
+#else
+  return vec3(0.0);
+#endif
+}
+// Metres in view space, 24 growing steps out to 64 m. Keep the original four
+// bisections for accepted hits; only a rejected candidate pays for four more.
 vec3 ssrMarch(vec3 origin,vec3 direction) {
-  if(direction.z>=0.0)return vec3(0.0);
+  if(direction.z>=0.0)return ssrMiss(-2.0);
+  // Unit reflection direction: fade over the last ~11.5 degrees before it
+  // turns toward the camera. At the cutoff confidence already tends to zero.
+  float facing=smoothstep(0.0,.2,-direction.z);
   float previous=0.0,travel=.2,stride=.2,previousGap=-1.0;
+#ifdef SSR_DEBUG_REASONS
+  bool rejected=false;
+#endif
   for(int i=0;i<24;i++){
     vec3 position=origin+direction*travel;
     vec2 uv=ssrProject(position);
-    if(any(lessThanEqual(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0))))break;
+    if(any(lessThanEqual(uv,vec2(0.0)))||any(greaterThanEqual(uv,vec2(1.0)))){
+#ifdef SSR_DEBUG_REASONS
+      return ssrMiss(rejected?-1.0:-3.0);
+#else
+      return vec3(0.0);
+#endif
+    }
     float gap=ssrGap(position,uv);
     if(travel>.3&&gap>=0.0&&previousGap<0.0){
       float lo=previous,hi=travel;
@@ -107,17 +129,39 @@ vec3 ssrMarch(vec3 origin,vec3 direction) {
       float depth=ssrLinearDepth(texture2D(ssrDepth,uv).r);
       float thickness=min(.4,.18+depth*.002);
       float delta=-position.z-depth;
+      if(!(delta>=0.0&&delta<thickness&&depth<ssrCamera.y-.01)){
+        // At the longest stride four bisections can still overshoot by ~.8 m.
+        // Eight bound that error below .06 m, inside the thinnest hit shell.
+        for(int j=0;j<4;j++){
+          float middle=(lo+hi)*.5;
+          vec3 point=origin+direction*middle;
+          vec2 sampleUV=ssrProject(point);
+          if(ssrGap(point,sampleUV)>=0.0)hi=middle;else lo=middle;
+        }
+        position=origin+direction*hi;uv=ssrProject(position);
+        depth=ssrLinearDepth(texture2D(ssrDepth,uv).r);
+        thickness=min(.4,.18+depth*.002);
+        delta=-position.z-depth;
+      }
       if(delta>=0.0&&delta<thickness&&depth<ssrCamera.y-.01){
         float edge=min(min(uv.x,1.0-uv.x),min(uv.y,1.0-uv.y));
-        float confidence=smoothstep(0.0,.06,edge)*(1.0-smoothstep(32.0,64.0,hi));
+        float confidence=smoothstep(0.0,.06,edge)*(1.0-smoothstep(32.0,64.0,hi))*facing;
         return vec3(uv,confidence);
       }
-      return vec3(0.0);
+#ifdef SSR_DEBUG_REASONS
+      rejected=true;
+#endif
+      // A depth discontinuity (thin rail/post/leaf) is not the end of the ray.
+      // Keep the original coarse schedule so rejection cannot shorten reach.
     }
     previous=travel;previousGap=gap;stride*=1.2;travel=min(64.0,travel+stride);
     if(previous>=64.0)break;
   }
+#ifdef SSR_DEBUG_REASONS
+  return ssrMiss(rejected?-1.0:-4.0);
+#else
   return vec3(0.0);
+#endif
 }
 `;
 
@@ -171,6 +215,13 @@ void main(){
   gl_FragColor=vec4(mix(ssrSafe(base.rgb),reflected,strength*fresnel*hit.b),base.a);
 }`);
     this.materials=[gather,composite];this.gather=new FullScreenQuad(gather);this.composite=new FullScreenQuad(composite);
+  }
+  get debugReasons(){return this.materials[0].defines.SSR_DEBUG_REASONS!==undefined;}
+  set debugReasons(value){
+    const gather=this.materials[0],enabled=!!value;
+    if(enabled===this.debugReasons)return;
+    if(enabled)gather.defines.SSR_DEBUG_REASONS=1;else delete gather.defines.SSR_DEBUG_REASONS;
+    gather.needsUpdate=true;
   }
   bind({weatherSurface,precipCover,precipCoverBounds,precipEdge,precipCaps}) {
     const edge=precipEdge||{value:null};
