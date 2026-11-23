@@ -81,7 +81,7 @@ function makeSimpleRoomPlan() {
     { source: { x: 5 * FT, y: 4 * FT, z: -5 * FT }, range: 20 * FT, outdoor: false },
     { source: { x: 5 * FT, y: 12 * FT, z: -5 * FT }, range: 20 * FT, outdoor: false },
   ]);
-  assert.equal(twoLayout.blocks.length, 2);
+  assert.equal(twoLayout.blocks.filter(b=>b.kind==='room').length, 2);
   const bL1 = twoLayout.blocks[0], bL2 = twoLayout.blocks[1];
   const twoIdx = new Uint32Array(twoLayout.count);
   const twoVals = new Uint8Array(twoLayout.count);

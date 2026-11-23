@@ -143,7 +143,7 @@ function addTarget(renderer, from, to, camera) {
   quad.geometry.dispose(); quad.material.dispose();
 }
 
-export function occluders(view, source, range) {
+export function occluders(view, source, range, includeModels = true) {
   const scene = new THREE.Scene();
   view.scene.updateMatrixWorld(true);
   (view.bake?.occlusionRoot?.() || view.scene).traverse(o => {
@@ -155,19 +155,21 @@ export function occluders(view, source, range) {
     const mesh = new THREE.Mesh(o.geometry, o.material);
     mesh.matrixAutoUpdate = false; mesh.matrix.copy(o.matrixWorld); mesh.frustumCulled = false; scene.add(mesh);
   });
-  for (const mesh of modelOccluderMeshes(view.bake?.modelRoot?.(), view.plan, source, range)) scene.add(mesh);
+  if (includeModels) for (const mesh of modelOccluderMeshes(view.bake?.modelRoot?.(), view.plan, source, range)) scene.add(mesh);
   return scene;
 }
 
 export async function renderPage(view, renderer, charts, size, light, layout, atlas,
-  { deferBounce = false, deferSumEncoding = false, checkpoint = async () => {} } = {}) {
+  { deferBounce = false, deferSumEncoding = false, checkpoint = async () => {}, onSample = null } = {}) {
   // The editor's model-bearing physical build loads imports asynchronously.
   // Do not publish a fresh page made before those blockers exist.
   await view.bake?.modelReady?.();
   await checkpoint();
   const { source, range: reach } = lightSource(view.plan, light), far = Math.max(reach * 2, 30);
   const target = new THREE.WebGLRenderTarget(size, size, { depthBuffer: false, type: THREE.HalfFloatType });
-  const scene = proxies(charts, size, atlas), blockers = occluders(view, source, reach);
+  const scene = proxies(charts, size, atlas), blockers = occluders(view, source, reach, !onSample);
+  const models = new THREE.Scene();
+  if (onSample) for (const mesh of modelOccluderMeshes(view.bake?.modelRoot?.(), view.plan, source, reach)) models.add(mesh);
   const saved = { target: renderer.getRenderTarget(), color: renderer.getClearColor(new THREE.Color()),
     alpha: renderer.getClearAlpha(), tone: renderer.toneMapping, auto: renderer.autoClear, xr: renderer.xr.enabled };
   const controller = view.bake;
@@ -198,6 +200,7 @@ export async function renderPage(view, renderer, charts, size, light, layout, at
       fragmentShader: `uniform vec3 source; uniform float farPlane; varying vec3 wp;
 void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
     blockers.overrideMaterial = depth;
+    models.overrideMaterial = depth;
     material = new THREE.ShaderMaterial({ vertexShader: atlasVertex, fragmentShader: light.emitters ? fixtureFragment : pointFragment,
       depthTest: false, depthWrite: false, transparent: true, blending: THREE.AdditiveBlending,
       uniforms: { depthCube: { value: shadow.texture }, source: { value: source.clone() }, reach: { value: reach },
@@ -226,6 +229,15 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}` });
       cube.position.copy(p); depth.uniforms.source.value.copy(p); material.uniforms.source.value.copy(p);
       renderer.autoClear = true; renderer.setClearColor(0xffffff, 1); cube.updateMatrixWorld(true);
       for (let face = 0; face < 6; face++) { renderer.setRenderTarget(shadow, face); renderer.render(blockers, cube.children[face]); }
+      if (onSample) {
+        await onSample(shadow.texture, sample, far);
+        // Grid visibility excludes placed models. Add their depth afterwards,
+        // preserving the static depth and colour for the lightmap's shadow cube.
+        if (models.children.length) {
+          renderer.autoClear = false;
+          for (let face = 0; face < 6; face++) { renderer.setRenderTarget(shadow, face); renderer.render(models, cube.children[face]); }
+        }
+      }
       renderer.autoClear = false; renderer.setRenderTarget(target); renderer.render(scene, camera);
       if (front) { renderer.setRenderTarget(front); renderer.render(covers, camera); }
     }

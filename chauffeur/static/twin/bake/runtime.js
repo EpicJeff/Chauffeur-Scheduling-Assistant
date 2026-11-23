@@ -296,13 +296,17 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     resumeButton.id = 'twin-bake-resume'; resumeButton.addEventListener('click', () => controller.resume());
     strip.replaceChildren(legend, button, resumeButton, status);
   }
+  function bakeProgress() {
+    const next = baker.progress();
+    return {...next, grid: next.grid.points ? next.grid : progress.grid};
+  }
   function showProgress() {
     showControls();
     if (!status) return;
     const message = failure || (pageReason() ? `Could not read baked lighting (${pageReason()}).` : '');
     status.hidden = mode !== 'manual' && !(running && progress.total) && !message;
     status.textContent = message ? message + (retryAt !== null ? ` Retrying in ${Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))} s` : (!authPaused && manualWait ? ' Press Resume to continue.' : ''))
-      : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}` : '');
+      : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}${progress.grid?.points ? ` · Grid ${progress.grid.points} points` : ''}` : '');
     if (mode === 'manual') {
       if (!message && !running) status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
         : disabledReason ? disabledReason
@@ -619,7 +623,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     resumePending = !!m?.forceRound;
     stale = lights.filter(l => !(currentInputs && !m?.lights?.[l.device] && realtimeCurrent(m, l.device, cheap[l.device])) &&
       (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
-    if (!running) progress = { done: lights.length - stale.length, total: lights.length };
+    if (!running) progress = { done: lights.length - stale.length, total: lights.length, grid: progress.grid };
     showProgress();
   }
   async function loadPages() {
@@ -707,7 +711,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     resumePending = !!m.forceRound;
     stale = lights.filter(l => !(!packed.entries[l.device] && realtimeCurrent(m, l.device, cheap[l.device], realtimeReason(packed, l.device))) &&
       (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
-    if (mode === 'manual' && !running) progress = { done: lights.length - stale.length, total: lights.length };
+    if (mode === 'manual' && !running) progress = { done: lights.length - stale.length, total: lights.length, grid: progress.grid };
     showProgress();
     pageManifest=m;
     if(!stale.length)preservePages.clear();
@@ -750,7 +754,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     clearRetry();
     if (force) forceIntent = [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
     failure = ''; failureSource = null; errorReason = null;
-    progress = inspectOnly ? {done: force ? 0 : progress.done, total: lights.length} : {done: 0, total: 0};
+    progress = {...(inspectOnly ? {done: force ? 0 : progress.done, total: lights.length} : {done: 0, total: 0}), grid: progress.grid};
     running = true; showProgress();
     const mine = generation, input = lightsKey;
     try {
@@ -782,17 +786,18 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (layerOverflow) return;
         codec ||= workerCodec();
       }
-      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly });
+      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly,
+        onGrid(grid) { if (grid.points) progress = {...progress, grid}; showProgress(); } });
       const initialStale = await baker.staleLights();
       if (!baker.forcePending()) forceIntent = null;
       if (!valid() || mine !== generation || input !== lightsKey) return;
-      stale = initialStale; progress = baker.progress(); showProgress();
+      stale = initialStale; progress = bakeProgress(); showProgress();
       while (valid() && mine === generation && input === lightsKey && !layerOverflow) {
         await idle();
         const id = await baker.bakeNext();
         if (!baker.forcePending()) forceIntent = null;
         if (!id || !valid() || mine !== generation || input !== lightsKey) break;
-        baked.push(id); progress = baker.progress(); stale = await baker.staleLights(); showProgress();
+        baked.push(id); progress = bakeProgress(); stale = await baker.staleLights(); showProgress();
         await loadPages();
       }
       // Publish completion for the current house round.
@@ -804,7 +809,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       }
     } catch (error) {
       if (baker && !baker.forcePending()) forceIntent = null;
-      if (baker) progress = baker.progress();
+      if (baker) progress = bakeProgress();
       if (valid() && mine === generation && input === lightsKey) reportError(error, 'bake');
     } finally {
       running = false; showProgress();
@@ -852,7 +857,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     },
     active: valid,
     state: () => ({ key: atlas?.key || pending?.key || editorKey, baking: running, paused: authPaused || manualWait || running && paused(), retryAt, retryAttempts,
-      ...progress, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
+      ...progress, grid: {...(progress.grid || {points: 0, bytes: 0, ms: 0, maskMs: 0})}, baked: [...baked], stale: [...stale], error: errorReason || pageReason() }),
     // Members of a fresh shared channel are fresh: the live layer asks by its own lamp ids.
     fresh: () => valid() ? [...fresh].flatMap(id => [id, ...(lights.find(l => l.device === id)?.members || [])]) : [], light, idle, refresh,
     occlusionRoot: () => atlas?.sourceRoot || root,

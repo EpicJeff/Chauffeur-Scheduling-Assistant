@@ -135,6 +135,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const live = {offlineEffects: true, layout: () => empty, peek: () => ({}), stale: () => true,
       rooms: () => [], looks: () => ({}), state: () => undefined, subscribe: () => () => {},
       draw: () => modes?.draw(), lights: () => modes?.lights() || [],
+      paletteLines: () => modes?.paletteLines() || [],
       setMode(value) { const result = modes?.setMode(value); view.render(); return result; },
       setModes(values) { const result = modes?.setModes(values); view.render(); return result; },
       toggleMode(id) { const result = modes?.toggleMode(id); view.render(); return result; },
@@ -784,6 +785,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     marker: id => { const row = rows.find(row => row.device_id === id); return row ? plain(row) : null; },
     rooms: roomRows,
     lights: () => modes?.lights() || [],
+    paletteLines: () => modes?.paletteLines() || [],
     energy: () => modes?.energy(),
     configureEnergy(value) {
       const nextKey = JSON.stringify([value.mapping, value.cars]);

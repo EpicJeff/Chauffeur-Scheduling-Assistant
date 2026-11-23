@@ -35,9 +35,17 @@ await check('manual_idle_poll_and_relight_never_start_but_button_does',async()=>
   assert.equal(desk.server.writes().length,0,'relight waits for a person');
   b.dispatchEvent(new Event('click'));
   await until(()=>desk.controller.state().baking&&desk.controller.state().total===4,'button begins whole-house run');
-  assert.match(outputOf(desk).textContent,/^Baking lights [0-4] of 4$/);
+  assert.match(outputOf(desk).textContent,/^Baking lights [0-4] of 4(?: · Grid [1-9]\d* points)?$/);
+  assert.ok(!outputOf(desk).textContent.includes('Grid 0 points'));
   assert.equal(desk.host.querySelectorAll('progress')[0].hidden,false);
   await until(()=>desk.controller.fresh().length===4&&!desk.controller.state().baking,'manual bake lands');
+  assert.ok(desk.controller.state().grid.points>0);
+  assert.ok(desk.controller.state().grid.bytes>0);
+  assert.ok(desk.controller.state().grid.ms>0);
+  assert.ok(Number.isFinite(desk.controller.state().grid.maskMs)&&desk.controller.state().grid.maskMs>=0);
+  const grid=desk.controller.state().grid;
+  await desk.controller.refresh();
+  assert.deepEqual(desk.controller.state().grid,grid,'idle refresh retains last grid counters');
   assert.equal(outputOf(desk).textContent,'Lighting is up to date');
   assert.equal(b.hidden,true);assert.equal(buttonOf(desk,'Re-bake all lighting').hidden,false);
   assert.equal(buttonOf(desk,'Re-bake all lighting').disabled,false);
@@ -56,6 +64,17 @@ await check('manual_drag_pauses_every_render_slice_then_resumes',async()=>{
   desk.view.plan=authored;
   window.dispatchEvent(event('pointerup'));await sleep(100);assert.equal(desk.renderer.log.renders,before);
   await run;assert.equal(desk.controller.fresh().length,4);
+ }finally{desk.controller.stop();}
+});
+await check('manual_bake_publishes_grids_independent_of_live_palette',async()=>{
+ const desk=await context('high',null,null,{mode:'manual',poll:0,host:new Node('div')});
+ try {
+  await ready(desk);
+  desk.view.live={layout:()=>liveLayout([k1,k2,h1,c1]),paletteLines:()=>['k1']};
+  await desk.controller.start();
+  const lights=desk.server.manifests.get(desk.controller.state().key).lights;
+  assert.ok(lights.k1.grid&&lights.k1.gridLayout,'live palettes cannot exclude bake grids');
+  assert.ok(lights.k2.grid&&lights.k2.gridLayout,'ordinary lights still publish grids');
  }finally{desk.controller.stop();}
 });
 await check('manual_light_edit_stales_only_that_light_without_restart',async()=>{

@@ -397,6 +397,7 @@ export function mountModes(view, live) {
     modes: () => [...enabled],
     get mode() { return modeName(enabled, ids); },
     draw, update,
+    paletteLines: () => [...paletteLineEntities(lamps)],
     energy: () => effects.get('energy')?.snapshot(),
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, fixture_id: lamp.emitter?.fixture_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),

@@ -62,41 +62,11 @@ function boxDistSq(q, maxX, maxY, maxZ, spacing) {
   return (dx * dx + dy * dy + dz * dz) * spacing * spacing;
 }
 
-function mergeRects(rects) {
-  if (rects.length <= 1) return rects;
-  const list = rects
-    .map(r => [r[0], r[1], r[2], r[3]])
-    .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]);
-  let changed = true;
-  while (changed) {
-    changed = false;
-    outer: for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i], b = list[j];
-        // Merge overlapping or adjacent (touching) cell rectangles so trilinear
-        // interpolation across neighbouring yard lamps stays inside one block.
-        if (a[0] <= b[2] + 1 && b[0] <= a[2] + 1 && a[1] <= b[3] + 1 && b[1] <= a[3] + 1) {
-          a[0] = Math.min(a[0], b[0]);
-          a[1] = Math.min(a[1], b[1]);
-          a[2] = Math.max(a[2], b[2]);
-          a[3] = Math.max(a[3], b[3]);
-          list.splice(j, 1);
-          changed = true;
-          break outer;
-        }
-      }
-    }
-  }
-  return list.sort((a, b) => a[1] - b[1] || a[0] - b[0] || a[3] - b[3] || a[2] - b[2]);
-}
-
-// Pure function of plan rooms, levels, lot/terraces, and lamp ranges.
-// lamps: [{ source: { x, y, z }, range, outdoor: boolean }]
-export function gridLayout(plan, lamps = []) {
-  const validLamps = (lamps || []).filter(l => l && l.source && Number.isFinite(l.range) && l.range > 0);
+// Layout identity depends only on geometry, never the changing lamp set.
+// Keep the optional second argument for callers using the original API.
+export function gridLayout(plan, _lamps = []) {
   const blocks = [];
   let count = 0;
-  const tmp = new THREE.Vector3();
 
   // 1. Indoor room blocks
   const data = roomData(plan || {});
@@ -118,16 +88,6 @@ export function gridLayout(plan, lamps = []) {
       const maxX = spanX / INDOOR_SPACING_FT;
       const maxY = spanY / INDOOR_SPACING_FT;
       const maxZ = heightFt / INDOOR_SPACING_FT;
-
-      let reached = false;
-      for (const lamp of validLamps) {
-        tmp.set(lamp.source.x, lamp.source.y, lamp.source.z).applyMatrix4(toLocal);
-        if (boxDistSq(tmp, maxX, maxY, maxZ, INDOOR_SPACING) < lamp.range * lamp.range) {
-          reached = true;
-          break;
-        }
-      }
-      if (!reached) continue;
 
       const nx = Math.max(1, Math.ceil(maxX - 1e-6));
       const ny = Math.max(1, Math.ceil(maxY - 1e-6));
@@ -152,97 +112,47 @@ export function gridLayout(plan, lamps = []) {
     }
   }
 
-  // 2. Yard blocks (lot cells within an outdoor lamp's range)
+  // 2. One terrain-following block over the whole lot bounding rectangle.
+  // Polygon-exterior cells remain addressable but are invalid in the mask.
   const lot = plan?.site?.lot;
-  const outdoorLamps = validLamps.filter(l => l.outdoor);
-  if (lot?.length >= 3 && outdoorLamps.length) {
-    let lotX0 = Infinity, lotY0 = Infinity, lotX1 = -Infinity, lotY1 = -Infinity;
-    for (const p of lot) {
-      if (p[0] < lotX0) lotX0 = p[0];
-      if (p[0] > lotX1) lotX1 = p[0];
-      if (p[1] < lotY0) lotY0 = p[1];
-      if (p[1] > lotY1) lotY1 = p[1];
-    }
-    const lotNx = Math.max(1, Math.ceil((lotX1 - lotX0) / YARD_SPACING_FT - 1e-6));
-    const lotNy = Math.max(1, Math.ceil((lotY1 - lotY0) / YARD_SPACING_FT - 1e-6));
-
-    const lampRects = [];
-    for (const lamp of outdoorLamps) {
-      const lx = lamp.source.x / FT;
-      const ly = -lamp.source.z / FT;
-      const lz = lamp.source.y / FT;
-      const rFt = lamp.range / FT;
-      const r2 = rFt * rFt;
-      const gx0 = Math.max(0, Math.floor((lx - rFt - lotX0) / YARD_SPACING_FT));
-      const gx1 = Math.min(lotNx - 1, Math.floor((lx + rFt - lotX0) / YARD_SPACING_FT));
-      const gy0 = Math.max(0, Math.floor((ly - rFt - lotY0) / YARD_SPACING_FT));
-      const gy1 = Math.min(lotNy - 1, Math.floor((ly + rFt - lotY0) / YARD_SPACING_FT));
-      if (gx0 > gx1 || gy0 > gy1) continue;
-
-      let minGx = Infinity, minGy = Infinity, maxGx = -Infinity, maxGy = -Infinity;
-      for (let gy = gy0; gy <= gy1; gy++) {
-        const cy = lotY0 + (gy + 0.5) * YARD_SPACING_FT;
-        const dy = cy - ly;
-        const dy2 = dy * dy;
-        if (dy2 >= r2) continue;
-        for (let gx = gx0; gx <= gx1; gx++) {
-          const cx = lotX0 + (gx + 0.5) * YARD_SPACING_FT;
-          const dx = cx - lx;
-          if (dx * dx + dy2 >= r2) continue;
-          if (!inPolygon(lot, cx, cy)) continue;
-          const g = groundAt(plan, cx, cy);
-          const cz = lz < g ? g : lz > g + YARD_HEIGHT_FT ? g + YARD_HEIGHT_FT : lz;
-          const dz = cz - lz;
-          if (dx * dx + dy2 + dz * dz >= r2) continue;
-          if (gx < minGx) minGx = gx;
-          if (gx > maxGx) maxGx = gx;
-          if (gy < minGy) minGy = gy;
-          if (gy > maxGy) maxGy = gy;
-        }
+  if (lot?.length >= 3) {
+    const lotX0 = Math.min(...lot.map(p => p[0])), lotY0 = Math.min(...lot.map(p => p[1]));
+    const lotX1 = Math.max(...lot.map(p => p[0])), lotY1 = Math.max(...lot.map(p => p[1]));
+    const nx = Math.max(1, Math.ceil((lotX1 - lotX0) / YARD_SPACING_FT - 1e-6));
+    const ny = Math.max(1, Math.ceil((lotY1 - lotY0) / YARD_SPACING_FT - 1e-6));
+    const nz = YARD_LAYERS, originX = lotX0, originY = lotY0;
+    const ground = new Float32Array(nx * ny);
+    let minG = Infinity, maxG = -Infinity;
+    for (let iy = 0; iy < ny; iy++) {
+      const cy = originY + (iy + 0.5) * YARD_SPACING_FT;
+      for (let ix = 0; ix < nx; ix++) {
+        const cx = originX + (ix + 0.5) * YARD_SPACING_FT;
+        const gM = groundAt(plan, cx, cy) * FT;
+        ground[iy * nx + ix] = gM;
+        if (gM < minG) minG = gM;
+        if (gM > maxG) maxG = gM;
       }
-      if (minGx <= maxGx && minGy <= maxGy) lampRects.push([minGx, minGy, maxGx, maxGy]);
     }
-
-    const merged = mergeRects(lampRects);
-    merged.forEach(([gx0, gy0, gx1, gy1], idx) => {
-      const nx = gx1 - gx0 + 1;
-      const ny = gy1 - gy0 + 1;
-      const nz = YARD_LAYERS;
-      const originX = lotX0 + gx0 * YARD_SPACING_FT;
-      const originY = lotY0 + gy0 * YARD_SPACING_FT;
-      const ground = new Float32Array(nx * ny);
-      let minG = Infinity, maxG = -Infinity;
-      for (let iy = 0; iy < ny; iy++) {
-        const cy = originY + (iy + 0.5) * YARD_SPACING_FT;
-        for (let ix = 0; ix < nx; ix++) {
-          const cx = originX + (ix + 0.5) * YARD_SPACING_FT;
-          const gM = groundAt(plan, cx, cy) * FT;
-          ground[iy * nx + ix] = gM;
-          if (gM < minG) minG = gM;
-          if (gM > maxG) maxG = gM;
-        }
-      }
-      const toLocal = makeYardToLocal(originX, originY, YARD_SPACING_FT);
-      const block = {
-        id: `yard:${idx}`,
-        kind: 'yard',
-        spacing: YARD_SPACING,
-        dims: [nx, ny, nz],
-        first: count,
-        toLocal,
-        ground,
-        origin: [originX, originY],
-        groundBounds: [minG, maxG],
-        poly: lot,
-      };
-      blocks.push(block);
-      count += nx * ny * nz;
-    });
+    const toLocal = makeYardToLocal(originX, originY, YARD_SPACING_FT);
+    const block = {
+      id: 'yard:0',
+      kind: 'yard',
+      spacing: YARD_SPACING,
+      dims: [nx, ny, nz],
+      first: count,
+      toLocal,
+      ground,
+      origin: [originX, originY],
+      groundBounds: [minG, maxG],
+      poly: lot,
+    };
+    blocks.push(block);
+    count += nx * ny * nz;
   }
 
   // 3. Deterministic layout hash (independent of placed models and lamp order)
   const h = fingerprint();
-  h.add('grid-layout-1');
+  h.add('grid-layout-2');
   for (const b of blocks) {
     h.add(JSON.stringify([
       b.id, b.kind, b.atlasRoom ?? null, b.building ?? null, b.level ?? null,
@@ -335,50 +245,31 @@ export function pointsInRange(layout, points, source, range) {
   return new Uint32Array(hits);
 }
 
-// Returns Uint8Array of length layout.count (1 = invalid, 0 = valid open air).
-// A point is invalid if it lies outside its room/lot polygon (or above a fractional
-// room ceiling), or inside a solid occluder by +-x/+-y/+-z ray parity (majority >= 4 of 6).
-export function insideMask(points, bvh, layout) {
-  const mask = new Uint8Array(layout.count);
-
-  // 1. Polygon / volume validity per block
-  for (const b of layout.blocks) {
-    const [nx, ny, nz] = b.dims;
-    const spFt = b.spacing / FT;
-    const ox = b.origin[0], oy = b.origin[1];
-    const hasPoly = b.poly?.length >= 3;
-    const heightLimit = b.kind === 'room' && Number.isFinite(b.heightFt) ? b.heightFt + 1e-6 : Infinity;
-
-    for (let iy = 0; iy < ny; iy++) {
-      const py = oy + (iy + 0.5) * spFt;
-      for (let ix = 0; ix < nx; ix++) {
-        const px = ox + (ix + 0.5) * spFt;
-        const outPoly = hasPoly && !inPolygon(b.poly, px, py);
-        if (outPoly) {
-          for (let iz = 0; iz < nz; iz++) {
-            mask[b.first + (iz * ny + iy) * nx + ix] = 1;
-          }
-        } else if (heightLimit < Infinity) {
-          for (let iz = 0; iz < nz; iz++) {
-            if ((iz + 0.5) * spFt > heightLimit) {
-              mask[b.first + (iz * ny + iy) * nx + ix] = 1;
-            }
-          }
-        }
-      }
+// Optional indices produce a compact mask in that exact order. The baker uses
+// small subsets; legacy callers can still request the complete mask explicitly.
+export function insideMask(points, bvh, layout, indices = null) {
+  const count = indices ? indices.length : layout.count;
+  const mask = new Uint8Array(count);
+  for (let n = 0; n < count; n++) {
+    const i = indices ? indices[n] : n;
+    // Blocks have contiguous global addresses, including polygon-exterior cells.
+    let lo = 0, hi = layout.blocks.length;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (layout.blocks[mid].first <= i) lo = mid; else hi = mid;
     }
-  }
-
-  // 2. Ray-parity solid test along +-x, +-y, +-z (majority of 6 -> odd >= 4)
-  if (!bvh || !bvh.triCount) return mask;
-  for (let i = 0; i < layout.count; i++) {
-    if (mask[i]) continue;
-    const o = i * 3;
-    const ox = points[o], oy = points[o + 1], oz = points[o + 2];
+    const b = layout.blocks[lo], [nx, ny] = b.dims, cell = i - b.first;
+    const ix = cell % nx, iy = Math.floor(cell / nx) % ny, iz = Math.floor(cell / (nx * ny));
+    const spFt = b.spacing / FT;
+    if (b.poly?.length >= 3 && !inPolygon(b.poly, b.origin[0] + (ix + .5) * spFt, b.origin[1] + (iy + .5) * spFt) ||
+        b.kind === 'room' && Number.isFinite(b.heightFt) && (iz + .5) * spFt > b.heightFt + 1e-6) {
+      mask[n] = 1; continue;
+    }
+    if (!bvh?.triCount) continue;
+    const o = i * 3, ox = points[o], oy = points[o + 1], oz = points[o + 2];
     let odd = 0;
     for (let d = 0; d < 6; d++) {
-      const dir = RAY_DIRS[d];
-      const dx = dir[0], dy = dir[1], dz = dir[2];
+      const [dx, dy, dz] = RAY_DIRS[d];
       let hits = 0, tMin = RAY_EPS;
       while (hits < RAY_MAX_HITS) {
         const t = bvh.castRay(ox, oy, oz, dx, dy, dz, tMin, RAY_MAX);
@@ -388,11 +279,61 @@ export function insideMask(points, bvh, layout) {
       }
       if (hits & 1) {
         odd++;
-        if (odd >= 4) { mask[i] = 1; break; }
-      } else if (odd + (5 - d) < 4) {
-        break;
-      }
+        if (odd >= 4) { mask[n] = 1; break; }
+      } else if (odd + (5 - d) < 4) break;
     }
   }
   return mask;
+}
+
+export const GRID_MASK_SLICE_MS = 1;
+
+// One channel per mask operation, reused across slices and closed on every exit.
+// MessageChannel tasks do not inherit the nested-timer clamp.
+function gridYielder() {
+  let channel = null, resume = null;
+  return {
+    yield() {
+      if (globalThis.scheduler?.yield) return globalThis.scheduler.yield();
+      if (typeof globalThis.MessageChannel === 'function') {
+        if (!channel) {
+          channel = new globalThis.MessageChannel();
+          channel.port1.onmessage = () => { const done = resume; resume = null; done(); };
+        }
+        return new Promise(resolve => { resume = resolve; channel.port2.postMessage(0); });
+      }
+      return new Promise(resolve => setTimeout(resolve, 0));
+    },
+    dispose() { channel?.port1.close(); channel?.port2.close(); },
+  };
+}
+
+// cache: 0 unknown, 1 valid, 2 invalid. Never scan unrelated layout points.
+// Check lease/pause/cancellation once per slice; scheduling is owned here.
+export async function maskGridIndices(points, bvh, layout, indices, cache, checkpoint) {
+  let maskMs = 0, maskMaxMs = 0, maskPoints = 0, maskSlices = 0, maskYields = 0, next = 0;
+  const yielder = gridYielder();
+  const skipKnown = () => { while (next < indices.length && cache[indices[next]] !== 0) next++; };
+  try {
+    skipKnown();
+    while (next < indices.length) {
+      await checkpoint();
+      const start = performance.now();
+      do {
+        const i = indices[next];
+        if (cache[i] === 0) {
+          cache[i] = insideMask(points, bvh, layout, indices.subarray(next, next + 1))[0] ? 2 : 1;
+          maskPoints++;
+        }
+        next++;
+      } while (next < indices.length && performance.now() - start < GRID_MASK_SLICE_MS);
+      const ms = performance.now() - start;
+      maskMs += ms; maskMaxMs = Math.max(maskMaxMs, ms); maskSlices++;
+      skipKnown();
+      if (next < indices.length) { await yielder.yield(); maskYields++; }
+    }
+  } finally {
+    yielder.dispose();
+  }
+  return {maskMs, maskMaxMs, maskPoints, maskSlices, maskYields};
 }

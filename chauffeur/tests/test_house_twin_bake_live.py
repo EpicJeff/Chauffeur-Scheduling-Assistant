@@ -350,6 +350,44 @@ def kitchen_rise(page, points=None):
 
 # --- scenarios -----------------------------------------------------------------------------
 
+def scenario_bake_publishes_grid_chunks():
+    s = L.serve()
+    if s is None:
+        return
+    L.reset()
+    L.facts()
+    clear_bakes()
+    with s.browser(launch_args=L.GPU_ARGS) as page:
+        open_editor(page, s)
+        start_editor_bake(page)
+        page.wait_for_function(r"() => window.__twin.bake.state().baking && /Grid \d+ points/.test(document.querySelector('#twin-bake-controls output')?.textContent || '')", timeout=120000)
+        st = wait_baked(page)
+        result = page.evaluate("""async () => {
+          const view = window.__twin;
+          const B = window.chfBase;
+          const {decodeGridChunk} = await import(B + 'static/twin/bake/grid_chunk.js');
+          const key = view.bake.state().key;
+          const manifest = await (await fetch(B + `api/house/bakes/${key}`)).json();
+          const chunks = [];
+          for (const [id, entry] of Object.entries(manifest.lights)) {
+            if (!view.bake.fresh().includes(id)) continue;
+            if (!entry.grid) { chunks.push({id, missing: true}); continue; }
+            const response = await fetch(B + `api/house/bakes/${key}/grid/${entry.grid}.bin`);
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const chunk = await decodeGridChunk(bytes);
+            chunks.push({id, status: response.status, layout: chunk.layoutHash === entry.gridLayout,
+              points: chunk.indices.length, device: chunk.device === id, gzip: bytes[0] === 31 && bytes[1] === 139, bytes: bytes.length});
+          }
+          return chunks;
+        }""")
+        check(result and all(not row.get('missing') for row in result), ('fresh lights name grids', result))
+        check(any(row.get('points', 0) > 0 for row in result), ('a published chunk contains points', result))
+        for row in result:
+            check(row['status'] == 200 and row['layout'] and row['device'] and row['gzip'] and row['bytes'] <= 8 * 1024 * 1024,
+                  ('published grid GET and decoded header', row))
+        L.no_errors(s)
+
+
 def scenario_editor_button_bake_lands():
     s = L.serve()
     if s is None:
@@ -1138,6 +1176,7 @@ def scenario_light_spills_through_a_window():
 
 
 SCENARIOS = [
+    scenario_bake_publishes_grid_chunks,
     scenario_open_plan_light_crosses_the_invisible_wall,
     scenario_light_spills_through_a_window,
     scenario_editor_button_bake_lands,

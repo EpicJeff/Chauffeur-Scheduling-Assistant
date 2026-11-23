@@ -19,7 +19,7 @@ const THREE = await import(three);
 const { FT } = await import(file('static/twin/twin_light_math.js'));
 const { groundAt } = await import(file('static/twin/twin_ground.js'));
 const { buildOccluderBVH } = await import(file('static/twin/live/cone_occluder.js'));
-const { gridLayout, gridPoints, pointsInRange, insideMask } = await import(file('static/twin/bake/grid_layout.js'));
+const { gridLayout, gridPoints, pointsInRange, insideMask, maskGridIndices, GRID_MASK_SLICE_MS } = await import(file('static/twin/bake/grid_layout.js'));
 const { encodeGridChunk, decodeGridChunk, MAX_CHUNK_BYTES } = await import(file('static/twin/bake/grid_chunk.js'));
 
 const near = (a, b, eps = 1e-4, msg = '') =>
@@ -55,7 +55,7 @@ function basePlan() {
   const plan = basePlan();
   const lamp = { source: { x: 5 * FT, y: 8 * FT, z: -6 * FT }, range: 15 * FT, outdoor: false };
   const layout = gridLayout(plan, [lamp]);
-  assert.equal(layout.blocks.length, 1, 'one room block');
+  assert.equal(layout.blocks.filter(b=>b.kind==='room').length, 1, 'one room block');
   const b = layout.blocks[0];
   assert.equal(b.kind, 'room');
   assert.equal(b.atlasRoom, 0);
@@ -64,7 +64,7 @@ function basePlan() {
   assert.equal(b.first, 0);
   near(b.spacing, FT, 1e-6, 'indoor spacing is 1 ft');
   assert.deepEqual(b.dims, [10, 12, 9], '10 x 12 x 9 room dims');
-  assert.equal(layout.count, 10 * 12 * 9);
+  assert.equal(layout.count, 10 * 12 * 9 + 30 * 30 * 5);
 
   const pts = gridPoints(layout);
   assert.equal(pts.length, layout.count * 3);
@@ -94,7 +94,7 @@ function basePlan() {
   // Local (5, 6, 8) rotated 90 deg CCW -> (-6, 5) + (10, 4) = (4, 9), height = 10
   const rotLamp = { source: { x: 4 * FT, y: 10 * FT, z: -9 * FT }, range: 15 * FT, outdoor: false };
   const rotLayout = gridLayout(rotPlan, [rotLamp]);
-  assert.equal(rotLayout.blocks.length, 1);
+  assert.equal(rotLayout.blocks.filter(b=>b.kind==='room').length, 1);
   assert.deepEqual(rotLayout.blocks[0].dims, [10, 12, 9]);
   const rotPts = gridPoints(rotLayout);
   // Local (0.5, 0.5, 0.5) -> rotated (-0.5, 0.5) + (10, 4) = (9.5, 4.5), y = 2.5
@@ -108,7 +108,7 @@ function basePlan() {
   console.log('Passed: test_room_grid_dims');
 }
 
-// 2. test_room_without_lamp_has_no_block
+// 2. test_every_room_has_a_block
 {
   const plan = basePlan();
   plan.buildings[0].rooms.push({
@@ -118,13 +118,14 @@ function basePlan() {
   });
   const lamp = { source: { x: 5 * FT, y: 5 * FT, z: -6 * FT }, range: 15 * FT, outdoor: false };
   const layout = gridLayout(plan, [lamp]);
-  assert.equal(layout.blocks.length, 1, 'only the lit room gets a block');
+  assert.equal(layout.blocks.filter(b=>b.kind==='room').length, 2, 'every room gets a block');
   assert.equal(layout.blocks[0].atlasRoom, 0);
 
   const empty = gridLayout(plan, []);
-  assert.equal(empty.blocks.length, 0, 'no lamps -> no blocks');
-  assert.equal(empty.count, 0);
-  console.log('Passed: test_room_without_lamp_has_no_block');
+  assert.equal(empty.blocks.length, 3, 'rooms and whole lot exist with no lamps');
+  assert.equal(empty.hash, layout.hash);
+  assert.equal(empty.count, layout.count);
+  console.log('Passed: test_every_room_has_a_block');
 }
 
 // 3. test_yard_grid_follows_ground
@@ -142,7 +143,9 @@ function basePlan() {
   const yLamp = { source: { x: 12 * FT, y: 4 * FT, z: -15 * FT }, range: 12 * FT, outdoor: true };
   const layout = gridLayout(plan, [yLamp]);
   const yardBlocks = layout.blocks.filter(b => b.kind === 'yard');
-  assert.ok(yardBlocks.length >= 1, 'yard lamp produces yard block');
+  assert.equal(yardBlocks.length, 1, 'one whole-lot yard block');
+  assert.deepEqual(yardBlocks[0].dims, [15,15,5]);
+  assert.equal(gridLayout(plan, []).hash, layout.hash, 'yard does not depend on lamps');
   const yb = yardBlocks[0];
   near(yb.spacing, 2 * FT, 1e-6, 'yard spacing is 2 ft');
   const [nx, ny, nz] = yb.dims;
@@ -202,6 +205,8 @@ function basePlan() {
   assert.ok(layoutA.hash.length >= 16);
   assert.equal(layoutA.hash, layoutA2.hash, 'same input (even reordered lamps) gives same hash');
   assert.equal(layoutA.hash, layoutB.hash, 'moving placed items does not change layout hash');
+  assert.equal(layoutA.hash, gridLayout(planA, []).hash, 'removing every lamp preserves layout');
+  assert.equal(layoutA.hash, gridLayout(planA, [{source:{x:500,y:1,z:500},range:1,outdoor:true}]).hash, 'moving lamps and changing reach preserves layout');
 
   const planC = structuredClone(planA);
   planC.buildings[0].rooms[0].polygon = [[0, 0], [11, 0], [11, 12], [0, 12]];
@@ -238,7 +243,7 @@ function basePlan() {
     { source: { x: 13.5 * FT, y: 5 * FT, z: -1.5 * FT }, range: 10 * FT, outdoor: false },
   ];
   const layout = gridLayout(plan, lamps);
-  assert.equal(layout.blocks.length, 2);
+  assert.equal(layout.blocks.filter(b=>b.kind==='room').length, 2);
   const pts = gridPoints(layout);
 
   const meshes = [];
@@ -286,7 +291,87 @@ function basePlan() {
       }
     }
   }
+  const subset = new Uint32Array([idxOf(mainBlock,2,2,2), idxOf(mainBlock,8,2,4), idxOf(mainBlock,8,9,4), idxOf(closetBlock,1,1,4)]);
+  assert.deepEqual([...insideMask(pts,bvh,layout,subset)], [...subset].map(i=>mask[i]), 'subset matches full parity and polygon mask');
+  const cache = new Uint8Array(layout.count);
+  let casts = 0, yields = 0;
+  const counted = {triCount:bvh.triCount,castRay(...args){casts++;return bvh.castRay(...args);}};
+  const measured = await maskGridIndices(pts,counted,layout,subset,cache,async()=>{yields++;});
+  assert.ok(yields>0); assert.ok(measured.maskMs>0); assert.equal(measured.maskPoints,subset.length);
+  for(const i of subset) assert.equal(cache[i],mask[i]+1);
+  assert.equal(cache.filter(v=>v!==0).length,subset.length,'unrelated points remain unknown');
+  const before = casts;
+  assert.equal((await maskGridIndices(pts,counted,layout,subset,cache,async()=>{throw Error('cached points must not yield');})).maskPoints,0);
+  assert.equal(casts,before,'overlapping lights reuse parity results');
+  const all = Uint32Array.from({length:layout.count},(_,i)=>i), cancelledCache = new Uint8Array(layout.count);
+  let slices=0, beforeCancel=0;
+  await assert.rejects(maskGridIndices(pts,bvh,layout,all,cancelledCache,async()=>{if(++slices===2){beforeCancel=cancelledCache.filter(v=>v!==0).length;throw Error('cancelled');}}),/cancelled/);
+  assert.ok(beforeCancel>0&&beforeCancel<all.length,'first time-budgeted slice classifies only part of the mask');
+  assert.equal(cancelledCache.filter(v=>v!==0).length,beforeCancel,'cancellation stops before any second-slice work');
   console.log('Passed: test_inside_mask');
+}
+
+// Geometry-only memory and desktop parity measurements (no GPU claims).
+{
+  const household = JSON.parse(readFileSync(new URL(file('tests/fixtures/twin_model/household-2026-11-09.json')), 'utf8'));
+  const lot200 = {buildings:[],site:{lot:[[0,0],[200,0],[200,200],[0,200]]}};
+  for(const [name,plan] of [['household',household],['lot200',lot200]]) {
+    const layout=gridLayout(plan), points=gridPoints(layout);
+    const groundBytes=layout.blocks.reduce((n,b)=>n+(b.ground?.byteLength||0),0);
+    console.log(`       ${name}: ${layout.count} points, xyz Float32 ${points.byteLength} bytes, ground Float32 ${groundBytes} bytes`);
+    if(name==='lot200'){assert.equal(layout.count,50000);assert.equal(points.byteLength,600000);continue;}
+    const {buildTwin}=await import(file('static/twin/twin_generator.js'));
+    const {collectStaticOccluders}=await import(file('static/twin/live/cone_occluder.js'));
+    const {atlasMesh}=await import(file('static/twin/bake/atlas.js'));
+    const out=buildTwin(plan,kit,'high');await out.ready;out.root.updateMatrixWorld(true);
+    const bvh=buildOccluderBVH(collectStaticOccluders(out.root).filter(o=>atlasMesh(o)&&o.material.name!=='glass'&&!o.geometry?.userData.bakeHeightfield));
+    const cache=new Uint8Array(layout.count);
+    const blocks=layout.blocks.filter(b=>b.kind==='room').sort((a,b)=>b.dims.reduce((x,y)=>x*y,1)-a.dims.reduce((x,y)=>x*y,1)).slice(0,3);
+    // Exercise the real unclamped fallback, never setImmediate disguised as a scheduler.
+    const scheduler=globalThis.scheduler, NativeChannel=globalThis.MessageChannel;
+    let channels=0, posts=0, closes=0;
+    delete globalThis.scheduler;
+    globalThis.MessageChannel=class extends NativeChannel {
+      constructor(){super();channels++;
+        const post=this.port2.postMessage.bind(this.port2);
+        this.port2.postMessage=(...args)=>{posts++;return post(...args);};
+        for(const port of [this.port1,this.port2]){
+          const close=port.close.bind(port);port.close=()=>{closes++;return close();};
+        }
+      }
+    };
+    try {
+      for(const [n,b] of blocks.entries()) {
+        const centre=b.first+Math.floor(b.dims.reduce((x,y)=>x*y,1)/2), source=new THREE.Vector3().fromArray(points,centre*3);
+        const indices=pointsInRange(layout,points,source,6);
+        const beforePosts=posts, beforeChannels=channels, beforeCloses=closes;
+        let checkpoints=0;
+        const wallStart=performance.now();
+        const m=await maskGridIndices(points,bvh,layout,indices,cache,async()=>{checkpoints++;});
+        const wallMs=performance.now()-wallStart, yields=posts-beforePosts;
+        assert.equal(globalThis.scheduler,undefined,'scheduler absent during household measurement');
+        assert.equal(channels-beforeChannels,1,'one real MessageChannel reused for the light');
+        assert.equal(closes-beforeCloses,2,'both channel ports close after masking');
+        assert.equal(yields,m.maskYields,'every yield posts through MessageChannel');
+        assert.equal(checkpoints,m.maskSlices,'one checkpoint per slice');
+        assert.ok(yields>0&&yields<m.maskPoints/4,'task round trips are a small fraction of unknown points');
+        if(n===0) assert.equal(indices.length,26416,'same household light as round 1');
+        console.log(`       household mask ${n}: ${bvh.triCount} triangles, ${indices.length} in range, ${m.maskPoints} newly masked, budget=${GRID_MASK_SLICE_MS} ms, CPU ${m.maskMs.toFixed(2)} ms, longest ${m.maskMaxMs.toFixed(2)} ms, wall ${wallMs.toFixed(2)} ms, MessageChannel yields ${yields} (${(100*yields/m.maskPoints).toFixed(2)}%), checkpoints ${checkpoints}`);
+      }
+      // Cheap polygon rejects are batched too, rather than scheduling one task each.
+      const rejectLayout=gridLayout({buildings:[],site:{lot:[[0,0],[200,0],[0,200]]}});
+      const rejects=Uint32Array.from({length:rejectLayout.count},(_,i)=>i);
+      const beforePosts=posts;
+      const cheap=await maskGridIndices(gridPoints(rejectLayout),null,rejectLayout,rejects,new Uint8Array(rejectLayout.count),async()=>{});
+      assert.ok(posts-beforePosts<rejectLayout.count/100,'cheap polygon checks do not yield per point');
+      assert.equal(closes,channels*2,'no live channel ports remain');
+      console.log(`       cheap polygon mask: ${cheap.maskPoints} points, MessageChannel yields ${posts-beforePosts}`);
+    } finally {
+      globalThis.MessageChannel=NativeChannel;
+      if(scheduler===undefined)delete globalThis.scheduler;else globalThis.scheduler=scheduler;
+    }
+  }
+  console.log('Passed: test_layout_memory_and_mask_slices');
 }
 
 // 6. test_chunk_roundtrip
