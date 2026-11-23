@@ -112,6 +112,7 @@ export function resolveClimateZones(layout, states, stale = false) {
 export function registerClimate(registerMode) {
   registerMode({id: 'climate', label: 'Climate',
     foreground: (row, state) => row.kind === 'climate' || state?.attributes?.device_class === 'temperature',
-    legend: 'Orange · Heating   |   Blue · Cooling   |   Grey · Idle',
+    key: () => ({items: [['heat', 'Heating'], ['cool', 'Cooling'], ['idle', 'Idle']]
+      .map(([action, label]) => ({swatch: `rgb(${climateColors[action].join(', ')})`, label}))}),
     enter() {}, update() {}, leave() {}});
 }

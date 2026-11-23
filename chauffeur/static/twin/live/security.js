@@ -5,6 +5,16 @@ import { groundAt, buildingGround } from '../twin_ground.js';
 import { buildingCentre, lotPoint } from './energy_geometry.js';
 import { collectStaticOccluders, buildOccluderBVH, buildOccludedCone, createConeMaterials } from './cone_occluder.js';
 
+export const SECURITY_COLOR = '#ef4949';
+export function alarmSummary(panels, stale = false) {
+  if (!panels.length) return '';
+  const counts = new Map();
+  if (!stale) for (const {state} of panels) if (state && !['unknown', 'unavailable'].includes(state))
+    counts.set(state, (counts.get(state) || 0) + 1);
+  const common = [...counts].sort((a, b) => b[1] - a[1])[0];
+  return common ? `Alarm · ${common[0].replaceAll('_', ' ')} (${common[1]} of ${panels.length})` : 'Alarm · unavailable';
+}
+
 export function securityItem(row, state) {
   const domain = row.entity_id?.split('.')[0], kind = row.kind, dc = state?.attributes?.device_class;
   return ['lock', 'garage', 'camera', 'alarm'].includes(kind) || ['lock', 'camera', 'alarm_control_panel'].includes(domain) ||
@@ -103,6 +113,10 @@ export function mountSecurity({view, live, overlays = view.scene}) {
   const emphasis = [], cones = [], layout = live.layout();
   const coneMaterials = createConeMaterials();
   const events = new AbortController();
+  const alarmDetails = document.createElement('details'), alarmStatus = document.createElement('summary'), alarmList = document.createElement('div');
+  alarmDetails.className = 'twin-key-alarms'; alarmStatus.className = 'twin-key-status';
+  alarmDetails.append(alarmStatus, alarmList);
+  let alarmKey = '';
   let occluder = null, occluderBox = null, occluderBuildMs = 0, rebuildCount = 0;
 
   for (const marker of layout.markers) {
@@ -113,7 +127,7 @@ export function mountSecurity({view, live, overlays = view.scene}) {
     const base = buildingGround(view.plan, building);
     const at = new THREE.Vector3(marker.at[0] * FT, (marker.at[2] + base) * FT, -marker.at[1] * FT);
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(.42, 12, 8),
-      new THREE.MeshBasicMaterial({color: '#ef4949', transparent: true, opacity: .75, depthTest: false, depthWrite: false, toneMapped: false}));
+      new THREE.MeshBasicMaterial({color: SECURITY_COLOR, transparent: true, opacity: .75, depthTest: false, depthWrite: false, toneMapped: false}));
     mesh.position.copy(at); mesh.visible = false; mesh.renderOrder = 19;
     mesh.userData.securityAttention = marker.device_id; root.add(mesh); emphasis.push({marker, mesh});
     if (marker.kind !== 'camera' && !marker.entity_id.startsWith('camera.')) continue;
@@ -188,10 +202,24 @@ export function mountSecurity({view, live, overlays = view.scene}) {
       for (const {marker, mesh} of emphasis) mesh.visible = on && !live.stale() && securityAttention(marker, live.state(marker.entity_id));
       for (const {mesh} of cones) mesh.visible = on;
     },
-    legend() {
+    key() {
       const currentLayout = live.layout();
       const alarms = Object.entries(live.peek()).filter(([id]) => id.startsWith('alarm_control_panel.'));
-      return 'Red · Open / unlocked   |   Camera view' + (cones.some(r => r.marker.camera_view || currentLayout.camera_views?.[r.marker.entity_id]) ? '' : ' · 25 ft') + alarms.map(([id, s]) => `   |   ${s.attributes?.friendly_name || id}: ${live.stale() ? 'unavailable' : s.state.replaceAll('_', ' ')}`).join('');
+      const status = alarmSummary(alarms.map(([, state]) => state), live.stale());
+      const mixed = !live.stale() && new Set(alarms.map(([, s]) => s.state || 'unavailable')).size > 1;
+      const next = JSON.stringify([status, alarms]);
+      if (mixed && next !== alarmKey) {
+        alarmStatus.textContent = status;
+        alarmList.replaceChildren(...alarms.map(([id, s]) => {
+          const row = document.createElement('p');
+          row.textContent = `${s.attributes?.friendly_name || id}: ${(s.state || 'unavailable').replaceAll('_', ' ')}`;
+          return row;
+        }));
+      }
+      alarmKey = next;
+      return {items: [{swatch: SECURITY_COLOR, label: 'Open or unlocked'},
+        {swatch: 'cone', label: 'Camera view' + (cones.some(r => r.marker.camera_view || currentLayout.camera_views?.[r.marker.entity_id] || view.plan.camera_views?.[r.marker.entity_id]) ? '' : ' · 25 ft')}],
+        status: mixed ? '' : status, content: mixed ? [alarmDetails] : []};
     },
     stop() {
       events.abort();

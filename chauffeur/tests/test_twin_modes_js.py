@@ -38,7 +38,7 @@ check('every combination independently controls lights, climate, ribbons, legend
    assert.equal(lighting.at(-1),enabled.includes('lights'));
    assert.equal(t.live.energy().ribbons.some(r=>r.visible),enabled.includes('energy'));
    assert.equal(document.querySelector('.twin-energy-labels').hidden,!enabled.includes('energy'));
-   assert.equal(!!document.getElementById('twin-mode-legend').querySelector('a'),enabled.includes('energy'));
+   assert.equal(!!document.getElementById('twin-mode-key').querySelector('a'),enabled.includes('energy'));
    assert.equal(t.live.marker('lamp').dim,false,'enabled markers never dim');
    assert.equal(t.sprite('lamp').visible,enabled.includes('lights'));
    assert.equal(t.live.marker('lock').look,'attention','attention marker remains reachable');

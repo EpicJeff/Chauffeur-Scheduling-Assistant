@@ -12,6 +12,7 @@ import { registerSecurity } from './security.js';
 import { svgIcon } from './glance_icons.js';
 import { garageEntity, garagePose } from '../garage_door.js';
 import { modeShows, modeName, readModes, saveModes } from './mode_state.js';
+import { mountModeKey } from './mode_key.js';
 export { modeShows } from './mode_state.js';
 
 const registry = new Map();
@@ -96,9 +97,6 @@ export function mountModes(view, live) {
   }
   (document.getElementById('twin-mode-bar') || document.getElementById('twin-controls')).append(strip);
   const climateLabels = document.createElement('div'); climateLabels.className = 'twin-mode-labels twin-climate-labels';
-  const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
-  const legendText = document.createElement('span'), legendContent = document.createElement('div'); modeLegend.append(legendText, legendContent);
-  document.getElementById('twin-controls').append(modeLegend);
   document.body.append(climateLabels);
   let lastKey = '', revision = 0, effectLampKey = '';
   const floors = [], lamps = [];
@@ -113,6 +111,11 @@ export function mountModes(view, live) {
   const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
   const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   for (const definition of modes()) if (definition.mount) effects.set(definition.id, definition.mount(context));
+  const modeKey = mountModeKey(strip, {getSections: () => modes().filter(mode => enabled.has(mode.id)).map(mode => ({
+    id: mode.id, icon: mode.icon || MODE_ICONS[mode.id], name: mode.label,
+    key: mode.id === 'lights' ? {items: [], note: rig.overflow() ? 'Some lights are shown as glow only on this tier' : ''}
+      : effects.get(mode.id)?.key?.() || mode.key?.(),
+  }))});
   for (const id of enabled) registry.get(id)?.enter?.(context);
   context.lighting(enabled.has('lights'));
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -279,9 +282,6 @@ export function mountModes(view, live) {
     const zones = resolveClimateZones(layout, states, stale);
     for (const floor of floors) floor.climate = zones.get(climateRoomKey(floor.room));
     for (const effect of effects.values()) effect.update?.(enabled);
-    const content = [...enabled].flatMap(id => effects.get(id)?.legendContent?.() || []);
-    if (content.length !== legendContent.children.length || content.some((node, i) => legendContent.children[i] !== node))
-      legendContent.replaceChildren(...content);
     for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === 'all' ? enabled.size === ids.length : enabled.has(value)));
     for (const id of enabled) registry.get(id)?.update?.(context);
     draw();
@@ -333,9 +333,7 @@ export function mountModes(view, live) {
     const fresh = new Set(view.bake?.fresh() || []);
     for (const id of paletteLineEntities(lamps)) fresh.delete(id);
     const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0], fresh);
-    const overflowText = enabled.has('lights') && rig.overflow() ? 'Some lights are shown as glow only on this tier' : '';
-    legendText.textContent = [...enabled].map(id => effects.get(id)?.legend?.() || registry.get(id)?.legend || '').concat(overflowText).filter(Boolean).join(' · ');
-    modeLegend.hidden = !modeLegend.textContent;
+    modeKey.update();
     const bakeTints = new Map();
     for (const lamp of lamps) {
       const bakeId = lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id;
@@ -405,7 +403,7 @@ export function mountModes(view, live) {
       for (const door of garageDoors) garagePose(door.group, false);
       for (const flame of flames) flame.visible = false;
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id, lamp.rgb, 0);
-      unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
+      unsubscribe(); modeKey.stop(); strip.remove(); climateLabels.remove();
       for (const id of enabled) registry.get(id)?.leave?.(context);
       rig.stop();
       for (const effect of effects.values()) effect.stop?.();

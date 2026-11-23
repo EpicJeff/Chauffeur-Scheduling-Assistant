@@ -158,7 +158,7 @@ check('mounted mode, drawer and wall link show the same decisions on pushes and 
   settings=mountEnergySettings(t.view,{api:async()=>({ok:true,json:async()=>preferences})});await settings.reload();
   const s=t.live.energy();assert.equal(s.check.summary,'Ribbons showing: 3');
   assert.deepEqual(s.check.flows.filter(r=>r.shown).map(r=>r.id).sort(),s.ribbons.filter(r=>r.visible).map(r=>r.id).sort());
-  const legend=document.getElementById('twin-mode-legend'),link=legend.querySelector('a');
+  const legend=document.getElementById('twin-mode-key'),link=legend.querySelector('a');
   window.chfOpenSettings=(...args)=>{opened=args;};await press(link);assert.deepEqual(opened,['twin','twin-energy-check']);delete window.chfOpenSettings;
   assert.equal(document.querySelector('#twin-energy-check [data-energy-summary]').textContent,s.check.summary);
   t.states['sensor.solar_power'].state='0';t.states['sensor.grid_power'].state='1500';t.states['sensor.house_power'].state='500';await t.live.refresh();
