@@ -1,6 +1,24 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.989 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.990 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.990 (2026-11-23, owner approved on Chromium clips of the owner's house, NOT device-verified): eave streams redone. They come and go, are clear water with ripples moving at falling speed, break into drops lower down, pour as a curtain off straight edges in heavy flow, and stay visible from the normal overview.**
+
+The owner's verdict on v.985/.988 streams: "There is no variability. It looks like a sheet is placed along the edge of each eave and lines are drawn down to the ground at specific spots... the same crawling black and white dashed lines... It's not waves. It is ripples and distortion traveling down the stream." Plus: "they should come and go", "sometimes... a sheer descent type of flow when the surface is flat and the flow is heavy", and "farther away from the eave... break up into drops or just have breaks". They were also invisible in practice: hidden with a building focused (fixed in .988) and hidden from the default overview by the 8-42 m fade.
+
+All in `sky/eave_streams.js` (Gemini, five rounds against the owner's tin-roof clip; rounds 2-4 were turned back by Claude's look review before the owner saw them):
+
+1. **Activity.** Each eave has a pool of candidate sites. Slowly drifting noise over eave length and time decides which sites run. A site forms, runs, thins, breaks into drips and stops, and the set changes over tens of seconds.
+2. **Clear water.** Streams and the sheet are mostly transparent. Shape comes from thin edge glints, a faint core and moving ripple/distortion modulation. Owner, round 4: "too white... should be more clear like the sheet descents". There is no black/white banding.
+3. **Motion.** Ripples and gaps advect at free-fall speed, v = sqrt(2 g d), about 4.45 m/s at 1 m. Break-up into strands and drops grows with fall distance, and heavy flow stays coherent longer.
+4. **Sheet descent.** On flat, straight edges (e.g. the metal awning) in heavy flow, neighbouring streams merge into a curtain with a ragged, tearing lower edge, which splits back into streams as flow drops. The sheet never lowers the luminance of a background no brighter than the sky it reflects.
+5. **Distance.** LOD fades from 8 m to a 35% instance floor held from 48 to 95 m, gone by 120 m. Streams have a 1.2 px minimum on-screen width with coverage-correct alpha, so far streams are faint threads; `twin_view.js` passes the viewport height each frame. Spray is dropped beyond 25 m.
+
+A review fix keeps sheet quads' along-eave coordinate in the eave's own direction when the camera-facing flip fires, so neighbouring quads stay continuous while orbiting.
+
+**Costs:** one program, 2 draws, 0 samplers, 20-21 vectors, O(1) CPU per frame. ANGLE D3D11 fresh link median ~347 ms against 152 ms before (once, one program). Owner house, High: near views 21,126 triangles (unchanged); default overview 7,104 (was 0, hidden).
+
+**Tests:** `test_twin_eave_streams_js.py` 9/9 + 1/1 (activity varies over time, advection within 10% of free fall, break-up with distance, sheet only on flat straight edges at high flow, stream alpha within 1.5x of the sheet's, no darkening under realistic sky radiance, 60 m visible / 120-150 m hidden), roof_water 8/8, roof_wet 11/11, weather_surface 14/14 + 2/2, weather live, texture units 1/1.
 
 **v2.499.989 (2026-11-23, browser-checked with screenshots at 1920x1080 and 390x844, NOT device-verified): the house viewer's mode legend is a key button with one compact card.** The owner's request: legends "get in the way, especially when you have multiple modes enabled". They wanted colour blocks instead of colour words, a short description each, and no long lists. The owner picked option A from three mockups.
 
