@@ -6,7 +6,7 @@ import { buildingBase, groundAt, inPolygon, segmentIntersection, poolDatum } fro
 import { allPorches } from '../twin_generator.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
 import { collectHardSurfaces } from './precipitation.js';
-import { collectCapSurfaces } from './wet_caps.js';
+import { collectCapSurfaces, createCapSurfaceIndex } from './wet_caps.js';
 import { gutterRuns, downspouts } from '../gutters.js';
 
 const FT=.3048, EPS=2e-4;
@@ -157,8 +157,12 @@ export function createEaveClipper(frames,roofs) {
 // starts just outside the lip, so it cannot hit its own fascia/underside.
 // Opt-in roofDetails adds roofEave in world metres for storey-aware drops;
 // ordinary stream callers retain the same {height,kind} result and ray tests.
-export function createEaveLandingSampler(plan={},roofs=new Map(),{roofDetails=false}={}) {
-  const triangles=[],decks=[],hard=collectHardSurfaces(plan),caps=collectCapSurfaces(plan);
+// Cap sources build/cache their exact tops on the first ray inside their bounds.
+// lazyCaps:false retains eager collection for parity checks.
+export function createEaveLandingSampler(plan={},roofs=new Map(),{roofDetails=false,lazyCaps=true}={}) {
+  const triangles=[],decks=[],hard=collectHardSurfaces(plan);
+  const caps=lazyCaps?null:collectCapSurfaces(plan);
+  const capsAt=lazyCaps?createCapSurfaceIndex(plan):()=>caps;
   for(const b of plan.buildings||[]){
     const f=buildingFrame(plan,b),roof=roofs?.get(b.id)||roofMesh(b.roof?.sections||[]);
     // section[] indexes positions[], never the renderer's independently
@@ -185,7 +189,7 @@ export function createEaveLandingSampler(plan={},roofs=new Map(),{roofDetails=fa
     const [x,y,z]=top,px=x/FT,py=-z/FT;let height=groundAt(plan,px,py)*FT,kind='ground',roofEave=null;
     const offer=(h,k,eave=null)=>{if(h<y-.005&&h>=height){height=h;kind=k;roofEave=eave;}};
     for(const h of hard)if(inPolygon(h.polygon,px,py))offer(((h.flat??groundAt(plan,px,py))+h.elevation)*FT,'hardscape');
-    for(const cap of caps)if(inPolygon(cap.polygon,px,py)&&!(cap.holes||[]).some(p=>inPolygon(p,px,py)))offer(cap.top*FT,'cap');
+    for(const cap of capsAt(px,py,(y-.005)/FT))if(inPolygon(cap.polygon,px,py)&&!(cap.holes||[]).some(p=>inPolygon(p,px,py)))offer(cap.top*FT,'cap');
     for(const bed of plan.site?.beds||[])if(bed.polygon&&inPolygon(bed.polygon,px,py))offer((groundAt(plan,px,py)+(bed.elevation||0)+.12)*FT,'bed');
     const pool=plan.site?.pool;
     if(pool?.polygon&&inPolygon(pool.polygon,px,py))offer((poolDatum(plan,pool)-.25)*FT,'water');
