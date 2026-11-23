@@ -476,6 +476,8 @@ RULES = [
     ('GET', '/api/house/bakes', PARENTS, None),
     ('POST', '/api/house/bakes/{key}/{page}.png', PARENTS, None),
     ('GET', '/api/house/bakes/{key}/{page}.png', WALL_OR_SERVICE, None),
+    ('POST', '/api/house/bakes/{key}/grid/{name}.bin', PARENTS, None),
+    ('GET', '/api/house/bakes/{key}/grid/{name}.bin', WALL_OR_SERVICE, None),
     ('GET', '/api/house/bakes/{key}', WALL_OR_SERVICE, None),
     ('PUT', '/api/house/bakes/{key}', PARENTS, None),
     # Ruling B17: one desk bakes a key at a time; a child's view asks and gets 403 (M4).

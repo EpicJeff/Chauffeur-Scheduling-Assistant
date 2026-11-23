@@ -494,8 +494,14 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
       if (!response.ok && response.status !== 403) throw new Error(`Atlas upload: HTTP ${response.status}`);
     })().catch(error => reportAtlasServer(error, signal));
   };
-  const answer = data => { check(); return apply ? applyAtlas(data, root, layout) :
-    { key: data.key, apply: () => { check(); return applyAtlas(data, root, layout); } }; };
+  const answer = data => {
+    check();
+    // Placements no longer invalidate this cache. Reach and per-lamp occluder
+    // keys must read today's plan, rather than the plan saved with its geometry.
+    const current = { ...data, room: { ...data.room, plan } };
+    return apply ? applyAtlas(current, root, layout) :
+      { key: data.key, apply: () => { check(); return applyAtlas(current, root, layout); } };
+  };
   const save = async data => {
     check(); await wait(cached(db, data.key, data).catch(() => null));
     check(); await wait(cached(db, 'input:' + job.cacheKey, data.key).catch(() => null));
