@@ -16,6 +16,8 @@ import { invalidateMaterialReach } from './reach.js';
 import { releaseBakeSource, bakeReceiverRoots, bakeModelRoot, prepareBakeModels } from './source.js';
 import { matchesEntry, pageDamage, cheapSignatures, realtimeCurrent } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
+import { gridLayout } from './grid_layout.js';
+import { mountModelLighting } from './model_lighting.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -161,6 +163,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   let parentProbed = false;
   let stopped = false, allowed = false, permissionChecked = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
+  let models = null;
   let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
@@ -220,6 +223,9 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   }, { signal: halt.signal });
   const pageErrors = new Map(), etags = new Map(), present = new Set(), clones = [], textures = new Set();
   const preservePages = new Set();
+  // page -> the manifest text and stored digest of a newer page not yet named
+  // by a manifest (a publication in flight on another desk).
+  const unpublished = new Map();
   let pageManifest = null;
   const pageSignature = (m,p) => JSON.stringify(Object.entries(m?.lights || {}).filter(([,e])=>(e.pages || [e.page]).includes(p))
     .map(([id,e])=>[id,e.key,e.location,e.channel,e.scale]).sort((a,b)=>a[0].localeCompare(b[0])));
@@ -354,6 +360,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     // The slot carries the sum of its members' linear colours.
     const tint = group ? tintSum(group.members.map(id => tints.get(id)).filter(Boolean), on)
       : tintSum([{ rgb, intensity }], on);
+    models?.setTint(slotId, tint);
     if (uniforms.lmChartMode) setLightTintColor(uniforms, 0, lights.findIndex(l => l.device === slotId), tint);
     else for (const room of s.receivers || [s.room]) setLightTintColor(uniforms, room, s.bank * 2 + s.channel, tint);
   }
@@ -490,6 +497,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   }
   // The light list's layout: banks, layers, tints and the blank arrays it draws from.
   function prepare(list, history = packed?.ownership, manifest = null) {
+    models?.update([]).catch(reportError);
     unpatch();
     for (const t of textures) t.dispose();
     textures.clear();
@@ -635,7 +643,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (manifestText === null && !present.size && !fresh.size) { showProgress(); return; }
       for (const id of fresh) light(id, [0, 0, 0], 0);
       for (const p of present) { const at = locate(p); if (at) writeLayer(at.texture, at.layer, null); }
-      fresh.clear(); present.clear(); etags.clear(); pageErrors.clear(); manifestText = null; resumePending = false;
+      fresh.clear(); present.clear(); etags.clear(); pageErrors.clear(); unpublished.clear(); manifestText = null; resumePending = false;
+      models?.update(fresh, {key:atlas.key, lights:{}}).catch(reportError);
       stale = lights.map(l => l.device); view.reflectionsChanged?.(); view.render();
       showProgress();
       return;
@@ -676,13 +685,26 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       }
       if (r.status === 404) {
         if (present.has(p)) { writeLayer(at.texture, at.layer, null); present.delete(p); changed = true; }
-        etags.delete(p); continue;
+        etags.delete(p); unpublished.delete(p); continue;
       }
       if (!r.ok) continue;     // offline: keep the last complete page
       try {
         const bytes = new Uint8Array(await r.arrayBuffer());
-        const damage = pageDamage(m, p, r.headers.get('X-Bake-Digest') || r.headers.get('etag'), bytes.length);
-        if (damage) throw new Error('damaged stored page');
+        const digest = r.headers.get('X-Bake-Digest') || r.headers.get('etag');
+        const damage = pageDamage(m, p, digest, bytes.length);
+        if (damage) {
+          // A desk stores its pages before the manifest that names them. A newer
+          // page under the manifest this desk holds is a publication in flight:
+          // keep the last complete page, which matches this manifest, and ask
+          // again on the next poll. The same mismatch under the same manifest is damage.
+          const prior = unpublished.get(p);
+          if (present.has(p) && !(prior && prior.text === text && prior.digest === digest && prior.size === bytes.length)) {
+            unpublished.set(p, { text, digest, size: bytes.length });
+            continue;
+          }
+          throw new Error('damaged stored page');
+        }
+        unpublished.delete(p);
         const data = await codec.transcode(bytes, at.texture.format);
         if (!valid()) return;
         writeLayer(at.texture, at.layer, data); present.add(p); etags.set(p, r.headers.get('etag')); changed = true;
@@ -698,7 +720,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       }
     }
     // An unchanged manifest and every page 304: nothing to rebuild, upload or redraw (I2).
-    if (!changed || !valid()) return;
+    if (!valid()) return;
+    if (!changed) { models?.update(fresh).catch(reportError); return; }
     const previous = [...fresh]; fresh.clear();
     // The viewer is exact: entries at its own atlas key already carry every key
     // input. Cheap key-input stamps are evidence for the editor chip only; a
@@ -717,6 +740,11 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if(!stale.length)preservePages.clear();
     setSources(m);fills(m);
     if (present.size) { await patch(); if (!valid()) return; }
+    if (display) {
+      const manifest = {...m, key:atlas.key};
+      models ||= mountModelLighting(view, {manifest, layout:gridLayout(round), fresh, tints, api, lights});
+      models.update(fresh, manifest, lights).catch(reportError);
+    }
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);
     for (const [id, tint] of tints) light(id, tint.rgb, tint.intensity);
 
@@ -846,6 +874,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     clearFailure('refresh');
   }
   const controller = {
+    get models() { return models; },
     syncBlocked() {
       if (inspectOnly && manifestRead && editorManifest && editedRound !== lightingChanged(editorManifest))
         editorFreshness(editorManifest);
@@ -902,6 +931,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         fresh.delete(id); light(id, [0, 0, 0], 0);
       }
       stale = lights.filter(l => !fresh.has(l.device)).map(l => l.device);
+      models?.update(fresh).catch(reportError);
       for(const p of present)preservePages.add(p);
       manifestText = null;
       Promise.resolve(view.live?.refresh?.()).catch(reportError);
@@ -935,6 +965,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     stop() {
       if (stopped) return;
       stopped = true; clearRetry(); baker?.cancel(); halt.abort(); clearTimeout(timer); codec?.stop(); strip?.remove();
+      models?.stop();
       controls.removeEventListener('start', moved); controls.removeEventListener('change', moved); controls.removeEventListener('end', moved);
       unpatch();
       releaseBakeSource(root);

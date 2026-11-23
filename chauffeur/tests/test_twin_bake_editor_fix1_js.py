@@ -155,6 +155,38 @@ await check('8_viewer_parents_keep_damage_and_gpu_overflow_information_without_a
   }finally{limited.controller.stop();}
  }finally{seed.controller.stop();}
 });
+await check('9_viewer_keeps_its_page_while_a_newer_one_waits_for_its_manifest',async()=>{
+ // A desk stores its pages before the manifest PUT that names them; a viewer
+ // polling in between reads a page newer than its manifest. That is a
+ // publication in flight, not damage (the live bake test caught the false alarm).
+ const seed=await context('high',null,null,opts());await ready(seed);await seed.controller.start();
+ const errors=[],log=console.error;console.error=(...a)=>errors.push(a.map(String).join(' '));
+ let d;
+ try {
+  d=await context('high',seed.server,null,{mode:'readonly',parent:true,poll:0,host:new Node('div')});
+  await until(()=>d.controller.fresh().length===4,'viewer draws the bake');
+  const key=seed.controller.state().key,m=seed.server.manifests.get(key),page=m.lights.k1.pages[0],id=key+'/'+page;
+  const old=seed.server.pages.get(id);
+  const newer=[...seed.server.pages].find(([k,b])=>k.startsWith(key+'/')&&k!==id&&b.length!==old.length)?.[1];
+  assert.ok(newer,'another stored page stands in for the newer bytes');
+  const {createHash}=await import('node:crypto');
+  const digest='"'+createHash('sha256').update(newer).digest('hex')+'"';
+  const store=()=>{seed.server.pages.set(id,newer.slice());seed.server.etags.set(id,'"in-flight-'+Math.random()+'"');};
+  store();await d.controller.refresh();
+  assert.equal(d.controller.state().error,null,'a page newer than the manifest is a publication in flight');
+  assert.equal(d.controller.fresh().length,4,'the last complete page keeps drawing');
+  assert.deepEqual(errors,[],'no failure is logged');
+  m.pageIntegrity[page]={size:newer.length,digest};await d.controller.refresh();
+  assert.equal(d.controller.state().error,null,'the landed manifest adopts the page');
+  assert.equal(d.controller.fresh().length,4);assert.deepEqual(errors,[]);
+  // A mismatch that outlives a poll under the same manifest is damage.
+  seed.server.pages.set(id,old.slice());seed.server.etags.set(id,'"stray"');
+  await d.controller.refresh();assert.equal(d.controller.state().error,null,'first sight waits one poll');
+  await d.controller.refresh();assert.match(d.controller.state().error||'',/damaged stored page/);
+  assert.ok(!d.controller.fresh().includes('k1'),'a damaged page keeps its lights real-time');
+  assert.equal(errors.length,1,'the damage is reported once');
+ }finally{console.error=log;d?.controller.stop();seed.controller.stop();}
+});
 console.log(`${passed}/${ran} passed`);process.exit(passed===ran?0:1);
 """
 if __name__ == '__main__':

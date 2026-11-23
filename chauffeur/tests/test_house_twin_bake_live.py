@@ -37,7 +37,9 @@ the completed lights, including those saved before this run). The wall shows nei
 
 Where bakes live: services.twin_bakes under twin_store.DATA_DIR/bakes/<key>/:
 numbered page files (KTX2 bytes, Ruling B4; the file name's stem is the page
-number) and manifest.json ({pages, lights: {device: {page, channel, key}}}).
+number), the light-visibility grid chunks grid-<name>.bin (gzip MVG1, named by
+the manifest entry's grid; not pages) and manifest.json ({pages, lights:
+{device: {page, channel, key, grid?, gridLayout?}}}).
 The lights an editor bakes are the placed light markers; whether the unplaced
 Pendant is baked is not pinned.
 
@@ -69,6 +71,7 @@ FT = L.FT
 BAKED = ('dev-k-ceiling', 'dev-k-lamp', 'dev-changing-light', 'dev-hall-light')
 BAKE_S = 900.0
 KEY_RE = re.compile(r'^[0-9a-f]{16,64}$')
+GRID_FILE = re.compile(r'grid-[0-9a-f]{16,64}\.bin')
 KTX2_MAGIC = bytes([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a])
 PROGRESS = re.compile(r'Baking lights (\d+) of (\d+)')
 BAKE_NOW = 'Re-bake all lighting'
@@ -250,12 +253,15 @@ def bake_dir(key):
 
 
 def page_files(key):
-    """{page number: sha256} of the stored page files of a key."""
+    """{page number: sha256} of the stored page files of a key.
+
+    Grid chunks (grid-<name>.bin) share the folder but are not pages. Any other
+    stray name is kept under its file name, so a leftover file still reads as torn."""
     folder, out = bake_dir(key), {}
     if not os.path.isdir(folder):
         return out
     for name in os.listdir(folder):
-        if name == 'manifest.json':
+        if name == 'manifest.json' or GRID_FILE.fullmatch(name):
             continue
         stem = name.split('.')[0]
         with open(os.path.join(folder, name), 'rb') as f:
