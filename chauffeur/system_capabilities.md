@@ -1,6 +1,43 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.991 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.992 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.992 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): surfaces under a roof stop taking blue sky light; the sky fill is softer everywhere.** The owner: "Is it me or does the top surface of this patio look way too blue-ish?", about the covered front porch. The vertical faces of the same material looked neutral.
+
+**Diagnosis** (owner's house, June noon). The porch top in the roof's shade was lit only by two sky terms, and nothing knew the roof was there:
+- the HemisphereLight sky colour, which was the zenith colour normalised to a brightest channel of 1;
+- the scene environment IBL.
+
+Porch-top sRGB measured 32,49,70, a blue/red ratio of 2.2. Vertical faces get a 50/50 sky and ground mix, so they read neutral. Weather, wet reflections, the bake, the material and AO were ruled out.
+
+**Fix** (Gemini, two rounds; the first was too costly and too dark):
+1. **`sky/weather_surface.js`.** One branchless block in `lights_fragment_maps`, with three's hemisphere and light chunks left stock. It reuses the existing `vWeatherOpen` cover data that rain already uses (0 under roofs, clipped to the real drip line).
+   - Upward-facing covered surfaces have their sky irradiance swapped for a bounce, applied once.
+   - Their IBL (diffuse, specular, clearcoat) is scaled by `1 - 0.7*cover`.
+   - Vertical faces under roofs are unchanged.
+   - Water, sheet, submerged and effect shaders are byte-identical.
+2. **`sky/stage_haze.js`.** The cover controls ride in spare lanes of the existing `stageRing` uniform: `1 - roofFade`, and the bounce-minus-sky delta.
+3. **`twin_view.js`.**
+   - The bounce is computed on the CPU each frame: a neutralised hemisphere ground colour plus sunlit-ground irradiance (ground albedo 0.28, fading with sun elevation, cloud transmittance and sun-off).
+   - The roof fade gives the sky back when roofs are lifted or hidden.
+   - The hemisphere sky colour now comes from the cosine-weighted sky irradiance (`cloudIrradiance.top`), not the zenith, which calms the blue in all shade.
+
+**Results:**
+- Covered porch at June noon: 56,57,51 (b/r 0.91), about 2.3x round 1's luminance and still darker than open sunlit paving.
+- Sun off: neutral and dim.
+- Sunlit surfaces change by less than 1.5%; interiors with the roof lifted are unchanged.
+
+**Costs:**
+- +11 FXC slots per lit material (+30 in round 1);
+- +0 transcendentals; no new samplers, attributes, uniform vectors or program variants;
+- D3D11 link of a typical lit material +5.7 ms;
+- owner-house warm-up +0.22 s (round 1 was +16 s).
+
+Also: `live/mode_key.js` tolerates a missing window event target (node test rigs), and the shared fake DOM in `tests/test_twin_live_stream_js.py` gains `insertBefore`. `test_twin_live_stream_js` / `test_twin_weather_js` still have the pre-existing "no copy of the whole house: 1 copies" failure, which is also on v.986.
+
+**Tests:**
+- `test_twin_covered_sky_js.py` 2/2 and `test_twin_covered_sky_live.py` 1/1 (new);
+- weather_surface 14/14 + 2/2, sky 12/12, mode_key 7/7, texture units 1/1.
 
 **v2.499.991 (2026-11-23, NOT device-verified): eave streams stay with a yard room focused, and wait for the roof to wet through.** Two owner reports on v.990.
 
