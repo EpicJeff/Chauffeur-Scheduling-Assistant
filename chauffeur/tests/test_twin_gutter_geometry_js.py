@@ -574,8 +574,8 @@ await test('test_downspout_sweeps_path_directly_without_inside_stub', async () =
   // Verify our renderer side of I-4: sweeps directly from path[0] with zero geometry above path[0],
   // and when given a gutter-bottom path that drops below the soffit before elbowing, clears the soffit cleanly.
   const p = house(30, 'gable', rect(0, 0, 30, 20), 1.5);
-  const eaveY = 10, gutterBotY = eaveY - 3.75 / 12, soffitY = eaveY - 0.35;
-  const x0 = 0.25, yFascia = -1.5, yTrough = yFascia - (0.012 + 2.5 / 12), yWall = -0.08;
+  const eaveY = 9.25, gutterBotY = eaveY - G.GUTTER.profileIn / 12, soffitY = eaveY - G.GUTTER.fasciaFt;
+  const x0 = 0.25, yFascia = -1.5, yTrough = yFascia - (G.GUTTER.fasciaProudFt + G.GUTTER.profileIn / 24), yWall = -0.08;
   const toW = (x, y, z) => [x * FT, z * FT, -y * FT];
   const runs = [{
     id: 'b:r:0', building: 'b', length: 33, corners: [],
@@ -586,8 +586,8 @@ await test('test_downspout_sweeps_path_directly_without_inside_stub', async () =
   }];
   const contractPath = [
     toW(x0, yTrough, gutterBotY),
-    toW(x0, yTrough, soffitY - 0.15),
-    toW(x0, yWall, soffitY - 0.15 - (yWall - yTrough)),
+    toW(x0, yTrough, Math.min(gutterBotY, soffitY) - G.GUTTER.soffitClearIn / 12),
+    toW(x0, yWall, Math.min(gutterBotY, soffitY) - G.GUTTER.soffitClearIn / 12 - (yWall - yTrough)),
     toW(x0, yWall, 0.4),
     toW(x0, yWall - 3, 0.4),
   ];
@@ -600,7 +600,6 @@ await test('test_downspout_sweeps_path_directly_without_inside_stub', async () =
   await twin.ready;
   try {
     const { tris } = gutterTriangles(twin.root);
-    // Filter to triangles belonging to the downspout (below gutter bottom OR inside overhang planY > yFascia - 0.005).
     const inOverhangAboveSoffit = tris.filter(t => t.some(pt => {
       const planY = -pt[2] / FT, planZ = pt[1] / FT;
       return planY > yFascia + 0.01 && planY < -0.01 && planZ > soffitY + 0.005;
@@ -614,9 +613,8 @@ await test('test_downspout_sweeps_path_directly_without_inside_stub', async () =
   } finally { disposeTwin(twin); }
 });
 
-// Expected-to-fail contract test for I-4 until Codex's gutters.js path update merges.
-await (async () => {
-  const name = 'test_downspout_meets_gutter_bottom_and_clears_soffit';
+await test('test_downspout_meets_gutter_bottom_and_clears_soffit', async () => {
+  // Contract test for I-4 (passes now that Codex's gutters.js path update has merged).
   const p = house(30, 'gable', rect(0, 0, 30, 20), 1.5);
   _gutterPlacementStats.clearCache();
   const twin = buildTwin(p, input.kit, 'high');
@@ -626,18 +624,22 @@ await (async () => {
     assert.ok(s, 'wall downspout on y0 eave exists');
     const run = twin.gutters.runs.find(r => r.id === s.run);
     const eaveY = run.segments[0].a[1] / FT; // 10 - 1.5 * 6/12 = 9.25 ft at overhang lip
-    const gutterBotY = eaveY - 3.75 / 12;    // 8.9375 ft
-    const soffitY = eaveY - 0.35;            // 8.90 ft
+    const gutterBotY = eaveY - G.GUTTER.profileIn / 12; // 8.8333 ft
+    const soffitY = eaveY - G.GUTTER.fasciaFt;          // 8.90 ft
     const fasciaY = -1.5;
     const topZ = s.path[0][1] / FT;
     const topPlanY = -s.path[0][2] / FT;
     assert.ok(
-      Math.abs(topZ - gutterBotY) <= 0.03,
+      Math.abs(topZ - gutterBotY) <= 0.01,
       `downspout path[0] height ${topZ.toFixed(4)} ft should meet gutter bottom ${gutterBotY.toFixed(4)} ft`
     );
     assert.ok(
-      topPlanY <= fasciaY - 0.012 + 1e-3 && topPlanY >= fasciaY - 0.012 - 5 / 12 - 1e-3,
-      `downspout path[0] planY=${topPlanY.toFixed(4)} ft must lie inside gutter trough [${(fasciaY - 0.012 - 5/12).toFixed(4)}, ${(fasciaY - 0.012).toFixed(4)}]`
+      topPlanY <= fasciaY - G.GUTTER.fasciaProudFt + 1e-3 && topPlanY >= fasciaY - G.GUTTER.fasciaProudFt - G.GUTTER.profileIn / 12 - 1e-3,
+      `downspout path[0] planY=${topPlanY.toFixed(4)} ft must lie inside gutter trough`
+    );
+    assert.ok(
+      s.path[1][1] / FT <= Math.min(gutterBotY, soffitY) - G.GUTTER.soffitClearIn / 12 + 1e-3,
+      `downspout path[1] must drop at least ${G.GUTTER.soffitClearIn} in below gutter/soffit`
     );
     for (let i = 0; i + 1 < s.path.length; i++) {
       const a = s.path[i], bPt = s.path[i + 1];
@@ -649,11 +651,118 @@ await (async () => {
         }
       }
     }
-    console.log(`XPASS ${name} (Codex I-4 path contract is now satisfied!)`);
-  } catch (err) {
-    console.log(`XFAIL ${name} (expected until Codex gutters.js I-4 merge): ${err.message}`);
+    // Also verify the swept rendered mesh itself has no vertices above the soffit between fascia and wall.
+    const { tris } = gutterTriangles(twin.root);
+    const overhangViolations = tris.filter(t => t.some(pt => {
+      const py = -pt[2] / FT, pz = pt[1] / FT;
+      return py > fasciaY + 0.02 && py < -0.02 && pz > soffitY + 0.005;
+    }));
+    assert.equal(overhangViolations.length, 0, 'rendered downspout geometry must clear soffit between fascia and wall');
   } finally { disposeTwin(twin); }
-})();
+});
+
+await test('test_auto_foundation_offset_and_room_footprint_invalidate_memo', async () => {
+  // Ruling 1 (I-1): raising foundation.offset_ft from 0 to 2 on an auto-foundation building must move runs & geometry by +2 ft.
+  _gutterPlacementStats.clearCache();
+  const p1 = house(30, 'hip', rect(0, 0, 30, 20), 1);
+  p1.site = { terraces: [{ id: 't1', polygon: rect(-10, -10, 40, 30), height: 1, blend: 2 }] };
+  p1.buildings[0].foundation = { mode: 'auto', offset_ft: 0 };
+  const twin1 = buildTwin(p1, input.kit, 'high');
+  await twin1.ready;
+  const callsAfter1 = _gutterPlacementStats.calls;
+  const y1Run = twin1.gutters.runs[0].segments[0].a[1] / FT;
+  const y1Drawn = Math.max(...gutterTriangles(twin1.root).tris.flat().map(pt => pt[1])) / FT;
+
+  const p2 = clone(p1);
+  p2.buildings[0].foundation.offset_ft = 2;
+  const twin2 = buildTwin(p2, input.kit, 'high', { previous: twin1 });
+  await twin2.ready;
+  try {
+    assert.equal(_gutterPlacementStats.calls, callsAfter1 + 1, 'foundation.offset_ft edit must miss placement memo');
+    const y2Run = twin2.gutters.runs[0].segments[0].a[1] / FT;
+    const y2Drawn = Math.max(...gutterTriangles(twin2.root).tris.flat().map(pt => pt[1])) / FT;
+    near(y2Run - y1Run, 2.0, 1e-3);
+    near(y2Drawn - y1Drawn, 2.0, 0.02);
+  } finally { disposeTwin(twin1); disposeTwin(twin2); }
+
+  // Non-porch room polygon edit on an auto-foundation building without level.outline must also invalidate memo.
+  _gutterPlacementStats.clearCache();
+  const r1 = house(20, 'gable', rect(0, 0, 20, 16), 1);
+  delete r1.buildings[0].levels[0].outline;
+  r1.buildings[0].rooms = [{ id: 'living', name: 'Living', level: 'L1', polygon: rect(0, 0, 20, 16) }];
+  r1.buildings[0].foundation = { mode: 'auto', offset_ft: 0 };
+  r1.site = { terraces: [{ id: 't2', polygon: rect(25, -5, 40, 20), height: 2, blend: 0 }] };
+  const twA = buildTwin(r1, input.kit, 'high'); await twA.ready;
+  const yA = twA.gutters.runs[0].segments[0].a[1] / FT;
+  const r2 = clone(r1);
+  r2.buildings[0].rooms[0].polygon = rect(0, 0, 30, 16); // overlaps the 2 ft terrace
+  const twB = buildTwin(r2, input.kit, 'high', { previous: twA }); await twB.ready;
+  try {
+    const yB = twB.gutters.runs[0].segments[0].a[1] / FT;
+    near(yB - yA, 2.0, 1e-3);
+  } finally { disposeTwin(twA); disposeTwin(twB); }
+});
+
+await test('test_outlet_blocked_hole_and_spill_no_nan_or_zero_area', async () => {
+  // Ruling 4: jammed gutter above lower roof -> outlet-blocked hole collar only (no pipe sweep), short spill, no NaN/zero-area tris.
+  _gutterPlacementStats.clearCache();
+  const p = house(20, 'gable', rect(0, 0, 20, 16), 1);
+  const b = p.buildings[0];
+  // Remove y1 gutter so only y0 is tested; place y0 eave at 10 - 0.5 = 9.5 ft right above a lower flat roof at 9.25 ft.
+  b.roofs[0].edges[2].gutter = false;
+  delete b.roof.sections[0].gutters.y1;
+  b.roof.sections[0].plate = 10;
+  // Remove walls reaching below y0 so it falls back to hang/stub right over the flat roof at 9.25 ft.
+  b.levels[0].elevation = 10;
+  b.levels[0].ceiling = 10;
+  b.roof.sections[0].plate = 20;
+  b.roof.sections[0].pitch = 6; // eave at 20 - 0.5 = 19.5 ft, gutterBottom = 19.083 ft
+  // Add a lower flat roof spanning directly underneath y0 at plate 19.2 ft (above gutterBottom -> outlet-blocked!).
+  b.roof.sections.push({
+    id: 'low', roof: 'low', kind: 'flat', ridge: 'x', pitch: 0, plate: 19.2, overhang: 0, level: 'L1',
+    rect: [-4, -8, 24, 0], plane_edges: { y0: 0, x1: 1, y1: 2, x0: 3 },
+  });
+  b.roofs.push({
+    id: 'low', area: rect(-4, -8, 24, 0), overhang: 0,
+    edges: [0, 1, 2, 3].map(() => ({ setting: 'gable', gutter: false })),
+  });
+  const twin = buildTwin(p, input.kit, 'high');
+  await twin.ready;
+  try {
+    const blocked = twin.gutters.spouts.find(s => (s.flags || []).includes('outlet-blocked'));
+    assert.ok(blocked, `expected an outlet-blocked spout, got: ${JSON.stringify(twin.gutters.spouts.map(s => s.flags))}`);
+    assert.deepEqual(blocked.path[0], blocked.path[1], 'outlet-blocked path has two identical points');
+
+    const { tris } = gutterTriangles(twin.root);
+    assert.ok(tris.length > 0, 'gutter + outlet hole geometry emitted');
+    for (const tri of tris) {
+      for (const pt of tri) assert.ok(pt.every(Number.isFinite), `NaN/Inf vertex found: ${pt}`);
+      const a = new THREE.Vector3(...tri[0]), bPt = new THREE.Vector3(...tri[1]), c = new THREE.Vector3(...tri[2]);
+      const area = bPt.clone().sub(a).cross(c.clone().sub(a)).length() * 0.5;
+      assert.ok(area > 1e-9, `zero-area triangle found (area=${area})`);
+    }
+    // Outlet hole collar exists right at blocked.top, and NO pipe sweeps down below gutterBottom - 0.04*FT.
+    const run = twin.gutters.runs.find(r => r.id === blocked.run);
+    const gutterBotM = run.segments[0].a[1] - (G.GUTTER.profileIn / 12) * FT;
+    const floorLimit = Math.min(gutterBotM, blocked.top[1]) - 0.04 * FT;
+    const nearHole = tris.flat().filter(pt =>
+      Math.hypot(pt[0] - blocked.top[0], pt[2] - blocked.top[2]) < 0.15 && Math.abs(pt[1] - blocked.top[1]) < 0.03
+    );
+    assert.ok(nearHole.length >= 8, `expected outlet hole collar geometry near blocked.top, got ${nearHole.length} verts`);
+    const belowHole = tris.flat().filter(pt =>
+      Math.hypot(pt[0] - blocked.top[0], pt[2] - blocked.top[2]) < 0.15 && pt[1] < floorLimit
+    );
+    assert.equal(belowHole.length, 0, 'outlet-blocked must not emit a downward pipe sweep');
+
+    // Pour is a short spill onto the receiving lower roof (finite, positive fall, stays above lower roof).
+    const res = E.eaveInstances(p, twin.roofSurfaces, input.kit, twin.gutters);
+    const spill = res.pours.find(pr => pr.spout.id === blocked.id);
+    assert.ok(spill, 'outlet-blocked emits a short spill pour');
+    assert.ok(spill.top.every(Number.isFinite) && Number.isFinite(spill.bottom), 'spill coordinates are finite');
+    assert.ok(spill.top[1] > spill.bottom && spill.top[1] - spill.bottom <= 0.6 * FT,
+      `spill fall should be short (${((spill.top[1] - spill.bottom) / FT).toFixed(3)} ft)`);
+  } finally { disposeTwin(twin); }
+});
 
 await test('test_merged_fascia_batch_not_tagged_gutter_at_mesh_level', async () => {
   // M-1: merged fascia + gutter batch must NOT be tagged gutter at mesh level; only gutter snapRanges carry surfaceKind='gutter'.

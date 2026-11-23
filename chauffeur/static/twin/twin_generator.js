@@ -497,24 +497,32 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   return next;
 }
 
-const GUTTER_U0 = 0.012;
-// 5 in K-style profile (7 vertices, open top, back flush against fascia face).
-const GUTTER_PROFILE = [
-  [GUTTER_U0, 0],
-  [GUTTER_U0, -3.75 / 12],
-  [GUTTER_U0 + 3.25 / 12, -3.75 / 12],
-  [GUTTER_U0 + 3.45 / 12, -2.55 / 12],
-  [GUTTER_U0 + 4.35 / 12, -1.35 / 12],
-  [GUTTER_U0 + 4.65 / 12, -0.55 / 12],
-  [GUTTER_U0 + 5.0 / 12, 0],
-];
-const GUTTER_PROFILE_V = GUTTER_PROFILE.reduce((acc, p, i) => {
-  acc.push(i ? acc[i - 1] + Math.hypot(p[0] - GUTTER_PROFILE[i - 1][0], p[1] - GUTTER_PROFILE[i - 1][1]) : 0);
-  return acc;
-}, []);
+const GUTTER_U0 = FASCIA.proudFt + 0.002;
+// Lazily built so importing gutters.js before twin_generator.js never hits TDZ on GUTTER.
+let _gutterProfileCache = null;
+function gutterProfile() {
+  if (_gutterProfileCache) return _gutterProfileCache;
+  const depth = GUTTER.profileIn / 12;
+  // 5 in K-style profile (7 vertices, open top, back flush against fascia face, bottom matching gutters.js gutterBottom).
+  const profile = [
+    [GUTTER_U0, 0],
+    [GUTTER_U0, -depth],
+    [GUTTER_U0 + 3.5 / 12, -depth],
+    [GUTTER_U0 + 3.75 / 12, -3.4 / 12],
+    [GUTTER_U0 + 4.45 / 12, -1.8 / 12],
+    [GUTTER_U0 + 4.70 / 12, -0.7 / 12],
+    [GUTTER_U0 + GUTTER.profileIn / 12, 0],
+  ];
+  const v = profile.reduce((acc, p, i) => {
+    acc.push(i ? acc[i - 1] + Math.hypot(p[0] - profile[i - 1][0], p[1] - profile[i - 1][1]) : 0);
+    return acc;
+  }, []);
+  _gutterProfileCache = { profile, v };
+  return _gutterProfileCache;
+}
 
-const GUTTER_BUILDING_FIELDS = ['id', 'position', 'rotation', 'base', 'levels', 'walls', 'joints', 'openings', 'stairs', 'roof', 'roofs', 'porch', 'porches'];
-const GUTTER_SITE_FIELDS = ['hardscape', 'paths', 'beds', 'pool', 'terraces', 'lot'];
+const GUTTER_BUILDING_FIELDS = ['id', 'position', 'rotation', 'base', 'foundation', 'levels', 'rooms', 'walls', 'joints', 'openings', 'stairs', 'roof', 'roofs', 'porch', 'porches'];
+const GUTTER_SITE_FIELDS = ['hardscape', 'paths', 'beds', 'pool', 'terraces', 'lot', 'edges'];
 const gutterPlacementCache = new Map();
 
 export const _gutterPlacementStats = {
@@ -545,14 +553,15 @@ function gutterInputKey(plan) {
     return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
   };
   const site = clean.site && Object.fromEntries(GUTTER_SITE_FIELDS.filter(k => k in clean.site).map(k => [k, clean.site[k]]));
-  const buildings = (clean.buildings || []).map(b => {
-    const picked = Object.fromEntries(GUTTER_BUILDING_FIELDS.filter(k => k in b).map(k => [k, b[k]]));
-    const porchRooms = (b.rooms || []).filter(r => r?.kind === 'porch');
-    if (porchRooms.length) picked.porchRooms = porchRooms;
-    return picked;
-  });
+  const buildings = (clean.buildings || []).map(b =>
+    Object.fromEntries(GUTTER_BUILDING_FIELDS.filter(k => k in b).map(k => [k, b[k]]))
+  );
   const h = fingerprint();
-  h.add(JSON.stringify(canonical({ site, buildings })));
+  h.add(JSON.stringify(canonical({
+    dims: [GUTTER.fasciaFt, GUTTER.fasciaProudFt, GUTTER.profileIn, GUTTER.soffitClearIn],
+    site,
+    buildings,
+  })));
   return h.key();
 }
 
@@ -591,6 +600,7 @@ function gutterSliceHash(slice) {
 }
 
 function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
+  const { profile: GUTTER_PROFILE, v: GUTTER_PROFILE_V } = gutterProfile();
   const angle = (b.rotation || 0) * Math.PI / 180, cosA = Math.cos(angle), sinA = Math.sin(angle);
   const bx = b.position?.[0] || 0, by = b.position?.[1] || 0;
   const toLocal = ([wx, wy, wz]) => {
@@ -737,21 +747,55 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
     const run = runMap.get(spout.run);
     if (!run) continue;
     const rawPts = (spout.path || []).map(toLocal);
+    const owningSeg = run.segments.find(s => s.roof === spout.edge?.roof && s.edge === spout.edge?.edge && s.porch === spout.edge?.porch) || run.segments[0];
+    selectBucket(resolveFinish(owningSeg));
+
+    const isBlocked = (spout.flags || []).includes('outlet-blocked');
+    if (isBlocked) {
+      // Outlet jammed against a lower roof: emit only a flush 2 x 3 in outlet hole collar in the gutter bottom.
+      const outArr = owningSeg?.outward ? unitXZ([owningSeg.outward[0], 0, -owningSeg.outward[1]]) : unitXZ(dirLocal(spout.outlet?.dir || [0, 0, 1]));
+      const V = new THREE.Vector3(outArr[0], 0, outArr[2]).normalize();
+      const U = new THREE.Vector3(-V.z, 0, V.x).normalize();
+      const c = rawPts[0];
+      if (c && c.every(Number.isFinite)) {
+        const rimW = halfW + 0.03, rimD = halfD + 0.03, collarH = 0.018;
+        const pt = (u, v, y) => [c[0] + u * U.x + v * V.x, y, c[2] + u * U.z + v * V.z];
+        const yTop = c[1], yBot = c[1] - collarH;
+        const outR = CORNERS.map(([cu, cv]) => [cu * rimW, cv * rimD]);
+        const inR = CORNERS.map(([cu, cv]) => [cu * halfW, cv * halfD]);
+        for (let k = 0; k < 4; k++) {
+          const n = (k + 1) % 4;
+          const aTop = pt(outR[k][0], outR[k][1], yTop), bTop = pt(outR[n][0], outR[n][1], yTop);
+          const aBot = pt(outR[k][0], outR[k][1], yBot), bBot = pt(outR[n][0], outR[n][1], yBot);
+          const aiBot = pt(inR[k][0], inR[k][1], yBot), biBot = pt(inR[n][0], inR[n][1], yBot);
+          pushQuad(aTop, bTop, bBot, aBot, [0, 0], [0.2, 0], [0.2, collarH], [0, collarH]);
+          pushQuad(aBot, bBot, biBot, aiBot, [0, 0], [0.2, 0], [0.2, 0.03], [0, 0.03]);
+        }
+      }
+      continue;
+    }
+
     const pts = [];
     for (const p of rawPts) {
+      if (!p.every(Number.isFinite)) continue;
       const prev = pts.at(-1);
       if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]) > 1e-4) pts.push(p);
     }
     if (pts.length < 2) continue;
 
     // Pick wall-outward direction: prefer the kick-out start vector leaving the
-    // vertical wall drop (exact mount.normal, even at hip corners), else owning segment outward.
+    // LAST vertical segment (the wall/post drop, not the top 1 in vertical outlet drop).
     const P = pts.map(p => new THREE.Vector3(p[0], p[1], p[2]));
-    const T = [];
-    for (let i = 0; i + 1 < P.length; i++) T.push(P[i + 1].clone().sub(P[i]).normalize());
-    let anchor = T.findIndex(t => Math.abs(t.y) > 0.95);
-    const owningSeg = run.segments.find(s => s.roof === spout.edge?.roof && s.edge === spout.edge?.edge && s.porch === spout.edge?.porch) || run.segments[0];
-    selectBucket(resolveFinish(owningSeg));
+    const computeTangents = () => {
+      const out = [];
+      for (let i = 0; i + 1 < P.length; i++) out.push(P[i + 1].clone().sub(P[i]).normalize());
+      return out;
+    };
+    let T = computeTangents();
+    let anchor = -1;
+    for (let i = T.length - 1; i >= 0; i--) {
+      if (Math.abs(T[i].y) > 0.95) { anchor = i; break; }
+    }
     let outArr = null;
     if (anchor >= 0 && anchor + 2 < P.length) {
       const kx = P[anchor + 2].x - P[anchor + 1].x, kz = P[anchor + 2].z - P[anchor + 1].z;
@@ -766,6 +810,42 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
       // Short vertical stub only: no wall drop and no kick-out.
       emitBoxTube(pts[0], pts[1], wallAlong, wallOut, true);
       continue;
+    }
+
+    // For porch-post mounts, gutters.js routes the vertical drop through the column centreline;
+    // offset the vertical drop flush onto the column's outward face while keeping path[0] and outlet.at fixed.
+    if (spout.mount === 'post' && anchor >= 1 && anchor + 1 < P.length) {
+      const dropX = P[anchor].x, dropZ = P[anchor].z;
+      const col = allPorches(b).flatMap(p => p.columns || []).find(c => c.at && Math.hypot(c.at[0] - dropX, -c.at[1] - dropZ) < 0.5);
+      if (col) {
+        const offset = (col.size || 0.5) / 2 + halfD + 0.01;
+        P[anchor].addScaledVector(wallOut, offset);
+        P[anchor + 1].addScaledVector(wallOut, offset);
+        // Keep any preceding horizontal leader cleanly clear of the shifted wallTop.
+        if (anchor >= 2 && Math.hypot(P[anchor].x - P[anchor - 1].x, P[anchor].z - P[anchor - 1].z) < 0.05) {
+          P[anchor - 1].addScaledVector(wallOut, offset);
+        }
+        T = computeTangents();
+      }
+    }
+
+    // Angle flat kick-out extensions slightly downward (~4% pitch) so the extension sits cleanly
+    // above the receiving surface (~2.5-3.8 in) and pitches outward like a real elbow/extension.
+    if (anchor >= 0 && anchor + 2 < P.length) {
+      const elbowBot = P[anchor + 1], mouth = P[P.length - 1];
+      if (Math.abs(mouth.y - elbowBot.y) < 0.02) {
+        let totalKick = 0;
+        const cum = [0];
+        for (let i = anchor + 1; i + 1 < P.length; i++) {
+          totalKick += Math.hypot(P[i + 1].x - P[i].x, P[i + 1].z - P[i].z);
+          cum.push(totalKick);
+        }
+        const drop = Math.min(0.12, totalKick * 0.04);
+        if (totalKick > 1e-4 && drop > 1e-4) {
+          for (let j = 1; j < cum.length; j++) P[anchor + 1 + j].y -= drop * (cum[j] / totalKick);
+          T = computeTangents();
+        }
+      }
     }
 
     // Parallel-transport mitred sweep of 2 x 3 in section directly along path from path[0].
@@ -798,6 +878,10 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
       return P[0].clone().add(off).addScaledVector(T[0], tHit).toArray();
     }));
     for (let i = 1; i < P.length - 1; i++) {
+      const prevLen = P[i].distanceTo(P[i - 1]);
+      const nextLen = P[i + 1].distanceTo(P[i]);
+      const minT = -Math.min(0.5, prevLen * 0.92);
+      const maxT = Math.min(0.5, nextLen * 0.92);
       const mVec = T[i - 1].clone().add(T[i]);
       const mLen = mVec.length();
       if (mLen > 1e-4) {
@@ -806,7 +890,7 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
         if (Math.abs(denom) > 0.2) {
           rings.push(CORNERS.map(([cu, cv]) => {
             const off = offsetOf(U[i - 1], V[i - 1], cu, cv);
-            const tHit = Math.max(-0.5, Math.min(0.5, -off.dot(mVec) / denom));
+            const tHit = Math.max(minT, Math.min(maxT, -off.dot(mVec) / denom));
             return P[i].clone().add(off).addScaledVector(T[i - 1], tHit).toArray();
           }));
           continue;

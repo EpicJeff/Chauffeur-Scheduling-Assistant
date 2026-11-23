@@ -164,6 +164,9 @@ function prepare(mesh, data) {
   for (const a of attrs) { offsets.push(stride); stride += a.itemSize; }
   let capacity=old.index?.count ?? old.attributes.position.count, written=0;
   const buffers = attrs.map(a => new Float32Array(capacity*a.itemSize)), owners = [];
+  const oldGutterRanges = (old.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter');
+  const gutterFlags = oldGutterRanges.length ? [] : null;
+  let currentIsGutter = false;
   const read = i => {
     const v=new Array(stride);
     for (let j=0;j<attrs.length;j++) for (let k=0;k<attrs[j].itemSize;k++) v[offsets[j]+k]=attrs[j].getComponent(i,k);
@@ -189,6 +192,7 @@ function prepare(mesh, data) {
         written++;
       }
       owners.push(room);
+      if (gutterFlags) gutterFlags.push(currentIsGutter ? 1 : 0);
     }
   };
   const emit = (poly, room) => {
@@ -210,6 +214,10 @@ function prepare(mesh, data) {
   };
   const count = (old.index?.count ?? old.attributes.position.count) / 3;
   for (let f = 0; f < count; f++) {
+    if (gutterFlags) {
+      const v0 = f * 3;
+      currentIsGutter = oldGutterRanges.some(r => v0 >= r.start && v0 < r.start + r.count);
+    }
     const tri = [0, 1, 2].map(k => read(old.index ? old.index.getX(f * 3 + k) : f * 3 + k));
     const n = faceNormal(...tri).normalize();
     const center = [0, 1, 2].map(k => (tri[0][k] + tri[1][k] + tri[2][k]) / 3);
@@ -264,10 +272,21 @@ function prepare(mesh, data) {
   names.forEach((name, i) => geometry.setAttribute(name, new THREE.BufferAttribute(buffers[i].slice(0,written*attrs[i].itemSize), attrs[i].itemSize)));
   geometry.name = old.name;
   geometry.userData = { ...old.userData };
+  if (gutterFlags) {
+    // Rebuild post-clip gutter ranges so chartsFor and diagnostics match the prepared triangle order.
+    const ranges = [];
+    for (let f = 0; f < gutterFlags.length;) {
+      if (!gutterFlags[f]) { f++; continue; }
+      const start = f * 3;
+      while (f < gutterFlags.length && gutterFlags[f]) f++;
+      ranges.push({ start, count: f * 3 - start, surfaceKind: 'gutter' });
+    }
+    geometry.userData.gutterFaceRanges = ranges;
+  }
   geometry.computeBoundingBox(); geometry.computeBoundingSphere();
   mesh.geometry = geometry;
   old.dispose();
-  const state = { owners, room: null };
+  const state = { owners, gutterFlags, room: null };
   prepared.set(geometry, state);
   return state;
 }
@@ -318,13 +337,15 @@ function heightfieldCharts(mesh) {
   });
 }
 
-function chartsFor(mesh, owners, tileFeet = 64) {
+function chartsFor(mesh, owners, tileFeet = 64, gutterFlags = null) {
   if (mesh.geometry.userData.bakeHeightfield) return heightfieldCharts(mesh);
   const pos = mesh.geometry.attributes.position, faces = [], atVertex = new Map();
-  const gutterRanges = (mesh.geometry.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter');
-  const isGutterFace = gutterRanges.length
-    ? f => { const v = f * 3; return gutterRanges.some(r => v >= r.start && v < r.start + r.count); }
-    : null;
+  const gutterRanges = !gutterFlags ? (mesh.geometry.userData.gutterFaceRanges || (mesh.geometry.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter')) : null;
+  const isGutterFace = gutterFlags
+    ? f => !!gutterFlags[f]
+    : gutterRanges.length
+      ? f => { const v = f * 3; return gutterRanges.some(r => v >= r.start && v < r.start + r.count); }
+      : null;
   const gutterByTri = isGutterFace ? new Map() : null;
   const p = i => new THREE.Vector3().fromBufferAttribute(pos, i);
   for (let f = 0; f < pos.count / 3; f++) {
@@ -830,7 +851,7 @@ export function buildAtlas(group, plan, { room } = {}) {
     const building = data.buildings.has(buildingId);
     // A building's outside groups by 32 ft tiles: at 2 texels/ft that is the 64-texel span a
     // 64 ft yard tile has at 1/ft, so one region never outgrows a page.
-    if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64);
+    if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64, state.gutterFlags);
     for (const c of state.room) raw.push({ ...c, ...(c.proxies ? { proxies: c.proxies.map(p => ({ ...p })) } : {}), outdoor: c.room < 0, building, order: raw.length });
     owners.set(mesh, new Float32Array(g.attributes.position.count).fill(-1));
     g.deleteAttribute('uv3'); g.deleteAttribute('lmLightPage');

@@ -281,29 +281,58 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
     for(let idx=0;idx<spouts.length;idx++){
       const spout=spouts[idx];
       if(!spout?.outlet?.at)continue;
-      const isHang=spout.mount==='hang'||(spout.flags||[]).includes('hang')||(spout.flags||[]).includes('stub');
+      const flags=spout.flags||[];
+      const isBlocked=flags.includes('outlet-blocked');
+      const isHang=spout.mount==='hang'||flags.includes('hang')||flags.includes('stub');
       const top=[...spout.outlet.at];
       const rawDir=spout.outlet.dir||[0,0,1],dirLen=Math.hypot(rawDir[0],rawDir[2])||1;
       const pourDir=[rawDir[0]/dirLen,0,rawDir[2]/dirLen];
       const share=clamp(spout.share??1);
       let bottom,pourForward;
-      if(isHang){
+      if(isBlocked){
+        // Blocked gutter outlet jammed against a lower roof: short forward spill onto the receiving roof.
+        pourForward=.30*FT;
+        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.08,top[2]+pourDir[2]*pourForward]);
+        const fall=Math.max(.08*FT,Math.min(.55*FT,top[1]-hit.height));
+        bottom=Math.min(top[1]-.02,hit.height);
+        if(top[1]-bottom<.02)bottom=top[1]-fall;
+      }else if(isHang){
         const hit=sample(top);
         bottom=Math.min(top[1]-.12,hit.height);
         pourForward=.04*FT;
-      }else if(spout.outlet.lands==='roof'){
-        pourForward=.25*FT;
-        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
-        const fall=Math.max(.25*FT,Math.min(1.5*FT,top[1]-hit.height));
-        bottom=top[1]-fall;
       }else{
-        pourForward=.3*FT;
-        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
-        const fall=Math.max(.32*FT,Math.min(1.2*FT,top[1]-hit.height));
-        bottom=top[1]-fall;
+        // Match the renderer's ~4% downward kick-out pitch when path leaves the wall elbow flat.
+        const path=spout.path||[];
+        if(path.length>=3){
+          let lastVert=-1;
+          for(let i=path.length-2;i>=0;i--){
+            const dx=path[i+1][0]-path[i][0],dy=path[i+1][1]-path[i][1],dz=path[i+1][2]-path[i][2],l=Math.hypot(dx,dy,dz);
+            if(l>1e-4&&Math.abs(dy)/l>.95){lastVert=i;break;}
+          }
+          if(lastVert>=0&&lastVert+2<path.length){
+            const elbowBot=path[lastVert+1],mouth=path[path.length-1];
+            if(Math.abs(mouth[1]-elbowBot[1])<.02*FT){
+              let kickLenFt=0;
+              for(let i=lastVert+1;i+1<path.length;i++)
+                kickLenFt+=Math.hypot(path[i+1][0]-path[i][0],path[i+1][2]-path[i][2])/FT;
+              top[1]-=Math.min(.12,kickLenFt*.04)*FT;
+            }
+          }
+        }
+        if(spout.outlet.lands==='roof'){
+          pourForward=.25*FT;
+          const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
+          const fall=Math.max(.20*FT,Math.min(1.5*FT,top[1]-hit.height));
+          bottom=top[1]-fall;
+        }else{
+          pourForward=.30*FT;
+          const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
+          const fall=Math.max(.22*FT,Math.min(1.2*FT,top[1]-hit.height));
+          bottom=top[1]-fall;
+        }
       }
-      if(top[1]-bottom<.06)continue;
-      const pourWidth=.024+.044*share;
+      if(top[1]-bottom<(isBlocked?.015:.05))continue;
+      const pourWidth=.016+.028*share;
       const angle=Math.atan2(pourDir[2],pourDir[0]);
       const seed=hash(0x504f5552+idx*97+1);
       pours.push({top,bottom,landing:spout.outlet.lands||'ground',seed,rank:-1,
@@ -523,8 +552,8 @@ void main(){
     float wobble=eaveWobble(fall,eaveTime,seed)*smoothstep(0.,.15,fall)*(1.-.75*arcBlend);
     vec4 cEye=viewMatrix*vec4(world+right*wobble,1.);
     float minW=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
-    float swell=.85+.28*eaveNoise1((eaveTime-eaveFallTime(fall))*11.3+seed*97.3);
-    float streamW=cellStep*(.45+.75*eaveFlow)*swell*(1.+.22*uv.y);
+    float swell=.86+.26*eaveNoise1((eaveTime-eaveFallTime(fall))*11.3+seed*97.3);
+    float streamW=cellStep*(.52+.48*eaveFlow)*swell*mix(1.,.82,smoothstep(0.,.75,uv.y));
     float drawnW=max(streamW,minW);
     cov=streamW/drawnW;
     float xOff=(uv.x-.5)*drawnW;
@@ -657,8 +686,9 @@ void main(){
   float q2=qClamped*qClamped;
   float coreCA=(1.-smoothstep(0.,.32,q2))*(.30+.30*nearLip+.65*glint+.40*ripMag);
   float midStreamBoost=1.+.65*smoothstep(11.,22.,dist);
-  float pourGain=isPour?mix(.60,1.15,pourShare):1.;
-  float streamAlpha=eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)*midStreamBoost*pourGain;
+  float pourCore=(1.-smoothstep(0.,.22,q2))*(.35+.55*glint+.45*ripSpec);
+  float pourGain=isPour?mix(.30,.54,pourShare):1.;
+  float streamAlpha=(eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)+(isPour?pourCore*.14:0.))*midStreamBoost*pourGain;
   float midSheetBoost=1.+.45*smoothstep(10.,22.,dist)*(1.-smoothstep(26.,42.,dist));
   float sheetAlpha=eaveSheetAlpha(quadAcross,fresnel,ripSpec,ripMod,sheetRim,eaveFlow)*midSheetBoost;
   float resolved=streamAlpha*(1.-sheetFall)*act+sheetAlpha*sheetFall;
@@ -667,7 +697,8 @@ void main(){
   float farDamp=mix(1.,.46,smoothstep(28.,68.,dist));
   float thread=(.50+.55*ripSpec)*(1.-smoothstep(.18,1.,min(abs(acrossStream),1.)))*mix(.65,1.,eaveFlow)*farDamp;
   float alpha=pres*mix(thread*effCov*smoothstep(0.,.45,act)+sheetAlpha*sheetFall,resolved,cov);
-  alpha*=smoothstep(0.,.025,waterUv.y)*(1.-smoothstep(.985,1.,waterUv.y));
+  float endFade=isPour?(1.-smoothstep(.78,1.,waterUv.y)):(1.-smoothstep(.985,1.,waterUv.y));
+  alpha*=smoothstep(0.,.035,waterUv.y)*endFade;
   alpha*=1.-smoothstep(95.,120.,dist);
   alpha*=nearFade*min(1.,eaveWet*5.)*exp(-eaveFog*dist);
   if(alpha<.001)discard;
@@ -675,7 +706,7 @@ void main(){
   // stays bright crisp silver over walls/windows without beige tint or dark smudging.
   float luma=dot(eaveColour,vec3(.2126,.7152,.0722));
   vec3 skyRad=mix(vec3(luma),eaveColour,.25);
-  float streamGain=max(1.02,1.08+.38*skyMix+1.05*ripSpec+.38*ripMod+.45*coreCA);
+  float streamGain=max(1.02,1.08+.38*skyMix+1.05*ripSpec+.38*ripMod+.45*coreCA)*(isPour?(.90+.18*pourCore):1.);
   float sheetGain=eaveSheetLumGain(ripMod,skyMix,ripSpec,sheetRim);
   vec3 waterCol=skyRad*mix(streamGain,sheetGain,sheetFall);
   for(int i=0;i<4;i++){

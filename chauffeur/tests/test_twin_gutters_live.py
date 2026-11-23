@@ -20,7 +20,7 @@ import house_twin_live_harness as L
 H, check = L.H, L.check
 TIMEOUT = 40000
 NOON = '2026-06-21T12:00:00Z'
-SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\round1')
+SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\round2')
 
 
 def synthetic_plan(gutters_on=True):
@@ -84,11 +84,41 @@ def synthetic_plan(gutters_on=True):
         'id': 'sr1', 'roof': 'sr1', 'kind': 'hip', 'ridge': 'x', 'pitch': 5,
         'plate': 9, 'overhang': 1, 'level': 'L1', 'rect': [0, 0, 14, 12],
         'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-        **({'gutters': {'y0': True, 'x1': True, 'y1': True, 'x0': True}} if gutters_on else {}),
+        **({'gutters': {'y0': True, 'y1': True, 'x0': True}} if gutters_on else {}),
     }
     shed_roof = {
         'id': 'sr1', 'area': shed_poly, 'overhang': 1,
-        'edges': [{'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})} for _ in range(4)],
+        'edges': [
+            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
+            {'setting': 'sloped', 'pitch': 5},
+            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
+            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
+        ],
+    }
+    # Side carport flat roof + jammed upper shed eave right above it so the live fixture includes an outlet-blocked spill.
+    carport_section = {
+        'id': 'sr_low', 'roof': 'sr_low', 'kind': 'flat', 'ridge': 'x', 'pitch': 0,
+        'plate': 8.55, 'overhang': 0, 'level': 'L1', 'rect': [14, 0, 21, 12],
+        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
+    }
+    carport_roof = {
+        'id': 'sr_low', 'area': [[14, 0], [21, 0], [21, 12], [14, 12]], 'overhang': 0,
+        'edges': [{'setting': 'gable', 'pitch': 0} for _ in range(4)],
+    }
+    jammed_section = {
+        'id': 'sr_jam', 'roof': 'sr_jam', 'kind': 'shed', 'low_side': 'x1', 'pitch': 4,
+        'plate': 9.15, 'overhang': 1, 'level': 'L1', 'rect': [12, 2, 14, 10],
+        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
+        **({'gutters': {'x1': True}} if gutters_on else {}),
+    }
+    jammed_roof = {
+        'id': 'sr_jam', 'area': [[12, 2], [14, 2], [14, 10], [12, 10]], 'overhang': 1,
+        'edges': [
+            {'setting': 'gable', 'pitch': 4},
+            {'setting': 'sloped', 'pitch': 4, **({'gutter': True} if gutters_on else {})},
+            {'setting': 'gable', 'pitch': 4},
+            {'setting': 'gable', 'pitch': 4},
+        ],
     }
     shed = {
         'id': 'garden-shed', 'name': 'Garden Shed', 'position': [42, 4], 'base': 0, 'rotation': 0,
@@ -97,8 +127,8 @@ def synthetic_plan(gutters_on=True):
         'walls': shed_walls,
         'openings': [{'id': 'sdoor', 'wall': 'sw0', 'at': 7, 'width': 3, 'sill': 0, 'head': 7, 'kind': 'door'}],
         'porches': [],
-        'roof': {'sections': [shed_section], 'extensions': []},
-        'roofs': [shed_roof],
+        'roof': {'sections': [shed_section, carport_section, jammed_section], 'extensions': []},
+        'roofs': [shed_roof, carport_roof, jammed_roof],
     }
     return {
         'units': 'ft',
@@ -247,9 +277,9 @@ def scenario_gutters_pours_and_programs():
               v.controls.minDistance = 0.2;
               v.controls.maxPolarAngle = Math.PI * 0.85;
               const FT = 0.3048;
-              const x = 36 * FT, y = 0.16, z = 1.01;
-              const target = [x, y + 0.05, z - 0.10];
-              const pos = [x + 1.15, y + 0.55, z + 1.05];
+              const x = 36 * FT, y = 0.14, z = 1.01;
+              const target = [x, y + 0.04, z - 0.12];
+              const pos = [x + 1.35, y + 0.32, z + 0.90];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
@@ -269,6 +299,8 @@ def scenario_gutters_pours_and_programs():
               const instances = v.eaves.data.instances || [];
               const streamInstances = instances.filter(i => !i.pour).length;
               const pourInstances = instances.filter(i => i.pour).length;
+              const blockedPours = instances.filter(i => i.pour && (i.spout?.flags || []).includes('outlet-blocked')).length;
+              const postPours = instances.filter(i => i.pour && i.mount === 'post').length;
               return {
                 programs: v.renderer3.info.programs.length,
                 gutterRanges,
@@ -276,6 +308,8 @@ def scenario_gutters_pours_and_programs():
                 eavesCount: v.eaves.data.eaves.length,
                 streamInstances,
                 pourInstances,
+                blockedPours,
+                postPours,
                 visible: v.eaves.group.visible,
                 drawn: v.eaves.streams?.geometry?.instanceCount || 0,
               };
@@ -283,14 +317,14 @@ def scenario_gutters_pours_and_programs():
             print('GUTTERS_ON', json.dumps(on_info))
             check(on_info['gutterRanges'] > 0, ('gutter snapRanges present when on', on_info))
             check(on_info['gutterMeshTagged'] == 0, ('merged fascia+gutter batch must NOT be tagged gutter at mesh level', on_info))
-            check(on_info['eavesCount'] == 0 and on_info['streamInstances'] == 0,
-                  ('no stream instances on guttered edges', on_info))
-            check(on_info['pourInstances'] > 0 and on_info['visible'] and on_info['drawn'] == on_info['pourInstances'],
+            check(on_info['pourInstances'] > 0 and on_info['visible'] and on_info['drawn'] >= on_info['pourInstances'],
                   ('pours are visible', on_info))
+            check(on_info['blockedPours'] >= 1, ('fixture includes an outlet-blocked spill', on_info))
+            check(on_info['postPours'] >= 1, ('fixture includes a porch-post downspout', on_info))
             check(on_info['programs'] == off_info['programs'],
                   ('program count unchanged vs gutters off', off_info['programs'], on_info['programs']))
 
-            # 3) Save screenshots under round1/: overview, building focus, and real close-ups (<= 2.5 m).
+            # 3) Save screenshots under round2/: overview, building focus, and full close-up set (<= 2.5 m).
             # Overview
             page.evaluate("""() => {
               const v = window.__twin;
@@ -309,8 +343,7 @@ def scenario_gutters_pours_and_programs():
             H.settle(page, 20)
             page.screenshot(path=str(SHOTS_DIR / 'building_focus.png'))
 
-            # Hide rain streak particles for close-ups so the gutter outlet/elbows and arching pour are unmistakable.
-            # Close-up 1: <= 2.2 m from front-right corner downspout top (gutter outlet, fascia, soffit & offset elbows).
+            # Close-up 1: <= 2.2 m from front-right corner gutter bottom outlet & offset elbows (particles off).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
@@ -320,44 +353,109 @@ def scenario_gutters_pours_and_programs():
               const pours = (v.eaves.data.instances || []).filter(i => i.pour);
               const pour = pours.find(p => p.mount === 'wall' && p.top[0] > 9 && p.top[0] < 12 && p.top[2] > -2) || pours[0];
               if (!pour) return;
-              const sTop = pour.spout.top; // [x, y, z] at gutter outlet
-              const target = [sTop[0] - 0.15, sTop[1] - 0.22, sTop[2] - 0.18];
-              const pos = [target[0] + 1.15, target[1] - 0.35, target[2] + 1.15];
+              const sTop = pour.spout.top; // [x, y, z] at gutter bottom outlet
+              const target = [sTop[0] - 0.14, sTop[1] - 0.14, sTop[2] - 0.18];
+              const pos = [target[0] + 1.15, target[1] - 0.30, target[2] + 1.15];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
-            cam_info = page.evaluate("""() => {
+            cam_outlet = page.evaluate("""() => {
               const v = window.__twin, c = v.cameraState();
-              const d = Math.hypot(c.position[0] - c.target[0], c.position[1] - c.target[1], c.position[2] - c.target[2]);
-              return { ...c, dist: d };
+              return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]) };
             }""")
-            check(cam_info['dist'] <= 2.5, ('outlet close-up camera within 2.5 m', cam_info))
+            check(cam_outlet['dist'] <= 2.5, ('outlet close-up within 2.5 m', cam_outlet))
             page.screenshot(path=str(SHOTS_DIR / 'corner_outlet_elbows.png'))
 
-            # Close-up 2: <= 2.0 m from the kick-out outlet & arching pour (particles off, eaveFlow=1).
+            # Close-up 2a: <= 2.0 m from front-right kick-out & clear-water pour in overcast heavy rain (rain particles ON).
             page.evaluate("""() => {
               const v = window.__twin;
               v.levels.go({ level: 'house' }, { immediate: true });
-              if (v.precipitation?.group) v.precipitation.group.visible = false;
+              if (v.precipitation?.group) v.precipitation.group.visible = true;
               v.controls.minDistance = 0.2;
               v.controls.maxPolarAngle = Math.PI * 0.85;
               const pours = (v.eaves.data.instances || []).filter(i => i.pour);
               const pour = pours.find(p => p.mount === 'wall' && p.top[0] > 9 && p.top[0] < 12 && p.top[2] > -2) || pours[0];
               if (!pour) return;
               const [x, y, z] = pour.top;
-              const target = [x, y + 0.05, z - 0.10];
-              const pos = [x + 1.15, y + 0.55, z + 1.05];
+              const target = [x, y + 0.04, z - 0.12];
+              const pos = [x + 1.35, y + 0.32, z + 0.90];
               v.setCameraState({ position: pos, target });
             }""")
             H.settle(page, 20)
-            kick_info = page.evaluate("""() => {
+            cam_kick = page.evaluate("""() => {
               const v = window.__twin, c = v.cameraState();
-              const d = Math.hypot(c.position[0] - c.target[0], c.position[1] - c.target[1], c.position[2] - c.target[2]);
-              return { ...c, dist: d, eaveFlow: v.eaves.uniforms.eaveFlow.value };
+              return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]), eaveFlow: v.eaves.uniforms.eaveFlow.value };
             }""")
-            check(kick_info['dist'] <= 2.5, ('kickout close-up camera within 2.5 m', kick_info))
+            check(cam_kick['dist'] <= 2.5, ('kickout close-up within 2.5 m', cam_kick))
+            page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_overcast_rain.png'))
+
+            # Close-up 2b: same <= 2.0 m kick-out camera with rain particles off and bright sunlit sky (clear-water pour in day).
+            page.evaluate("""() => {
+              const v = window.__twin;
+              if (v.precipitation?.group) v.precipitation.group.visible = false;
+              if (v.weather) {
+                v.__savedWeather = { ...v.weather };
+                v.weather.cloud = 0.12;
+                v.weather.sun = 1.0;
+                v.weather.sunClear = 1.0;
+              }
+              v.setClock('2026-06-21T12:00:00Z');
+            }""")
+            H.settle(page, 20)
             page.screenshot(path=str(SHOTS_DIR / 'kickout_pour_day.png'))
-            print('CLOSEUP_CAMS', json.dumps({'outlet': cam_info, 'kickout': kick_info}))
+            page.evaluate("""() => {
+              const v = window.__twin;
+              if (v.__savedWeather && v.weather) Object.assign(v.weather, v.__savedWeather);
+              v.setClock('2026-06-21T12:00:00Z');
+            }""")
+
+            # Close-up 3: <= 2.4 m porch-post downspout (particles off so gutter elbow, column-mounted pipe & kick-out pour all show).
+            page.evaluate("""() => {
+              const v = window.__twin;
+              v.levels.go({ level: 'house' }, { immediate: true });
+              if (v.precipitation?.group) v.precipitation.group.visible = false;
+              v.controls.minDistance = 0.2;
+              v.controls.maxPolarAngle = Math.PI * 0.85;
+              const pours = (v.eaves.data.instances || []).filter(i => i.pour);
+              const post = pours.find(p => p.mount === 'post');
+              if (!post) return;
+              const sTop = post.spout.top, [ox, oy, oz] = post.top;
+              const target = [ox + 0.12, oy + 0.45, oz - 0.15];
+              const pos = [target[0] - 1.45, target[1] + 0.35, target[2] + 1.85];
+              v.setCameraState({ position: pos, target });
+            }""")
+            H.settle(page, 20)
+            cam_post = page.evaluate("""() => {
+              const v = window.__twin, c = v.cameraState();
+              return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]) };
+            }""")
+            check(cam_post['dist'] <= 2.5, ('porch-post close-up within 2.5 m', cam_post))
+            page.screenshot(path=str(SHOTS_DIR / 'porch_post_downspout.png'))
+
+            # Close-up 4: <= 2.0 m outlet-blocked spill (jammed gutter over flat carport roof -> outlet hole + short spill).
+            page.evaluate("""() => {
+              const v = window.__twin;
+              v.levels.go({ level: 'house' }, { immediate: true });
+              if (v.precipitation?.group) v.precipitation.group.visible = false;
+              v.controls.minDistance = 0.2;
+              v.controls.maxPolarAngle = Math.PI * 0.85;
+              const pours = (v.eaves.data.instances || []).filter(i => i.pour);
+              const blocked = pours.find(p => (p.spout?.flags || []).includes('outlet-blocked'));
+              if (!blocked) return;
+              const [bx, by, bz] = blocked.top;
+              const target = [bx, by, bz];
+              const pos = [bx + 1.15, by + 0.25, bz + 1.05];
+              v.setCameraState({ position: pos, target });
+            }""")
+            H.settle(page, 20)
+            cam_blocked = page.evaluate("""() => {
+              const v = window.__twin, c = v.cameraState();
+              return { ...c, dist: Math.hypot(c.position[0]-c.target[0], c.position[1]-c.target[1], c.position[2]-c.target[2]) };
+            }""")
+            check(cam_blocked['dist'] <= 2.5, ('outlet-blocked close-up within 2.5 m', cam_blocked))
+            page.screenshot(path=str(SHOTS_DIR / 'outlet_blocked_spill.png'))
+
+            print('CLOSEUP_CAMS', json.dumps({'outlet': cam_outlet, 'kickout': cam_kick, 'post': cam_post, 'blocked': cam_blocked}))
             L.no_errors(served)
 
 

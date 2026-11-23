@@ -1879,12 +1879,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           // Authored viewer-shaped materials classify alpha and supply physical
           // reach inputs. Drawn editor fades, focus and selection never enter.
           alphaRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true, gutters: twin?.gutters });
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
             physical.root.updateMatrixWorld(true);
             return [physical.root, ...(yardGroup ? [yardGroup] : [])];
           },
           receiverRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true, gutters: twin?.gutters });
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
             if (!physicalYard && yardGroup) {
               physicalYard = copyReceivers(yardGroup) || new THREE.Group();
               physicalYard.matrixAutoUpdate = false; physicalYard.matrix.copy(yardGroup.matrixWorld);
