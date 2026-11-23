@@ -166,6 +166,26 @@ These follow common installation practice:
    - Parts already clipped as unexposed have neither streams nor gutters.
 8. **Count.** One downspout per started 35 ft: 35 ft or less gets one; longer runs place both ends first.
 
+### The owner's real house (2026-11-23, overrides the placement rules above where they differ)
+
+"The downspouts are on the outside corners - there is never a downspout on an inner corner. They prefer to go down into grass or plant beds, though there are some that flow onto the driveway."
+
+1. **Outside corners only.**
+   - Candidates are the run's outside (convex) house corners, meaning corners where the walls below turn outward.
+   - Inner (concave) corners are never candidates, even when a run ends there.
+   - A run with no outside corner gets its downspout at the run end that is not an inner corner, mounted on the wall. The Check list flags it.
+   - The 35 ft count rule only decides how many outside corners of a long run get one. Interior mid-run downspouts are not used.
+2. **Landing preference, applied when sliding or choosing between candidates:**
+   1. grass, or a planting bed (`site.beds`);
+   2. a driveway;
+   3. never a walkway, path, patio step, porch step or deck stair.
+
+   If an outside corner's outlet would land on a walkway, the kick-out turns along the wall toward the nearest grass or bed (up to 4 ft), rather than moving the downspout off the corner.
+3. **Acceptance test against the owner's house:**
+   - every downspout on an outside corner;
+   - none on an inner corner;
+   - every outlet on grass, a bed or the driveway.
+
 ## Look checks (before the owner sees anything)
 
 Captures on the owner's house:
