@@ -30,7 +30,7 @@ check('mounted mode updates red emphasis and alarm legend then cleans up',async(
  {device_id:'light',name:'Light',entity_id:'light.a',kind:'light',state:'on'}]});
  try{t.live.setMode('security');const red=[];t.view.scene.traverse(o=>{if(o.userData.securityAttention)red.push(o);});
  assert.equal(red.filter(o=>o.visible).length,2);assert.match(document.getElementById('twin-mode-legend').textContent,/armed home/);
- assert.equal(t.live.marker('door').dim,false);assert.equal(t.live.marker('light').dim,true);
+ assert.equal(t.live.marker('door').dim,false);assert.equal(t.live.marker('light').dim,false);assert.equal(t.sprite('light').visible,false);
  t.states['lock.back'].state='locked';t.states['binary_sensor.window'].state='off';await t.live.refresh();assert.equal(red.filter(o=>o.visible).length,0);
  t.live.setMode('all');assert.equal(red.filter(o=>o.visible).length,0);
  }finally{t.cleanup();}assert.equal(t.view.scene.children.filter(o=>o.children.some(c=>c.userData.securityAttention)).length,0);
@@ -38,7 +38,8 @@ check('mounted mode updates red emphasis and alarm legend then cleans up',async(
 check('unoffered camera keeps 25 foot cone and existing refusal',async()=>{
  const t=await rig({devices:[{device_id:'camera',name:'Camera',entity_id:'camera.k',kind:'camera',state:'idle',offered:false}]});
  try{t.live.setMode('security');let cone;t.view.scene.traverse(o=>{if(o.userData.cameraCone)cone=o;});assert.ok(cone.visible);assert.equal(cone.userData.cameraCone.length_ft,25);
- await t.tap('camera');assert.equal(t.serviceCalls().length,0);assert.ok(document.querySelector('[data-ring]'));t.live.setMode('all');assert.equal(cone.visible,false);
+ await t.tap('camera');assert.equal(t.serviceCalls().length,0);assert.ok(document.querySelector('[data-ring]'));t.live.setMode('all');assert.equal(cone.visible,true);
+ t.live.toggleMode('security');assert.equal(cone.visible,false);t.live.toggleMode('security');assert.equal(cone.visible,true);
  }finally{t.cleanup();}
 });
 check('Security lock tap retains unsafe confirmation',async()=>{

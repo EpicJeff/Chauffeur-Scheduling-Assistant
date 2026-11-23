@@ -176,7 +176,8 @@ check('mounted mode, drawer and wall link show the same decisions on pushes and 
   assert.deepEqual(t.live.energy().ribbons.filter(r=>r.visible).map(r=>[r.id,r.watts]),[['grid:house',1800]]);
   settings.stop();settings=null;await press(link);assert.equal(link.getAttribute('aria-expanded'),'true');
   assert.equal(legend.querySelector('[data-energy-summary]').textContent,t.live.energy().check.summary);
-  t.live.setMode('all');assert.equal(legend.querySelector('a'),null);t.live.setMode('energy');assert.ok(legend.querySelector('a'));
+  t.live.setMode('all');assert.ok(legend.querySelector('a'));t.live.toggleMode('energy');assert.equal(legend.querySelector('a'),null);
+  t.live.toggleMode('energy');assert.ok(legend.querySelector('a'));
  }finally{delete window.chfOpenSettings;settings?.stop();section.remove();t.cleanup();}
  assert.equal(document.querySelector('.twin-energy-check'),null);
 });

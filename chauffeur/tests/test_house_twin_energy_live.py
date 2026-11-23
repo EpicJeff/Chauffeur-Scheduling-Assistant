@@ -160,7 +160,7 @@ def scenario_energy_ribbons_labels_and_grid_push():
         return
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => window.__twin.live.energy().ribbons.filter(r=>r.visible).length===3")
         midday={'solar:house':500,'solar:battery':2000,'solar:grid':1500}
         wait_flows(page,midday)
@@ -216,7 +216,7 @@ def scenario_security_attention_camera_and_lock_push():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
         L.aim_kitchen(page)
-        page.get_by_role('button', name='Security', exact=True).click()
+        page.get_by_role('button', name='Security', exact=True).click(modifiers=['Shift'])
         page.wait_for_timeout(1000)
         push('lock.back_door', 'unlocked')
         page.wait_for_function("""() => {let red=false;window.__twin.scene.traverse(o=>{if(o.userData.securityAttention==='dev-back-lock')red=o.visible;});return red;}""", timeout=3000)
@@ -237,12 +237,12 @@ def scenario_no_programs_on_second_entry_to_either_mode():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=high&test=1&panel=true&kiosk=true')
         for mode in ('Energy', 'Security'):
-            page.get_by_role('button', name=mode, exact=True).click()
+            page.get_by_role('button', name=mode, exact=True).click(modifiers=['Shift'])
             page.wait_for_timeout(750)
             before = page.evaluate('() => window.__twin.renderer3.info.programs.length')
             page.get_by_role('button', name='All', exact=True).click()
             page.wait_for_timeout(250)
-            page.get_by_role('button', name=mode, exact=True).click()
+            page.get_by_role('button', name=mode, exact=True).click(modifiers=['Shift'])
             page.wait_for_timeout(750)
             after = page.evaluate('() => window.__twin.renderer3.info.programs.length')
             check(before == after, (mode, 'no new programs on re-entry', before, after))
@@ -267,7 +267,7 @@ def scenario_energy_check_explains_removed_meter():
     push_totals(0, -2000, 2500, 500)
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => window.__twin.live.energy().check?.summary === 'No ribbons because Meter / grid not placed'")
         page.get_by_role('link', name='Why no ribbons?', exact=True).click()
         panel = page.locator('#twin-mode-legend .twin-energy-check')
@@ -294,7 +294,7 @@ def scenario_energy_check_warns_about_battery_as_house_and_mapping_repair_shows_
     push_totals(0, 0, 1800, 1800)
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         expected = "No ribbons because the readings don't balance — check the Electric panel / house sensor"
         page.wait_for_function('(summary) => window.__twin.live.energy().check?.summary === summary', arg=expected)
         page.get_by_role('link', name='Why no ribbons?', exact=True).click()
@@ -317,7 +317,7 @@ def scenario_energy_check_warns_about_battery_as_house_and_mapping_repair_shows_
                                     headers={'X-Member-Token': L.H.STATE['token']}, data=mapping)
         check(response.status == 200, response.text())
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         wait_flows(page, {'grid:house': 1800})
         page.wait_for_function("() => window.__twin.live.energy().check.roles.find(r => r.id === 'house').status === 'ok'")
         assert_flow_endpoints(page)
@@ -332,7 +332,7 @@ def scenario_energy_ribbon_pixels_cover_an_intervening_real_roof():
     push_totals(0, 0, 1800, 1800)
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         wait_flows(page, {'grid:house': 1800})
         samples = page.evaluate("""async () => {
           const THREE=await import('three'),v=window.__twin,r=v.renderer3,gl=r.getContext();
@@ -406,7 +406,7 @@ def scenario_energy_fan_apexes_and_labels_follow_the_camera():
     push_totals(0, -2000, 2500, 500)
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button', name='Energy', exact=True).click()
+        page.get_by_role('button', name='Energy', exact=True).click(modifiers=['Shift'])
         wait_flows(page, {'grid:house': 500, 'grid:battery': 2000})
         for position in ([0, 18, .1], [.5, 16, 8]):
             page.evaluate("""async offset => {

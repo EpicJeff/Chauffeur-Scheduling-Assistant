@@ -255,18 +255,18 @@
     #twin-time-scrub-value { color:var(--twinTextDim); font-size:12px; }
     html[data-twin-idle] #twin-path, html[data-twin-idle] .twin-level-targets { visibility:hidden; }
     @media (max-width:800px) { #twin-path { max-width:calc(100vw - 32px); } #twin-controls { top:142px; right:16px; max-width:calc(100vw - 32px); } html[data-twin-wall] #twin-controls { top:72px; } }
-    /* Mode icons, centred at the top (2c-2). Name as tooltip on hover; a long press shows it on touch. */
+    /* Shared mode toggles, centred at the top; hold or Shift+Enter solos a mode. */
     #twin-controls #twin-modes { position:fixed; left:50%; top:86px; transform:translateX(-50%); z-index:47; flex-wrap:nowrap; }
     html[data-twin-wall] #twin-controls #twin-modes { top:16px; }
     #twin-modes button { position:relative; min-width:48px; padding:6px 12px; display:inline-flex; align-items:center; justify-content:center; }
     #twin-modes button svg { width:22px; height:22px; flex:none; }
-    .twin-mode-tip { position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%); white-space:nowrap; padding:4px 10px; border-radius:8px; border:1px solid var(--twinBorder); background:var(--twinGlassStrong); color:var(--twinText); font:500 12px system-ui; pointer-events:none; }
+    .twin-mode-tip { position:fixed; top:calc(100% + 8px); left:50%; transform:translateX(-50%); width:260px; max-width:calc(100vw - 32px); white-space:normal; padding:4px 10px; border-radius:8px; border:1px solid var(--twinBorder); background:var(--twinGlassStrong); color:var(--twinText); font:500 12px system-ui; pointer-events:none; }
     #twin-modes button:hover .twin-mode-tip { display:block !important; }
     @media (max-width:800px) { #twin-controls #twin-modes { top:206px; } html[data-twin-wall] #twin-controls #twin-modes { top:72px; } }
     [hidden] { display:none !important; }
-    #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
+    #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); z-index:46; pointer-events:none; }
     /* Shared tiles; glass and thin type follow the approved tiles brief. */
-    #twin-glance { display:flex; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
+    #twin-glance { display:flex; box-sizing:border-box; width:max-content; max-width:100%; margin-inline:auto; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
     #twin-glance > div { display:flex; flex:none; align-items:center; gap:10px; min-width:0; }
     #twin-glance svg { flex:none; width:28px; height:28px; }
     #twin-glance strong { display:block; white-space:nowrap; font-size:22px; font-weight:400; }
@@ -301,7 +301,7 @@
     .twin-weather-reading svg { width:clamp(36px, 5vw, 64px); height:clamp(36px, 5vw, 64px); }
     .twin-weather-reading strong { white-space:nowrap; font:300 clamp(36px, 5vw, 64px)/1.1 system-ui; }
     #twin-idle-weather small { display:block; margin-top:8px; color:var(--twinTextDim); font:300 clamp(16px, 2vw, 22px)/1.4 system-ui; }
-    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; flex-wrap:wrap; gap:20px 32px; border:0; border-top:1px solid var(--twinBorder); border-radius:0; background:transparent; backdrop-filter:none; overflow:visible; }
+    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; gap:20px 32px; border:0; border-top:1px solid var(--twinBorder); border-radius:0; background:transparent; backdrop-filter:none; }
     #twin-idle #twin-glance strong { font-size:clamp(24px, 3vw, 34px); font-weight:400; }
     #twin-idle #twin-glance svg { width:34px; height:34px; }
     html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-mode-labels, html[data-twin-idle] .twin-room-cards { visibility:hidden; }

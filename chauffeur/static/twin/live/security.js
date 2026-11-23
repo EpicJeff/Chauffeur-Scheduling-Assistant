@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { modeShows } from './mode_state.js';
 import { FT } from '../twin_generator.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { buildingCentre, lotPoint } from './energy_geometry.js';
@@ -71,7 +72,7 @@ export function mountSecurity({view, live, overlays = view.scene}) {
   }
   return {warmObjects: () => [...emphasis, ...cones].map(r => r.mesh),
     update(mode) {
-      const on = mode === 'security' || mode === 'all';
+      const on = modeShows(mode, 'security');
       for (const {marker, mesh} of emphasis) mesh.visible = on && !live.stale() && securityAttention(marker, live.state(marker.entity_id));
       for (const {mesh} of cones) mesh.visible = on;
     },

@@ -135,7 +135,12 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     const live = {offlineEffects: true, layout: () => empty, peek: () => ({}), stale: () => true,
       rooms: () => [], looks: () => ({}), state: () => undefined, subscribe: () => () => {},
       draw: () => modes?.draw(), lights: () => modes?.lights() || [],
-      setMode: value => modes?.setMode(value), refresh: async () => {},
+      setMode(value) { const result = modes?.setMode(value); view.render(); return result; },
+      setModes(values) { const result = modes?.setModes(values); view.render(); return result; },
+      toggleMode(id) { const result = modes?.toggleMode(id); view.render(); return result; },
+      modes: () => modes?.modes() || [],
+      get mode() { return modes?.mode || 'all'; },
+      refresh: async () => {},
       // The rest of the house calls these on whatever layer is mounted.
       openRoom() {}, closeRoom() {}, openedRoom: () => null, configureEnergy() {}, configureGlance() {},
       energy: () => modes?.energy(), markers: () => [], marker: () => null, devices: () => [], states: () => ({}),
@@ -157,7 +162,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const factRooms = new Set(), textures = markerTextureCache(), badges = new Map(), listeners = new Set(), busy = new Set(), waiting = new Map();
   const clusterPool = [];
   const raycaster = new THREE.Raycaster(), projected = new THREE.Vector3(), scratch = new THREE.Vector3();
-  let states = {}, stopped = false, stale = true, mode = null, timer = null, polling = Promise.resolve();
+  let states = {}, stopped = false, stale = true, timer = null, polling = Promise.resolve();
   let stream = null, pollChanges = null, pushed = false, warned = false, energyStreamKey = '';
   let selected = null, sheetKey = null, sheetStatus = null;
   let roomPanel = null, modes = null, ring = null, rows = [], levelKeys = [], resizeObserver = null;
@@ -180,10 +185,16 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
   const roomRows = () => roomStates(layout.rooms, states);
   const stateOf = row => markerState(row.kind, states[row.entity_id]?.state ?? 'unavailable',
     states[row.entity_id]?.attributes, row.entity_id, looks[row.entity_id]);
+  function changeModes(action, value) {
+    closeFan(); cancelFlight();
+    const result = modes?.[action](value);
+    notify(); draw(); view.render();
+    return result;
+  }
   function notify() {
     revision++; overlays = null;
     for (const row of rows) {
-      row.stale = stale; row.dim = stale || row.look !== 'attention' && !modeForeground(mode, row, states[row.entity_id]);
+      row.stale = stale; row.dim = stale;
       textures.assign(row.sprite, iconKind(row), row.look, null, row.color);
       row.sprite.material.opacity = row.dim ? .4 : 1;
       const text = `${row.name} · ${row.label}`;
@@ -426,7 +437,9 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
         * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
     const levelShown = row => view.groups?.levels[`${row.building}:${row.level}`]?.visible !== false;
     const navigation = view.levels?.snapshot();
-    const shown = rows.filter(row => navigation ? deviceAtLevel(navigation, row) : levelShown(row));
+    const enabledModes = modes?.modes() || 'all';
+    const modeVisible = row => row.look === 'attention' || modeForeground(enabledModes, row, states[row.entity_id]);
+    const shown = rows.filter(row => modeVisible(row) && (navigation ? deviceAtLevel(navigation, row) : levelShown(row)));
     const pxPerFoot = FT / pixelSize(view.controls.target);
     const lod = navigation ? {markers: shown.map(row => row.device_id), badges: [], labels: pxPerFoot >= 20}
       : levelOfDetail(shown, pxPerFoot);
@@ -514,7 +527,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       if (!members.has(key)) members.set(key, []);
       members.get(key).push(row);
     }
-    if (navigation?.level === 'floor' || !navigation && pxPerFoot < 7 && (!mode || mode === 'all')) {
+    if (navigation?.level === 'floor' || !navigation && pxPerFoot < 7) {
       for (const room of layout.rooms.filter(room => navigation ? room.building === navigation.building && room.level === navigation.floor : levelShown(room))) {
         // Empty rooms remain reachable through their floor, but get a card
         // only when they have a fact (the 2b rule also applies at Floor).
@@ -564,7 +577,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     }
     for (const b of shownBadges) b.sprite.center.set(.5 - b.dx / BADGE_PX, .5 + b.dy / BADGE_PX);
     badges.forEach((sprite, key) => { sprite.visible = visibleBadges.has(key); });
-    if (navigation?.level === 'floor' || !navigation && (!mode || mode === 'all')) {
+    if (navigation?.level === 'floor' || !navigation) {
       const candidates = shownBadges.filter(b => b.front && onCanvas(b)).flatMap(b => {
         const card = cards?.get(b.key);
         return card ? [{...b, x: b.x + b.dx, y: b.y + b.dy, w: card.w, h: card.h, priority: card.priority, card}] : [];
@@ -760,7 +773,11 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     // From the room panel: the ring takes the keyboard focus, and gives it back (review L7).
     openRing: row => { const from = document.activeElement; roomPanel?.close(); ring?.open(row, {focus: from}); },
     ring: () => ring?.current() || null,
-    setMode(name) { closeFan(); cancelFlight(); mode = modes?.setMode(name || 'all') || 'all'; notify(); draw(); view.render(); },
+    setMode(name) { return changeModes('setMode', name || 'all'); },
+    setModes(values) { return changeModes('setModes', values); },
+    toggleMode(id) { return changeModes('toggleMode', id); },
+    modes: () => modes?.modes() || [],
+    get mode() { return modes?.mode || 'all'; },
     closeRoom() { ring?.close(); roomPanel?.close(); closeSheet(); },
     openedRoom: () => { const row = roomPanel?.current?.(); return row ? { building: row.building, room: row.room } : null; },
     markers: () => rows.map(plain),
