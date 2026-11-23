@@ -16,6 +16,7 @@ import { contains } from '../twin_generator.js';
 import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
 import { createMeasure } from './measure.js';
 import { createContextMenu } from './context_menu.js';
+import { moveToAction } from './move_to_action.js';
 import { icon } from './icons.js';
 import { drawMaterialsList, materialSelectionActions } from './selection_card.js';
 import { pieceMaterialSlots, materialIdForSurface } from './selection_materials.js';
@@ -301,7 +302,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getModel, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    dock, op, applyBatch, selectionStore, visibility, view, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, applyBatch, selectionStore, visibility, view, chooseDestination, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   signal?.addEventListener('abort', () => cards.dispose(), { once: true });
   const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
   handles = createHandles({ view, getPlan, getSelection: () => selectionStore.members().length > 1 ? {} : handleSelection(), getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
@@ -507,6 +508,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         ? { mode: 1, target: { kind: 'ground' }, point: groundPoint?.(target) }
         : { mode: target.clientX === undefined ? 2 : 1, target: landing, point: target.materialSurface?.point }) },
       { label: 'Duplicate', disabled: !eligible.ok || !canEdit(), reason: eligible.reason, run: () => clipboard.duplicate(refs) },
+      ...(!target.empty ? [moveToAction({ refs, getPlan, getLabel, applyBatch, selectionStore, canEdit, chooseDestination, queue: cards.queue })].filter(Boolean) : []),
       ...(slot ? [{ label: 'Copy material', run: () => clipboard.copyMaterial(surface) },
         { label: 'Paste material', disabled: !clipboard.hasMaterial() || !canEdit(), reason: 'Copy a material first.', run: () => clipboard.pasteMaterial(surface) }] : [])];
   }
@@ -589,6 +591,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (target) select({ pieceId: target.level.id, buildingId: target.building.id });
     if (sheetOn) sheet(key, true).catch(report);
     delegate?.floorChanged?.(); drawFloors();
+  }
+  async function chooseDestination(key) {
+    delegate?.cancel?.(); setTool('select');
+    if (key !== 'site') { chooseFloor(key); return; }
+    measure.disarm(); onInteract?.(); roomSelection.clear();
+    view.setView('ext'); view.showLevels(null);
+    await view.setEditableLevel(null); drawFloors();
   }
   function drawFloorList(host, actionsOnly = false) {
     const focused = document.activeElement?.dataset.floor;

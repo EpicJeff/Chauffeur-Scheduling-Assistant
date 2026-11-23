@@ -17,6 +17,7 @@ import { stairShelf } from './stair_shelf.js';
 import { siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
+import { drawMoveToButton } from './move_to_action.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -37,7 +38,7 @@ const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ri
   offset: 'Distance from surface', floor_offset_ft: 'Floor height (relative to this floor)' };
 const hostedLabels = { rotation: 'Turn', scale: 'Size' };
 const units = { pitch: 'in 12', rotation: '°', scale: '%' };
-export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection, selectionStore, applyBatch = ops => op({ op: 'batch', ops }), visibility, view }) {
+export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection, selectionStore, applyBatch = ops => op({ op: 'batch', ops }), visibility, view, chooseDestination }) {
   let namesAsked = false, namesRead = null;
   function loadNames(onReady) {
     if (!loadMaterialNames) return;
@@ -100,7 +101,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   }
   function drawCard(next = selection) {
     const members = selectionStore?.members() || (next ? [next] : []);
-    const materialOptions = refs => ({ refs, getPlan, getModel, getKit, getFieldLabels, selectionStore, applyBatch, canEdit, library, ownSlot, queue, report, view, visibility, loadNames, onSaved: () => { if (refs.length === 1) layout = null; draw(); }, onNamesChanged: () => { setCache = null; if (refs.length === 1) layout = null; draw(); } });
+    const materialOptions = refs => ({ refs, getPlan, getLabel, getModel, getKit, getFieldLabels, selectionStore, applyBatch, chooseDestination, canEdit, library, ownSlot, queue, report, view, visibility, loadNames, onSaved: () => { if (refs.length === 1) layout = null; draw(); }, onNamesChanged: () => { setCache = null; if (refs.length === 1) layout = null; draw(); } });
     if (members.length > 1) {
       // Polls reuse the prepared rows. Values changing in a new plan do not
       // change the field structure or replace inputs with unsaved text.
@@ -379,7 +380,10 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       acceptButton = button('Looks right', async () => { await pending; await edit({ op: 'accept', building: building.id, pieces: [piece.id] }); draw(); });
       host.append(acceptButton);
     }
-    host.append(button('Delete', remove));
+    const actions = document.createElement('div'); actions.className = 'editor-material-actions editor-card-row';
+    const moveTo = selectionStore && drawMoveToButton(actions, { ...materialOptions(members), getRefs: () => members });
+    if (moveTo) { actions.append(button('Delete', remove)); host.append(actions); }
+    else host.append(button('Delete', remove));
   }
   async function remove() {
     const setRemoval = removeSelection?.();

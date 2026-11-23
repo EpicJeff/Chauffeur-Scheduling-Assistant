@@ -123,6 +123,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-material-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0; }
 .editor-material-line span { display: block; color: var(--editor-muted); font-size: 11px; }
 .editor-material-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex: 0 0 auto; max-width: 55%; }
+/* A card's own action row (Move to + Delete) spans the card like its other full-width rows. */
+.editor-material-actions.editor-card-row { max-width: 100%; width: 100%; }
+.editor-card-row > button { flex: 1 1 0; }
 /* Tool checkboxes use the card's shared labelled row, at button height. */
 .editor-actions > label.editor-material-line { justify-content: flex-start; gap: 6px; margin: 0; min-height: 44px; }
 .editor-actions > label.editor-material-line input[type="checkbox"] { width: auto; min-height: 0; margin: 0; padding: 0; }
@@ -566,6 +569,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
   padding: 8px; border: 1px solid var(--editor-line); border-radius: 12px;
   background: var(--twinGlassStrong); backdrop-filter: blur(16px); }
 #editor-context-menu button { text-align: left; border: 0; background: transparent; }
+/* The arrow is decoration: empty alt text keeps it out of the accessible name
+   (aria-haspopup already announces the submenu). */
+#editor-context-menu [aria-haspopup="menu"]::after { content: '\25b8'; content: '\25b8' / ''; float: right; margin-left: 12px; }
 #editor-context-menu button:hover, #editor-context-menu button:focus-visible { background: var(--twinHover); }
 /* Scene/Layers use the existing dock glass, selected pill and row hover.
    Fixed 36px rows give virtual scrolling the same geometry as real rows. */

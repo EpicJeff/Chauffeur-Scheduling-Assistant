@@ -7758,6 +7758,7 @@ class HouseDesignTool(BaseModel):
         "accept_proposal (id:'<piece>:proposal'); dismiss_proposal (id:'<piece>:proposal'); "
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
         "site list is planting|furniture|beds|hardscape|edges|pool|fire_pit|fence; index is 0-based, or use id. "
+        "To move a piece between a building and the site (or between buildings) keep its id: send one batch with the delete op first (delete or delete_site_item), then the add op (add_item or add_site_item). "
         "yard_rooms:add/update_site_shape(name,polygon,ha_area);make_yard_room;host:yard_room,u,v. "
         "Site materials:{part:slot}:fence boards,posts,rails;fire_pit body,top;hardscape surface,edging;beds fill;pool coping,interior;edges strip;pad wall.materials.face. "
         "Pit fields: fuel wood|gas,body stone|brick|concrete,top none|granite|concrete,height_in 6..30,glass amber|blue|clear (gas),entity. "
