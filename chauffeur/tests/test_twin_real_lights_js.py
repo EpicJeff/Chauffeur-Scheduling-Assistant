@@ -81,6 +81,7 @@ class Node extends EventTarget {
   set textContent(value) { this.text = String(value); this.children = []; }
   get textContent() { return this.text + this.children.map(n => n.textContent).join(' '); }
   append(...nodes) { for (const node of nodes) { node.parentElement = this; this.children.push(node); } }
+  insertBefore(node, ref) { node.remove(); const index = this.children.indexOf(ref); node.parentElement = this; if (index < 0) this.children.push(node); else this.children.splice(index, 0, node); }
   replaceChildren(...nodes) { this.children = []; this.text = ''; this.append(...nodes); }
   remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(n => n !== this); }
   get lastChild() { return this.children.at(-1); }
@@ -101,7 +102,7 @@ globalThis.document = Object.assign(new EventTarget(), {body, activeElement:null
   createTextNode: text => Object.assign(new Node('#text'), {textContent: String(text)}),
   createElementNS: (ns, tag) => new Node(tag),
   getElementById(id) { const find = n => n.id === id ? n : n.children.map(find).find(Boolean); return find(body); }});
-globalThis.window = {chfBase:'../'};
+globalThis.window = Object.assign(new EventTarget(), {chfBase:'../'});
 globalThis.location = {search:''};
 globalThis.requestAnimationFrame = callback => setImmediate(callback);
 const THREE = await import('three');

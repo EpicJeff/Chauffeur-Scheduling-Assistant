@@ -1,6 +1,23 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.988 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.989 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.989 (2026-11-23, browser-checked with screenshots at 1920x1080 and 390x844, NOT device-verified): the house viewer's mode legend is a key button with one compact card.** The owner's request: legends "get in the way, especially when you have multiple modes enabled". They wanted colour blocks instead of colour words, a short description each, and no long lists. The owner picked option A from three mockups.
+
+- **Button and card.**
+  - New `live/mode_key.js` is the one shared builder. It renders a round **?** button named "Legend" at the end of the mode strip. The button is hidden when no active mode has a key.
+  - The button opens a non-modal Legend card below the strip, with one section per active mode in strip order: the mode's icon and name, then rows of a 12 px swatch and a short label, plus at most one note.
+  - Closed by default. The button, Esc (focus returns to the button), a scene tap, or turning off the last keyed mode closes it. Open state is stored per device in `chauffeur.twin.legend.v1`.
+  - The card is 220 px wide and scrolls within 60dvh and the space above the glance bar.
+- **What each mode provides.** Modes now provide `key()` instead of legend strings.
+  - Climate: Heating, Cooling, Idle, from `climateColors`.
+  - Energy: Solar, Battery, Grid, Car charger, from `FLOW_COLORS`. The note is "Flows under 50 W are hidden", or the placement guidance when anchors are missing. The original energy check controls ("Why no ribbons?", the wall-panel read-only check) are kept inside the Energy section as the same DOM nodes.
+  - Security: "Open or unlocked" from the new exported `SECURITY_COLOR` (which also draws the markers), and a camera-view cone glyph. The alarm panels collapse to one status chip from `alarmSummary`, e.g. "Alarm · armed home (2 of 3)" or "Alarm · unavailable". The full named list sits behind a native disclosure only when the panels disagree.
+  - The Lights overflow note becomes a Lights section.
+- **Removed.** `#twin-mode-legend` and the joined strings are gone. The energy snapshot keeps its placement text for diagnostics.
+- **Tests.**
+  - New: `test_twin_mode_key_js.py` 7/7; `test_house_twin_mode_key_live.py` 6/6 (closed by default, three sections, Esc and focus, reload persistence, wall touch with the read-only energy check, clear of the glance bar at 1080p and phone).
+  - Neighbours: modes 4/4, security 9/9, energy 38/38, controls live 4/4, energy live 7/7.
 
 **v2.499.988 (2026-11-23, NOT device-verified): eave streams show with one building focused.** The owner saw rain but no water pouring off the roof eaves. Their console snapshot showed the mesh was built, with 845 streams, but `visible: false`. The breadcrumb read "House › Pool House". With one building focused, the viewer level is `building`. `sky/eave_streams.js` showed streams only at the whole-house level, a check meant to hide them in floor and room cutaways, where the roof is gone. The building view is still an exterior view with its roof, so streams now show at `house` and `building` and still hide at `floor`/`room`. Test: `test_twin_eave_streams_js.py` adds the building-level case and passes.
 

@@ -37,7 +37,7 @@ check('mounted mode updates red emphasis and alarm legend then cleans up',async(
  {device_id:'alarm',name:'Alarm',entity_id:'alarm_control_panel.a',kind:'alarm',state:'armed_home'},
  {device_id:'light',name:'Light',entity_id:'light.a',kind:'light',state:'on'}]});
  try{t.live.setMode('security');const red=[];t.view.scene.traverse(o=>{if(o.userData.securityAttention)red.push(o);});
- assert.equal(red.filter(o=>o.visible).length,2);assert.match(document.getElementById('twin-mode-legend').textContent,/armed home/);
+ assert.equal(red.filter(o=>o.visible).length,2);assert.match(document.getElementById('twin-mode-key').textContent,/armed home/);
  assert.equal(t.live.marker('door').dim,false);assert.equal(t.live.marker('light').dim,false);assert.equal(t.sprite('light').visible,false);
  t.states['lock.back'].state='locked';t.states['binary_sensor.window'].state='off';await t.live.refresh();assert.equal(red.filter(o=>o.visible).length,0);
  t.live.setMode('all');assert.equal(red.filter(o=>o.visible).length,0);

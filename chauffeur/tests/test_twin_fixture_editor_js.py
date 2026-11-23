@@ -135,7 +135,7 @@ await test('camera_view_origin_follows_replacement_in_editor_and_viewer',async()
  const cone=layer.warmObjects().find(o=>o.userData.cameraCone),positions=cone.children[0].geometry.attributes.position;
  const origin=new THREE.Vector3(marker.at[0]*.3048,marker.at[2]*.3048,-marker.at[1]*.3048);
  assert.ok(Array.from({length:positions.count},(_,i)=>new THREE.Vector3().fromBufferAttribute(positions,i)).some(p=>p.distanceTo(origin)<1e-6));
- assert.equal(layer.legend().includes('25 ft'),false);assert.equal('at' in saved,false);layer.stop();s.signal.abort();
+ assert.equal(layer.key().items.find(item=>item.swatch==='cone').label,'Camera view');assert.equal('at' in saved,false);layer.stop();s.signal.abort();
 });
 await test('real_surface_hits_store_fixture_outside_clicked_wall_face_and_slabs',async()=>{
  const {createFixtureEditor}=await modules(),{createLibrary}=await import(file('static/twin/editor/library.js')),s=setup();

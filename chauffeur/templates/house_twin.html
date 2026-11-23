@@ -275,7 +275,20 @@
     #twin-tier { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
     #twin-hud { bottom:calc(var(--panel-shelf-h, 0px) + 136px); }
     #twin-status { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
-    #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:var(--twinGlass); backdrop-filter:blur(16px); border-radius:8px; color:var(--twinText); max-width:calc(100vw - 32px); }
+    #twin-modes #twin-mode-key-button { width:48px; height:44px; padding:0; font-size:20px; font-weight:400; }
+    #twin-mode-key-button[hidden], #twin-mode-key[hidden] { display:none; }
+    #twin-mode-key { position:fixed; z-index:48; box-sizing:border-box; width:220px; max-width:calc(100vw - 16px); max-height:min(60dvh, var(--twin-key-space, 60dvh)); overflow:auto; overscroll-behavior:contain; pointer-events:auto; padding:12px 14px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:400 12.5px/1.4 system-ui; scrollbar-width:thin; scrollbar-color:var(--twinBorder) transparent; }
+    #twin-mode-key [data-mode-key] + [data-mode-key] { margin-top:12px; padding-top:12px; border-top:1px solid var(--twinBorder); }
+    #twin-mode-key h2 { display:flex; align-items:center; gap:7px; margin:0 0 7px; font:600 12.5px/1.4 system-ui; }
+    #twin-mode-key h2 svg { width:16px; height:16px; flex:none; }
+    .twin-key-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+    .twin-key-swatch { display:inline-flex; align-items:center; justify-content:center; flex:none; width:12px; height:12px; border-radius:3px; }
+    .twin-key-swatch[data-key-cone] { font-size:18px; }
+    .twin-key-note { margin:7px 0 0; color:var(--twinTextDim); font-size:12px; overflow-wrap:anywhere; }
+    .twin-key-status { width:fit-content; margin:8px 0 0; padding:4px 7px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinHover); }
+    .twin-key-alarms summary { cursor:pointer; }
+    .twin-key-alarms p { margin:6px 0; overflow-wrap:anywhere; color:var(--twinTextDim); }
+    #twin-mode-key :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
     .twin-mode-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
     .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); font:600 13px system-ui; }
     /* Room cards use the idle clock's dark glass and the glance bar's thin readings. */
@@ -347,7 +360,7 @@
     #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; }
     /* Energy check reuses the energy drawer's fieldsets; the legend reads the same rows. */
     .twin-energy-check { color:var(--twinText); }
-    .twin-energy-check fieldset, #twin-mode-legend .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); }
+    .twin-energy-check fieldset, #twin-mode-key .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); }
     .twin-energy-check p { margin:6px 0; overflow-wrap:anywhere; }
     .twin-energy-check legend { color:var(--twinText); font-weight:700; }
     .twin-energy-check [data-energy-summary] { font-size:16px; line-height:1.5; font-weight:600; }
@@ -356,10 +369,9 @@
     .twin-energy-check [data-energy-mark=error] { color:#f87171; }
     .twin-energy-check [data-energy-flow][data-status=hidden] { color:var(--twinTextDim); }
     /* The check's role names are fieldset legends; the controls bar hides its legends, so show these. */
-    #twin-mode-legend legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
-    #twin-mode-legend a { display:inline-block; min-height:44px; padding:10px 0; text-decoration:underline; }
-    #twin-mode-legend .twin-energy-check { max-height:50dvh; overflow-y:auto; }
-    #twin-mode-legend a:focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
+    #twin-mode-key legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
+    #twin-mode-key a { display:inline-flex; align-items:center; box-sizing:border-box; min-height:44px; color:inherit; text-decoration:underline; }
+    #twin-mode-key .twin-energy-check { overflow-wrap:anywhere; }
   </style>
 </head>
 <body>

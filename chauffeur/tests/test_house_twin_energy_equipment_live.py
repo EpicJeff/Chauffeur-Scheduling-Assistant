@@ -106,7 +106,8 @@ def scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt():
         page.reload();page.wait_for_function('() => !!window.__twin?.live')
         page.get_by_role('button',name='Energy',exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => !window.__twin.live.energy().ribbons.some(r=>r.id.split(':').includes('grid'))")
-        check('Place the meter to see grid flow' in page.locator('#twin-mode-legend').inner_text(),'removed meter produces placement prompt')
+        page.get_by_role('button', name='Legend', exact=True).click()
+        check('Place the meter to see grid flow' in page.locator('#twin-mode-key').inner_text(),'removed meter produces placement prompt')
         L.no_errors(served)
 
 

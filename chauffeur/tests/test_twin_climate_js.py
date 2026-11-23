@@ -111,7 +111,7 @@ check('mounted heat washes rooms without areas, excepted stays hidden; idle only
     for(const id of ['r','office','plain']){assert.equal(t.floors[id].parent.visible,true);assert.deepEqual(t.floors[id].material.color.toArray(),climateHeat.map(v=>new THREE.Color().setRGB(v/255,v/255,v/255,THREE.SRGBColorSpace).r));}
     assert.equal(t.floors.garage.parent.visible,false);
     assert.match(document.querySelector('.twin-climate-labels').textContent,/Kitchen 68° → 71° Heating/);
-    assert.equal(t.live.marker('thermo').dim,false);assert.equal(document.getElementById('twin-mode-legend').textContent,'Orange · Heating   |   Blue · Cooling   |   Grey · Idle');
+    assert.equal(t.live.marker('thermo').dim,false);assert.deepEqual(document.querySelectorAll('[data-mode-key="climate"] .twin-key-row').map(row=>row.textContent),['Heating','Cooling','Idle']);
     t.live.setMode('all');assert.equal(document.querySelector('.twin-climate-labels').hidden,false);assert.equal(t.floors.office.parent.visible,true);
     t.states['climate.k'].attributes.hvac_action='idle';await t.live.refresh();assert.equal(Object.values(t.floors).filter(f=>f.parent.visible).length,0,'idle adds no All draw calls');
     t.live.setMode('climate');assert.equal(t.floors.office.material.opacity,.35);assert.equal(t.floors.office.parent.visible,true);
