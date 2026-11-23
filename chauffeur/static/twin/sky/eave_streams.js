@@ -11,7 +11,8 @@ import { collectCapSurfaces } from './wet_caps.js';
 const FT=.3048, EPS=2e-4;
 const clamp=x=>Number.isFinite(x)?Math.max(0,Math.min(1,x)):0;
 const smooth=(a,b,x)=>{const t=clamp((x-a)/(b-a));return t*t*(3-2*t);};
-const LOD_NEAR=8,LOD_FAR=42;
+const LOD_NEAR=22,LOD_MID=54,LOD_FADE=95,LOD_FAR=120,LOD_FLOOR=.35,MIST_FAR=25;
+const lodDensity=d=>(1-(1-LOD_FLOOR)*smooth(LOD_NEAR,LOD_MID,d))*(1-smooth(LOD_FADE,LOD_FAR,d));
 const hash=n=>{n=Math.imul(n^(n>>>16),0x45d9f3b);n=Math.imul(n^(n>>>16),0x45d9f3b);return ((n^(n>>>16))>>>0)/4294967296;};
 function buildingFrame(plan,b) {
   const a=(b.rotation||0)*Math.PI/180,c=Math.cos(a),s=Math.sin(a),p=b.position||[0,0],base=buildingBase(plan,b);
@@ -175,9 +176,19 @@ export function createEaveLandingSampler(plan={},roofs=new Map()) {
   };
 }
 
+export function eaveSheetCapable(e) {
+  const length=Math.hypot(e.b[0]-e.a[0],e.b[2]-e.a[2]);
+  if(length<.8||Math.abs(e.a[1]-e.b[1])>EPS)return 0;
+  // Flat straight standing-seam metal pans can merge into a sheer-descent sheet
+  // under heavy flow (strongest on flat straight wall awnings); corrugated
+  // troughs (!pan && pitch) and rough/shingle edges (!pan) stay discrete streams.
+  if(!e.pan)return 0;
+  return e.kind==='attachment'?1:.75;
+}
+
 export function eaveInstances(plan={},roofs=new Map(),kit={}) {
   const eaves=extractEaves(plan,roofs,kit),sample=createEaveLandingSampler(plan,roofs),instances=[];
-  let serial=1;
+  let serial=1,eaveOffset=0;
   for(const e of eaves){
     const dx=e.b[0]-e.a[0],dz=e.b[2]-e.a[2],length=Math.hypot(dx,dz),n=Math.hypot(...e.outward);
     // A standing-seam pan sheds across its whole edge, not just at its seam.
@@ -185,6 +196,9 @@ export function eaveInstances(plan={},roofs=new Map(),kit={}) {
     // Corrugated/exposed trough pitch stays exact. Unknown profiles reserve a
     // dense irregular curtain; GPU/instance-count thinning supplies light rain.
     const step=e.pan?e.pitch/Math.max(2,Math.ceil(e.pitch/.1)):e.pitch;
+    const cellStep=step||.09;
+    const sheetCap=eaveSheetCapable(e);
+    const angle=Math.atan2(dz,dx);
     let grid=step?Math.ceil((e.gridStart+.0001)/step)*step-e.gridStart:.035+hash(serial)*.035;
     for(;grid<length-.02;grid+=step||(.065+.05*hash(++serial))){
       const distance=grid+(e.pan?(hash(serial+71)-.5)*step*.3:0);
@@ -193,8 +207,10 @@ export function eaveInstances(plan={},roofs=new Map(),kit={}) {
       const landing=sample(top);
       if(top[1]-landing.height<.08)continue;
       const seed=hash(++serial);
-      instances.push({top,bottom:landing.height,landing:landing.kind,seed,rank:hash(serial+17389),eave:e});
+      instances.push({top,bottom:landing.height,landing:landing.kind,seed,rank:hash(serial+17389),
+        eaveS:eaveOffset+distance,cellStep,sheetCap,angle,eave:e});
     }
+    eaveOffset+=length+17.3;
   }
   // Prefix thinning removes actual vertex work on Low; hash order spreads it
   // over every edge rather than taking only the first side of the first house.
@@ -207,38 +223,90 @@ export function eaveInstances(plan={},roofs=new Map(),kit={}) {
 // Scalar shape functions are also exercised directly from the actual shader
 // source by the Node regression tests; no separately maintained look model.
 const waterShape=`
+float eaveHash1(float p){
+  float x=fract(p*.1031);
+  x*=x+33.33;
+  return fract(x*(x+x));
+}
+float eaveNoise1(float x){
+  float i=floor(x),f=fract(x);
+  return mix(eaveHash1(i),eaveHash1(i+1.),f*f*(3.-2.*f));
+}
+float eaveFallTime(float fall){
+  // Free fall under g = 9.81 m/s^2 from roof-edge speed v0 = 0.45 m/s:
+  // d(tau)/d(fall) = 1 / sqrt(v0^2 + 2*g*fall) -> advection speed = sqrt(0.2025 + 19.62*fall).
+  // At fall = 1 m: v = 4.452 m/s vs sqrt(2*g*1) = 4.429 m/s (+0.5%).
+  return (sqrt(.2025+19.62*max(fall,0.))-.45)/9.81;
+}
+float eaveActivity(float eaveS,float time,float seed,float flow){
+  if(flow<=.002)return 0.;
+  // Gathered roof-film lanes clump neighbouring outlets into heavier pours with quiet gaps
+  // between them; incommensurate drift speeds prevent any visible repeat over 60+ seconds.
+  float l1=abs(fract(eaveS*.72-time*.0483)*2.-1.);
+  float l2=abs(fract(eaveS*.41+time*.0317+.31)*2.-1.);
+  float l3=abs(fract(eaveS*.23-time*.0193+.67)*2.-1.);
+  float lane=l1*.46+l2*.34+l3*.20;
+  float clump=smoothstep(.26,.82,lane);
+  // Per-site surge/decay cycle so streams form, run, thin, stop, and start elsewhere.
+  float rate=.061+.083*fract(seed*23.17);
+  float site=eaveNoise1(time*rate+seed*197.3);
+  float supply=clump*.66+site*.34;
+  float thresh=mix(.70,.46,flow);
+  return smoothstep(thresh,thresh+.24,supply);
+}
+float eaveSheetAmount(float eaveS,float time,float flow,float sheetCap){
+  if(sheetCap<=.01||flow<.62)return 0.;
+  float s1=abs(fract(eaveS*.38-time*.055+.17)*2.-1.);
+  float s2=abs(fract(eaveS*.83+time*.041+.63)*2.-1.);
+  float surge=s1*.62+s2*.38;
+  float heavy=smoothstep(.64,.96,flow)*sheetCap;
+  return smoothstep(.52,.78,surge*heavy);
+}
 float eaveWidth(float fall,float time,float seed,float flow){
-  float thickness=.35+1.45*fract(seed*31.73);
-  float swell=.78+.22*sin(fall*7.1-time*2.4+seed*67.);
-  return mix(.0018,.0085,flow)*thickness*swell;
+  float t=time-eaveFallTime(fall);
+  float thickness=.35+1.85*fract(seed*31.73);
+  float swell=.74+.52*eaveNoise1(t*11.3+seed*97.3);
+  float outlet=1.+.65*(1.-smoothstep(0.,.85,fall));
+  float neck=1.-smoothstep(.45,2.8,fall)*.32*(1.-flow*.40);
+  return mix(.0045,.022,flow)*thickness*swell*outlet*neck;
 }
 float eaveWobble(float fall,float time,float seed){
-  return sin(fall*2.4-time*.85+seed*60.)*.012+sin(fall*5.7-time*1.7+seed*31.)*.003;
+  float t=time-eaveFallTime(fall);
+  float n1=eaveNoise1(t*3.1+seed*73.1)-.5;
+  float n2=abs(fract(t*3.9+seed*13.7)*2.-1.)-.5;
+  return (n1*.034+n2*.014)*(1.+fall*.26);
 }
 float eavePresence(float fall,float fallLength,float time,float seed,float flow){
+  float t=time-eaveFallTime(fall);
   float strength=fract(seed*19.19);
-  if(flow<.26){
-    float frequency=.12+flow*1.5;
-    float age=fract(time*frequency+seed*17.)/frequency;
-    return 1.-smoothstep(.008,.028,abs(fall-4.9*age*age));
+  if(flow<.24){
+    float freq=.35+flow*4.5;
+    float cycle=fract(t*freq+seed*17.3);
+    float dropLen=.08+.12*flow;
+    return 1.-smoothstep(dropLen*.45,dropLen,abs(cycle-.5));
   }
-  float phase=fract((fall-time*(1.4+seed*1.8))/(.18+.32*seed)+seed*40.);
-  float duty=mix(.16,.84,flow)*mix(.55,1.,strength);
-  duty*=1.-smoothstep(.18,1.,fall/max(fallLength,.01))*(1.-strength)*mix(.75,.18,flow);
-  float broken=1.-smoothstep(duty,duty+.08,phase);
-  float continuous=smoothstep(.65,.98,flow)*smoothstep(.55,.93,strength);
-  continuous*=1.-smoothstep(.35,1.,fall/max(fallLength,.01))*(1.-strength)*.8;
-  return mix(broken,1.,continuous);
+  float breakDist=mix(.35,1.65,flow)*(.55+.9*strength);
+  float breakup=smoothstep(breakDist*.45,breakDist*1.45,fall);
+  float n1=eaveNoise1(t*(5.8+3.6*strength)+seed*61.7);
+  float n2=abs(fract(t*(7.1+3.1*strength)+seed*19.3)*2.-1.);
+  float packet=n1*.65+n2*.35;
+  float cut=mix(-.08,.62-flow*.14,breakup);
+  float broken=smoothstep(cut,cut+.16,packet);
+  return mix(1.,broken,breakup);
 }
 float eaveGlint(float fall,float time,float seed){
-  float wave=.5+.5*sin(fall*11.3-time*4.1+seed*91.);
-  return smoothstep(.45,.98,wave)*(.3+.7*fract(seed*47.13));
+  float t=time-eaveFallTime(fall);
+  float s1=eaveNoise1(t*18.5+seed*113.1);
+  float s2=abs(fract(t*19.7+seed*27.9)*2.-1.);
+  return smoothstep(.42,.95,s1*.68+s2*.32)*(.35+.65*fract(seed*47.13));
 }
 float eaveOpacity(float across,float glint,float flow){
   float q=abs(across);
-  float rim=smoothstep(.12,.72,q)*(1.-smoothstep(.72,1.,q));
-  // Clear cylindrical centre, soft grazing edges and travelling highlights.
-  return (.012+.19*rim*(.25+glint)+.075*glint)*(1.-smoothstep(.8,1.,q))*mix(.55,1.,flow);
+  float ndv=sqrt(max(.08,1.-q*q));
+  float f1=1.-ndv;
+  float fresnel=.02+.98*f1*f1*f1*f1;
+  // Clear cylindrical centre (water F0=0.02), Fresnel grazing edges & fast motion-blurred glints.
+  return (.01+.25*fresnel+.055*glint)*(1.-smoothstep(.78,1.,q))*mix(.55,1.,flow);
 }
 float eaveSpray(float across,float height,float time,float seed,float flow){
   float skew=across+.13*sin(height*7.+seed*33.+time*4.);
@@ -254,64 +322,216 @@ float eaveSprayWidth(float seed,float flow){return (.18+flow*.2)*(.7+seed*.6);}
 float eaveNearFade(float distanceM,float depth){
   return smoothstep(.45,1.25,distanceM)*smoothstep(.12,.5,depth);
 }
+float eaveSheetLumGain(float ripMod,float skyMix,float ripSpec,float sheetRim){
+  // Falling clear sheet reflects bright overhead sky & glints with zero-mean
+  // ripple modulation and bright tearing vertical strands; never darkens behind it.
+  return max(1.02,1.10+.34*skyMix+1.05*ripSpec+.38*ripMod+.55*sheetRim);
+}
+float eaveSheetAlpha(float across,float fresnel,float ripSpec,float ripMod,float sheetRim,float flow){
+  float base=.026+.075*fresnel+.19*ripSpec+.09*max(0.,ripMod)+.09*sheetRim;
+  return base*(1.-smoothstep(.74,1.,abs(across)))*mix(.65,1.,flow);
+}
+float eaveStreamAlpha(float q,float fresnel,float ripSpec,float ripMod,float coreCA,float flow){
+  // Clear water column matching the sheet's glassy translucency: thin bright Fresnel edge
+  // glints, faint shimmering axial core highlight, and moving ripple modulation — no white fill.
+  float edgeRim=smoothstep(.48,.82,q)*(1.-smoothstep(.82,1.,q));
+  float body=.018+.11*fresnel+.20*edgeRim*(.35+.65*fresnel)+.16*ripSpec+.075*max(0.,ripMod)+.065*coreCA;
+  return body*(1.-smoothstep(.78,1.,q))*mix(.62,1.,flow);
+}
+float eaveLodDensity(float d){
+  return mix(1.,.35,smoothstep(22.,54.,d))*(1.-smoothstep(95.,120.,d));
+}
 `;
 const vertexShader=waterShape+`
-attribute vec4 eaveTop;attribute float eaveBottom,eaveRank;
-uniform float eaveTime,eaveFlow,eaveMist,eaveDensity;
-varying vec2 waterUv;varying vec3 waterWorld;varying float waterSeed,waterLength,waterDepth;
+attribute vec4 eaveTop,eaveMeta;attribute float eaveBottom,eaveRank;
+uniform float eaveTime,eaveFlow,eaveMist,eaveDensity,eaveViewportHeight;
+varying vec2 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
 void main(){
-  waterUv=uv;waterSeed=eaveTop.w;waterLength=eaveTop.y-eaveBottom;
+  waterUv=uv;
+  float seed=eaveTop.w,len=eaveTop.y-eaveBottom;
+  float eaveS=eaveMeta.x,cellStep=eaveMeta.y,sheetCap=eaveMeta.z;
   float d=distance(cameraPosition,eaveTop.xyz);
-  float density=(1.0-smoothstep(8.0,42.0,d))*eaveDensity;
+  float lod=eaveMist>.5?1.-smoothstep(8.,25.,d):eaveLodDensity(d);
+  float density=lod*eaveDensity;
   if(eaveRank>density){gl_Position=vec4(2.,2.,2.,1.);return;}
-  vec3 world=eaveTop.xyz;
-  vec3 right=vec3(viewMatrix[0][0],0.,viewMatrix[2][0]);right=normalize(right+vec3(.00001,0.,0.));
-  if(eaveMist>.5){
-    float pulse=fract(eaveTime*(2.7+waterSeed*3.)+waterSeed*23.);
-    world.y=eaveBottom+.008+uv.y*eaveSprayHeight(waterSeed,eaveFlow);
-    world+=right*((uv.x-.5)*eaveSprayWidth(waterSeed,eaveFlow)+(pulse-.5)*.035);
-  }else{
-    float fall=uv.y*waterLength;
-    world.y=eaveTop.y-fall;
-    float wobble=eaveWobble(fall,eaveTime,waterSeed)*smoothstep(0.,.2,fall);
-    world+=right*((uv.x-.5)*eaveWidth(fall,eaveTime,waterSeed,eaveFlow)+wobble);
-  }
-  waterWorld=world;
-  vec4 eye=viewMatrix*vec4(world,1.);waterDepth=-eye.z;
-  gl_Position=projectionMatrix*eye;
+  float tauEnd=eaveFallTime(len);
+  float sheet=eaveMist>.5?0.:eaveSheetAmount(eaveS,eaveTime,eaveFlow,sheetCap)*(1.-smoothstep(22.,42.,d));
+  float actTop=eaveActivity(eaveS,eaveTime,seed,eaveFlow);
+  float actBot=eaveActivity(eaveS,eaveTime-tauEnd,seed,eaveFlow);
+  float liveMax=max(max(actTop,actBot),sheet);
+  if(liveMax<.008){gl_Position=vec4(2.,2.,2.,1.);return;}
   // Whole-instance GPU frustum rejection; no per-frame CPU instance visits.
   vec4 topClip=projectionMatrix*viewMatrix*vec4(eaveTop.xyz,1.);
   vec4 lowClip=projectionMatrix*viewMatrix*vec4(eaveTop.x,eaveBottom,eaveTop.z,1.);
   if((topClip.x < -topClip.w&&lowClip.x < -lowClip.w)||(topClip.x > topClip.w&&lowClip.x > lowClip.w)
     ||(topClip.y < -topClip.w&&lowClip.y < -lowClip.w)||(topClip.y > topClip.w&&lowClip.y > lowClip.w)
-    ||(topClip.w<0.&&lowClip.w<0.))gl_Position=vec4(2.,2.,2.,1.);
+    ||(topClip.w<0.&&lowClip.w<0.)){gl_Position=vec4(2.,2.,2.,1.);return;}
+  vec3 world=eaveTop.xyz;
+  vec3 right=vec3(viewMatrix[0][0],0.,viewMatrix[2][0]);right=normalize(right+vec3(.00001,0.,0.));
+  float vp=max(abs(projectionMatrix[1][1])*max(eaveViewportHeight,1.),1.);
+  float pxFloor=smoothstep(7.,12.,d);
+  float cov=1.,eaveU=eaveS,actV=actBot,sheetV=0.,acrossStream=uv.x*2.-1.;
+  if(eaveMist>.5){
+    float pulse=fract(eaveTime*(2.7+seed*3.)+seed*23.);
+    float physW=eaveSprayWidth(seed,eaveFlow)*(.6+.4*actBot),physH=eaveSprayHeight(seed,eaveFlow)*(.6+.4*actBot);
+    world.y=eaveBottom+.008;
+    world+=right*((pulse-.5)*.035);
+    vec4 cEye=viewMatrix*vec4(world,1.);
+    float minPx=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
+    float drawnW=max(physW,minPx),drawnH=max(physH,minPx);
+    cov=(physW/drawnW)*(physH/drawnH)*actBot;
+    world.y+=uv.y*drawnH;
+    world+=right*((uv.x-.5)*drawnW);
+  }else{
+    float fall=uv.y*len;
+    world.y=eaveTop.y-fall;
+    actV=mix(actTop,actBot,uv.y);
+    // Keep sheet quad uniformly wide over the curtain zone (0..0.95 m) and only narrow well
+    // below the ragged lower edge so no mesh segment ever pinches into triangular icicles.
+    float quadSheet=smoothstep(.04,.16,sheet)*(1.-smoothstep(.95,1.35,fall));
+    float wobble=eaveWobble(fall,eaveTime,seed)*smoothstep(0.,.15,fall);
+    vec4 cEye=viewMatrix*vec4(world+right*(wobble*(1.-quadSheet)),1.);
+    float minW=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
+    float streamW=eaveWidth(fall,eaveTime,seed,eaveFlow)*(.65+.75*actV);
+    float drawnStreamW=max(streamW,minW);
+    float sheetW=max(cellStep*1.16,drawnStreamW);
+    float drawnW=mix(drawnStreamW,sheetW,quadSheet);
+    cov=streamW/drawnStreamW;
+    // Align merged sheer-descent quads coplanar with the eave edge; streams billboard.
+    vec3 eaveTan=vec3(cos(eaveMeta.w),0.,sin(eaveMeta.w));
+    // Facing the camera may flip the tangent; keep the along-eave coordinate in
+    // the eave's own direction so neighbouring sheet quads stay continuous.
+    float sg=dot(eaveTan,right)<0.?-1.:1.;
+    eaveTan*=sg;
+    vec3 spanDir=normalize(mix(right,eaveTan,quadSheet));
+    float xOff=(uv.x-.5)*drawnW;
+    world+=right*(wobble*(1.-quadSheet))+spanDir*xOff;
+    eaveU=eaveS+mix(1.,sg,quadSheet)*xOff;
+    acrossStream=(xOff-wobble*quadSheet)/(drawnStreamW*.5);
+    sheetV=sheet;
+  }
+  waterWorld=world;
+  vec4 eye=viewMatrix*vec4(world,1.);
+  waterInfo=vec4(seed,len,-eye.z,cov);
+  waterState=vec4(eaveU,sheetV,actV,acrossStream);
+  gl_Position=projectionMatrix*eye;
 }`;
 const fragmentShader=waterShape+`
 uniform float eaveTime,eaveFlow,eaveWet,eaveMist,eaveFog;
 uniform vec3 eaveColour;
 uniform vec4 eaveLamps[4];uniform vec3 eaveLampColours[4];
-varying vec2 waterUv;varying vec3 waterWorld;varying float waterSeed,waterLength,waterDepth;
+varying vec2 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
+// Analytic 2D polynomial ripple gradient (same family as weatherRoofGrad, zero transcendentals).
+vec2 eaveFilmGrad(vec2 p){
+  vec2 i=floor(p),f=fract(p);
+  vec2 du=f*(1.-f);
+  vec4 x=fract(i.x*.1031+vec4(0.,.1031,0.,.1031));
+  vec4 y=fract(i.y*.1030+vec4(0.,0.,.1030,.1030));
+  vec4 q=x*19.3+(y*31.7+11.1);
+  vec4 h=fract(q*q);
+  return du*vec2(mix(h.y-h.x,h.w-h.z,f.y),mix(h.z-h.x,h.w-h.y,f.x));
+}
 void main(){
-  float nearFade=eaveNearFade(distance(waterWorld,cameraPosition),waterDepth);
+  float seed=waterInfo.x,len=waterInfo.y,depth=waterInfo.z,cov=clamp(waterInfo.w,0.,1.);
+  float dist=distance(waterWorld,cameraPosition);
+  float nearFade=eaveNearFade(dist,depth);
   if(nearFade<.001)discard;
-  float alpha,glint=0.;
   if(eaveMist>.5){
-    alpha=eaveSpray(waterUv.x*2.-1.,waterUv.y,eaveTime,waterSeed,eaveFlow);
-  }else{
-    float fall=waterUv.y*waterLength;
-    glint=eaveGlint(fall,eaveTime,waterSeed);
-    alpha=eavePresence(fall,waterLength,eaveTime,waterSeed,eaveFlow)
-      *eaveOpacity(waterUv.x*2.-1.,glint,eaveFlow);
-    alpha*=smoothstep(0.,.015,waterUv.y)*(1.-smoothstep(.985,1.,waterUv.y));
+    float alpha=eaveSpray(waterUv.x*2.-1.,waterUv.y,eaveTime,seed,eaveFlow)*cov;
+    alpha*=nearFade*min(1.,eaveWet*5.)*exp(-eaveFog*dist);
+    if(alpha<.001)discard;
+    vec3 col=eaveColour*1.05;
+    for(int i=0;i<4;i++){
+      vec3 delta=waterWorld-eaveLamps[i].xyz;
+      col+=eaveLampColours[i]*eaveLamps[i].w/(1.+dot(delta,delta));
+    }
+    gl_FragColor=vec4(col,alpha);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
   }
-  alpha*=nearFade*min(1.,eaveWet*5.)*exp(-eaveFog*distance(waterWorld,cameraPosition));
+  float eaveU=waterState.x,sheetAmt=waterState.y,act=waterState.z,acrossStream=waterState.w;
+  float fall=waterUv.y*len,quadAcross=waterUv.x*2.-1.;
+  float tEmit=eaveTime-eaveFallTime(fall);
+  // Vertical filament breakup of the sheer sheet: solid near the lip, splitting vertically
+  // into bright strands and drops lower down (zero horizontal U-curves or closed loops).
+  float sheetFall=0.,sheetRim=0.;
+  if(sheetAmt>.02){
+    float f1=eaveNoise1(eaveU*18.7+tEmit*.35);
+    float f2=eaveNoise1(eaveU*43.1-tEmit*1.15+13.7);
+    float fil=f1*.60+f2*.40;
+    float dropFrac=smoothstep(.05,.90,fall);
+    float sheetBase=smoothstep(.04,.32,sheetAmt);
+    float tear=1.-smoothstep(fil*.72,fil*.72+.34,dropFrac);
+    sheetFall=sheetBase*tear;
+    // Highlight tearing vertical filament tips, never a horizontal outline stroke.
+    sheetRim=sheetFall*smoothstep(.18,.80,dropFrac)*smoothstep(.38,.88,fil);
+  }
+  float live=max(act,sheetFall);
+  if(live<.01)discard;
+  float locFlow=clamp(eaveFlow*(.55+.65*live),0.,1.);
+  float pres=mix(eavePresence(fall,len,eaveTime,seed,locFlow),1.,sheetFall);
+  if(pres<.01)discard;
+  // Silhouette necking toward breakup gaps on streams; merged curtain uses full quadAcross.
+  float narrow=mix(.50,1.,pres);
+  float q=abs(acrossStream)/max(narrow,.25);
+  if(q>=1.&&sheetFall<.01&&cov>.5)discard;
+  if(abs(acrossStream)>=1.&&sheetFall<.01)discard;
+  float qClamped=min(q,1.);
+  // High-frequency vertical micro-ripple filaments continuing weatherRoofFilm at free-fall speed.
+  vec2 rip=eaveFilmGrad(vec2(eaveU*64.,tEmit*16.)+vec2(seed*17.3,seed*41.1)*(1.-sheetFall))*2.2;
+  vec3 V=normalize(cameraPosition-waterWorld);
+  vec3 fwd=normalize(vec3(V.x,0.,V.z)+vec3(0.,0.,.00001));
+  vec3 right=vec3(fwd.z,0.,-fwd.x);
+  float cyl=1.-sheetFall;
+  vec3 nBase=right*(clamp(acrossStream,-1.,1.)*.92*cyl)+fwd*mix(1.,sqrt(max(.08,1.-qClamped*qClamped)),cyl);
+  vec3 N=normalize(nBase+right*(rip.x*mix(.95,1.45,sheetFall))+vec3(0.,rip.y*mix(.75,1.15,sheetFall),0.));
+  float ndv=clamp(dot(N,V),0.,1.);
+  float f1=1.-ndv,f2=f1*f1,fresnel=.02+.98*f2*f2;
+  vec3 R=reflect(-V,N);
+  // Upward-tilted ripple facets and internal cylinder refraction redirect overhead sky
+  // even when looking downward at an eave (poolhouse_focus, roofclose, overview).
+  float skyR=max(R.y,.22+rip.y*.65+abs(rip.x)*.25);
+  float skyMix=smoothstep(-.15,.65,skyR);
+  float ry=max(0.,skyR),ry2=ry*ry,ry4=ry2*ry2,ry8=ry4*ry4;
+  float glint=eaveGlint(fall,eaveTime,seed);
+  float ripMag=length(rip);
+  float ripMod=clamp((rip.x*.75+rip.y*.65)*1.15,-.35,.35);
+  float ripSpec=ry8*(.40+1.25*ripMag)+glint*(.45+.85*fresnel)+smoothstep(.16,.52,ripMag)*(.34*sheetFall+.24*cyl);
+  // Clear glassy water column: faint shimmering axial core caustic + thin bright Fresnel edges
+  // matching the sheet's translucency up close; gentle lift at mid/overview distance.
+  float nearLip=1.-smoothstep(.15,1.35,fall);
+  float q2=qClamped*qClamped;
+  float coreCA=(1.-smoothstep(0.,.32,q2))*(.30+.30*nearLip+.65*glint+.40*ripMag);
+  float midStreamBoost=1.+.65*smoothstep(11.,22.,dist);
+  float streamAlpha=eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)*midStreamBoost;
+  float midSheetBoost=1.+.45*smoothstep(10.,22.,dist)*(1.-smoothstep(26.,42.,dist));
+  float sheetAlpha=eaveSheetAlpha(quadAcross,fresnel,ripSpec,ripMod,sheetRim,eaveFlow)*midSheetBoost;
+  float resolved=streamAlpha*(1.-sheetFall)*act+sheetAlpha*sheetFall;
+  float thin=mix(1.,.35,smoothstep(22.,54.,dist));
+  float effCov=min(1.,cov/(thin*.55));
+  float farDamp=mix(1.,.46,smoothstep(28.,68.,dist));
+  float thread=(.50+.55*ripSpec)*(1.-smoothstep(.18,1.,min(abs(acrossStream),1.)))*mix(.65,1.,eaveFlow)*farDamp;
+  float alpha=pres*mix(thread*effCov*smoothstep(0.,.45,act)+sheetAlpha*sheetFall,resolved,cov);
+  alpha*=smoothstep(0.,.025,waterUv.y)*(1.-smoothstep(.985,1.,waterUv.y));
+  alpha*=1.-smoothstep(95.,120.,dist);
+  alpha*=nearFade*min(1.,eaveWet*5.)*exp(-eaveFog*dist);
   if(alpha<.001)discard;
-  vec3 illumination=eaveColour;
+  // Cool neutral silver sky reflection (same desaturation as splash_shapes) so clear water
+  // stays bright crisp silver over walls/windows without beige tint or dark smudging.
+  float luma=dot(eaveColour,vec3(.2126,.7152,.0722));
+  vec3 skyRad=mix(vec3(luma),eaveColour,.25);
+  float streamGain=max(1.02,1.08+.38*skyMix+1.05*ripSpec+.38*ripMod+.45*coreCA);
+  float sheetGain=eaveSheetLumGain(ripMod,skyMix,ripSpec,sheetRim);
+  vec3 waterCol=skyRad*mix(streamGain,sheetGain,sheetFall);
   for(int i=0;i<4;i++){
-    vec3 delta=waterWorld-eaveLamps[i].xyz;
-    illumination+=eaveLampColours[i]*eaveLamps[i].w/(1.+dot(delta,delta));
+    vec3 toLamp=eaveLamps[i].xyz-waterWorld;
+    float d2=dot(toLamp,toLamp);
+    float dl=max(0.,dot(R,toLamp))*inversesqrt(max(d2,.0001));
+    float l2=dl*dl,l4=l2*l2,l8=l4*l4,ls=l8*l8;
+    waterCol+=eaveLampColours[i]*eaveLamps[i].w*(.35+2.6*ls)/(1.+d2);
   }
-  gl_FragColor=vec4(illumination*(eaveMist>.5?1.05:.65+1.8*glint),alpha);
+  gl_FragColor=vec4(waterCol,alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -322,6 +542,7 @@ function geometry(instances,segments) {
   for(let j=0;j<segments;j++){const k=j*2;indices.push(k,k+1,k+3,k,k+3,k+2);}
   g.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(indices);
   g.setAttribute('eaveTop',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[...i.top,i.seed])),4));
+  g.setAttribute('eaveMeta',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[i.eaveS,i.cellStep,i.sheetCap,i.angle])),4));
   g.setAttribute('eaveBottom',new THREE.InstancedBufferAttribute(new Float32Array(instances.map(i=>i.bottom)),1));
   g.setAttribute('eaveRank',new THREE.InstancedBufferAttribute(new Float32Array(instances.map((_,i)=>(i+.5)/instances.length)),1));
   const box=new THREE.Box3();for(const i of instances){box.expandByPoint(new THREE.Vector3(...i.top));box.expandByPoint(new THREE.Vector3(i.top[0],i.bottom,i.top[2]));}
@@ -332,6 +553,7 @@ function geometry(instances,segments) {
 export function createEaveStreams(scene,{tier='high',colour=null}={}) {
   const group=new THREE.Group();group.name='weather-eave-streams';group.visible=false;scene.add(group);
   const uniforms={eaveTime:{value:0},eaveFlow:{value:0},eaveWet:{value:0},eaveFog:{value:0},eaveDensity:{value:0},
+    eaveViewportHeight:{value:720},
     eaveColour:colour||{value:new THREE.Vector3(.6,.7,.8)},
     eaveLamps:{value:Array.from({length:4},()=>new THREE.Vector4())},
     eaveLampColours:{value:Array.from({length:4},()=>new THREE.Color())}};
@@ -351,7 +573,7 @@ export function createEaveStreams(scene,{tier='high',colour=null}={}) {
       streams.name='eave-streams';mist.name='eave-mist';
       group.add(streams,mist);
     },
-    update({flow=0,wet=0}={},seconds=0,{camera=null,target=null,level='house',unlit=false,neutral=false,fog=0,light=null,lamps=[]}={}){
+    update({flow=0,wet=0}={},seconds=0,{camera=null,target=null,level='house',unlit=false,neutral=false,fog=0,light=null,lamps=[],viewportHeight=null}={}){
       if(disposed)return;
       flow=clamp(flow);wet=clamp(wet);
       const now=Number.isFinite(seconds)?seconds:0,observedFlow=flow;
@@ -367,12 +589,14 @@ export function createEaveStreams(scene,{tier='high',colour=null}={}) {
       const demand=flow>.002&&wet>0?.35+.65*smooth(.08,.85,flow):0;
       uniforms.eaveTime.value=now%4096;uniforms.eaveDensity.value=demand;
       uniforms.eaveFlow.value=flow;uniforms.eaveWet.value=wet;uniforms.eaveFog.value=Math.max(0,Number.isFinite(fog)?fog:0);
+      if(Number.isFinite(viewportHeight)&&viewportHeight>0)uniforms.eaveViewportHeight.value=viewportHeight;
       const steep=camera&&target&&(camera.position.y-target.y)/Math.max(.001,camera.position.distanceTo(target))>.94;
-      let density=1;
-      if(camera&&streams)density=1-smooth(LOD_NEAR,LOD_FAR,streams.geometry.boundingBox.distanceToPoint(camera.position));
+      const dist=camera&&streams?streams.geometry.boundingBox.distanceToPoint(camera.position):0;
+      const density=camera&&streams?lodDensity(dist):1;
+      const mistDensity=camera&&streams?1-smooth(8,MIST_FAR,dist):1;
       if(streams){
         streams.geometry.instanceCount=Math.ceil(maximum*density*demand);
-        mist.geometry.instanceCount=flow>.26?Math.ceil(maximum*density*demand*.5):0;
+        mist.geometry.instanceCount=flow>.26&&mistDensity>0?Math.ceil(maximum*mistDensity*demand*.5):0;
         mist.visible=mist.geometry.instanceCount>0;
       }
       group.visible=!!streams&&density>0&&!unlit&&!neutral&&(level==='house'||level==='building')&&!steep&&flow>.002&&wet>0;

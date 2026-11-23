@@ -579,7 +579,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     eaves.update(runoff,performance.now()/1000,{camera,target:controls.target,
       level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,neutral:view.weather?.neutral,
-      fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps});
+      fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps,
+      viewportHeight:renderer3.domElement.height||el.clientHeight||720});
     const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
