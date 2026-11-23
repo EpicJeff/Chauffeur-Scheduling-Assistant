@@ -2,6 +2,21 @@
 // Contract: gutterRuns -> {id,building,segments,length,corners,drainsTo?}; downspouts ->
 // {id,run,edge,top,mount,path,outlet,share,source,flags,merged?}. Plan distances are ft;
 // segment/corner/path positions are world metres; segment.outward is local XY.
+// top is the outlet at the gutter bottom, centred half the profile width
+// outward of the fascia face; path[0] equals top. A vertical outlet drop
+// clears the soffit/fascia by 1 in before the offset elbows head to the wall.
+// A 'stub' outlet clears its actual receiving surface by 1 in. If the gutter
+// bottom is at/below surface + 2 in, 'outlet-blocked' marks a zero-length hole:
+// top/path[0]/outlet.at are raised to max(gutter bottom, surface + 1 in), capped
+// at drip line - 1 in. No inward offset or wall drop is attempted there.
+// Live runs reuse the supplied roofs. Serialised runs have no context and
+// downspouts(plan, serialisedRuns) rebuilds plan-only (roofs = null).
+// gutterRuns(plan, roofs, prebuilt = null) accepts optional immutable inputs:
+// buildingBases: Map<auto-foundation building ID, resolved base in plan ft,
+// including offsets>; entries for manual bases are ignored.
+// landingSampler: (worldMetresPoint) -> {height, kind, roofEave?}, as returned
+// by createEaveLandingSampler(samePlan, sameRoofs, {roofDetails:true}). These
+// must describe this exact plan/roof revision; absent fields use normal builds.
 // Run IDs are building:roof:firstEdge or building:porch:porchId. When clipping
 // disconnects an edge, the lowest authored start fraction keeps that ID and
 // later pieces receive ~2, ~3, ... in fraction order (also for porch runs).
@@ -29,19 +44,27 @@
 import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSampler } from './sky/eave_streams.js';
 import { roofMesh, endKind, heightAt } from './twin_roof.js';
 import { allPorches } from './twin_generator.js';
+import { FASCIA } from './trim_dims.js';
 import { buildingBase, inPolygon, edgeDistance } from './twin_ground.js';
-import { pathSurfacePolygons } from './path_shapes.js';
+import { pathOutline, pathSurfacePolygons } from './path_shapes.js';
+import { paverSettings } from './paver_layout.js';
 
 export const GUTTER = { runJoinFt: 0.3, runJoinHeightIn: 2, spanFt: 35, maxOverhangFt: 4,
-  openingClearFt: 1, doorAvoidFt: 6, kickOutFt: 3, kickTurnFt: 4, profileIn: 5, spoutIn: [2, 3] };
+  openingClearFt: 1, doorAvoidFt: 6, kickOutFt: 3, kickTurnFt: 4, profileIn: 5, spoutIn: [2, 3],
+  fasciaFt: FASCIA.depthFt, fasciaProudFt: FASCIA.proudFt, soffitClearIn: 1 };
 
 const FT=.3048, EPS=1e-5, SIDES=['y0','x1','y1','x0'];
-const add=(a,b)=>a.map((v,i)=>v+b[i]),sub=(a,b)=>a.map((v,i)=>v-b[i]),mul=(a,k)=>a.map(v=>v*k);
-const dot=(a,b)=>a.reduce((n,v,i)=>n+v*b[i],0),dist=(a,b)=>Math.hypot(...sub(a,b));
+const add=(a,b)=>a.length===2?[a[0]+b[0],a[1]+b[1]]:[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const sub=(a,b)=>a.length===2?[a[0]-b[0],a[1]-b[1]]:[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const mul=(a,k)=>a.length===2?[a[0]*k,a[1]*k]:[a[0]*k,a[1]*k,a[2]*k];
+const dot=(a,b)=>a.length===2?a[0]*b[0]+a[1]*b[1]:(a[0]*b[0]+a[1]*b[1])+a[2]*b[2];
+const dist=(a,b)=>a.length===2?Math.hypot(a[0]-b[0],a[1]-b[1]):Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
 const unit=a=>mul(a,1/(Math.hypot(...a)||1)),cross=(a,b)=>a[0]*b[1]-a[1]*b[0];
 const clamp=x=>Math.max(0,Math.min(1,x));
 const key=p=>p.map(v=>v.toFixed(5)).join(',');
 const compare=(a,b)=>a<b?-1:a>b?1:0;
+const runContexts=new WeakMap();
+const placementKey=plan=>JSON.stringify([plan.buildings,plan.site]);
 const settled=p=>p.state!=='ghost'&&p.state!=='proposal';
 const endpointsTouch=(a,p,b,q,originA,originB)=>Math.hypot(p[0]-q[0],p[2]-q[2])<=GUTTER.runJoinFt*FT+EPS
   &&Math.abs(p[1]-q[1])<=((a.roof!==null&&a.roof===b.roof||originA===originB)?3:GUTTER.runJoinHeightIn)/12*FT+EPS;
@@ -110,7 +133,8 @@ function prepare(plan,provided){
         mountWalls.push(item);if(!w.synthetic)walls.push(item);
       }
     }
-    const ctx={plan,b,f,porches,levels,walls,mountWalls,regions,footprints:new Map(),info:new Map(),drops:new Map(),contexts};
+    const openingWalls=walls.map(w=>({...w,openings:(b.openings||[]).filter(o=>o.wall===w.id&&settled(o))})).filter(w=>w.openings.length);
+    const ctx={plan,b,f,porches,levels,walls,mountWalls,openingWalls,regions,footprints:new Map(),info:new Map(),drops:new Map(),contexts};
     const cached=provided?.get(b.id),sections=cached?.sections||b.roof?.sections||[];
     ctx.sections=sections;ctx.awnings=awnings(ctx,sections);
     // Compute each union once for each distinct set of levels below an eave.
@@ -241,9 +265,11 @@ function cutEnd(ctx,segment,at){
     return ctx.clip([probe]).reduce((n,s)=>n+dist(s.a,s.b),0)<.05*FT;});
 }
 
-export function gutterRuns(plan={},roofs=null){
+export function gutterRuns(plan={},roofs=null,prebuilt=null){
+  const original=plan,signature=placementKey(plan);
+  plan=placementPlan(plan,prebuilt);
   const contexts=prepare(plan,roofs),surfaces=snapshots(contexts,roofs),frames=[...contexts.values()].map(c=>c.f),raw=extractEaves(plan,surfaces),flat=[];
-  const sample=createEaveLandingSampler(plan,surfaces,{roofDetails:true});
+  const sample=memoSampler(plan,surfaces,prebuilt);
   for(const ctx of contexts.values())ctx.sample=sample;
   // Flat roofs have no downhill stream edge. Explicitly enabled perimeter
   // gutters still use the same exposure clip, without changing stream rules.
@@ -290,9 +316,48 @@ export function gutterRuns(plan={},roofs=null){
       output.push({id,building:b.id,segments:ordered,length:ordered.reduce((n,s)=>n+dist(s.a,s.b)/FT,0),corners});
     }
   }
-  return output.sort((a,b)=>compare(a.id,b.id));
+  output.sort((a,b)=>compare(a.id,b.id));
+  runContexts.set(output,{original,signature,plan,contexts,surfaces});
+  return output;
 }
 
+// The shared path builder's predicates with a bounding-box broad phase, which
+// also drops rounding-noise false crossings on straight diagonal smooth paths.
+// The resulting outline/swept receivers cover the same area; exact internal
+// seam hits can differ. Non-simple paths still use the shared swept builder.
+function pathPolygons(h){
+  const poly=pathOutline(h),edges=poly.map((a,i)=>{const b=poly[(i+1)%poly.length];
+    return {a,b,x0:Math.min(a[0],b[0]),x1:Math.max(a[0],b[0]),y0:Math.min(a[1],b[1]),y1:Math.max(a[1],b[1])};});
+  const side=(a,b,c)=>cross(sub(b,a),sub(c,a));
+  const on=(p,a,b)=>Math.abs(side(a,b,p))<1e-8&&p.every((v,i)=>v>=Math.min(a[i],b[i])-1e-8&&v<=Math.max(a[i],b[i])+1e-8);
+  for(let i=0;i<edges.length;i++){
+    const e=edges[i],{a,b}=e;if(dist(a,b)<1e-8)return pathSurfacePolygons(h);
+    for(let j=i+2;j<edges.length;j++){
+      if(i===0&&j===edges.length-1)continue;const f=edges[j],{a:c,b:d}=f;
+      if(e.x1<f.x0-1e-8||f.x1<e.x0-1e-8||e.y1<f.y0-1e-8||f.y1<e.y0-1e-8)continue;
+      if(side(a,b,c)*side(a,b,d)<0&&side(c,d,a)*side(c,d,b)<0||on(c,a,b)||on(d,a,b)||on(a,c,d)||on(b,c,d))return pathSurfacePolygons(h);
+    }
+  }
+  return poly.length>=4?[poly]:pathSurfacePolygons(h);
+}
+function placementPlan(plan,prebuilt=null){
+  // Keep authored data untouched. Non-paver paths can feed their exact receiver
+  // polygons to both the landing sampler and hard-region classifier once.
+  const hardscape=(plan.site?.hardscape||[]).flatMap(h=>h.kind==='path'&&!paverSettings(h)
+    ?pathPolygons(h).map(polygon=>({...h,kind:'gutter-path',polygon})): [h]);
+  // Resolve auto foundations once, then share the exact base with every query.
+  const buildings=(plan.buildings||[]).map(b=>{
+    if(b.foundation?.mode!=='auto')return b;
+    const supplied=prebuilt?.buildingBases?.get(b.id);
+    if(Number.isFinite(supplied))return {...b,base:supplied,foundation:{...b.foundation,mode:'manual'}};
+    return {...b,base:buildingBase(plan,b),foundation:{...b.foundation,mode:'manual'}};
+  });
+  return {...plan,buildings,site:{...plan.site,hardscape}};
+}
+function memoSampler(plan,surfaces,prebuilt=null){
+  const sample=prebuilt?.landingSampler||createEaveLandingSampler(plan,surfaces,{roofDetails:true}),hits=new Map();
+  return at=>{const id=at.join(',');if(!hits.has(id))hits.set(id,sample(at));return hits.get(id);};
+}
 function hardRegions(plan){
   return (plan.site?.hardscape||[]).flatMap(h=>(h.kind==='path'?pathSurfacePolygons(h):[h.polygon])
     .filter(p=>p?.length>=3).map(polygon=>({polygon,kind:h.kind==='driveway'||h.preset==='driveway'?'driveway'
@@ -325,9 +390,11 @@ function mountAt(ctx,segment,top,corner){
     .filter(c=>c.at&&Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
       &&(heightAt(ctx.b.roof?.sections||[],...c.at)??ctx.b.levels?.[0]?.ceiling??0)>=p[2]-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
-  const candidates=ctx.mountWalls.map(w=>({w,at:projection(p.slice(0,2),w.from,w.to).at,floor:w.floor,top:w.top,normal:w.normal}))
-    .filter(w=>w.floor<p[2]&&w.top>=p[2]-.75&&oh<=GUTTER.maxOverhangFt
-      &&(!corner||edgeDistance(corner.at,w.w.from,w.w.to)<.05)
+  const candidates=ctx.mountWalls.filter(w=>w.floor<p[2]&&w.top>=p[2]-.75&&oh<=GUTTER.maxOverhangFt
+      &&p[0]>=Math.min(w.from[0],w.to[0])-oh-1-EPS&&p[0]<=Math.max(w.from[0],w.to[0])+oh+1+EPS
+      &&p[1]>=Math.min(w.from[1],w.to[1])-oh-1-EPS&&p[1]<=Math.max(w.from[1],w.to[1])+oh+1+EPS)
+    .map(w=>({w,at:projection(p.slice(0,2),w.from,w.to).at,floor:w.floor,top:w.top,normal:w.normal}))
+    .filter(w=>(!corner||edgeDistance(corner.at,w.w.from,w.w.to)<.05)
       &&Math.max(...sub(w.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||b.floor-a.floor
       ||dot(b.normal,segment.outward)-dot(a.normal,segment.outward)||compare(a.w.id,b.w.id));
@@ -339,10 +406,10 @@ function mountAt(ctx,segment,top,corner){
 }
 function openingCheck(ctx,mount,top,bottom){
   let door=false;const low=bottom/FT-ctx.f.base,high=top[1]/FT-ctx.f.base;
-  for(const w of ctx.walls){const v=sub(w.to,w.from),length=Math.hypot(...v),q=projection(mount.at,w.from,w.to);
+  for(const w of ctx.openingWalls){const v=sub(w.to,w.from),length=Math.hypot(...v),q=projection(mount.at,w.from,w.to);
     if(dist(q.at,mount.at)>(w.thickness||.5)/2+.25)continue;
     const level=ctx.b.levels?.find(l=>l.id===w.level),floor=level?.elevation||0;
-    for(const o of ctx.b.openings||[]){if(o.wall!==w.id||!settled(o))continue;
+    for(const o of w.openings){
       const z0=floor+(o.sill||0)+(o.floor_reference_ft||0),z1=floor+(o.head??7)+(o.floor_reference_ft||0);
       if(z0>high)continue;
       const distance=Math.abs(q.t*length-o.at)-(o.width||0)/2;
@@ -375,31 +442,45 @@ function candidate(ctx,segment,top,corner,flags=[]){
   if(!chosen){if(!corner?.convex)return null;chosen={...choices[0],sample:initial};}
   const bottom=Math.max(support.height,chosen.sample.height)+.4*FT,opening=openingCheck(ctx,mount,top,bottom);
   if(opening.blocked)return null;
-  const under=[...top];under[1]-=.04*FT;
+  if(top[1]-.04*FT<=bottom+.1*FT)return null;
+  const outletTop=gutterBottom(ctx,segment,top),under=[...outletTop];
+  under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
   if(under[1]<=bottom+.1*FT)return null;
-  const wallXY=ctx.f.world([...mount.at,p[2]]),horizontal=Math.hypot(wallXY[0]-top[0],wallXY[2]-top[2]);
-  const elbow=Math.min(.5*FT,horizontal/2,(under[1]-bottom)/4),toward=unit([wallXY[0]-top[0],0,wallXY[2]-top[2]]);
+  const wallXY=ctx.f.world([...mount.at,p[2]]),horizontal=Math.hypot(wallXY[0]-under[0],wallXY[2]-under[2]);
+  const elbow=Math.max(0,Math.min(.5*FT,horizontal/2,(under[1]-bottom)/4)),toward=unit([wallXY[0]-under[0],0,wallXY[2]-under[2]]);
   const first=add(under,mul(toward,elbow));first[1]-=elbow;
   const leader=[wallXY[0]-toward[0]*elbow,first[1],wallXY[2]-toward[2]*elbow];
   const wallTop=[wallXY[0],under[1]-2*elbow,wallXY[2]],wallBottom=ctx.f.world([...mount.at,bottom/FT-ctx.f.base]);
   const outlet=ctx.f.world([...chosen.end,(chosen.sample.height+.4*FT)/FT-ctx.f.base]);
-  const path=[under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);path.push(wallTop,wallBottom);
+  const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);path.push(wallTop,wallBottom);
   if(chosen.turn)path.push(ctx.f.world([...end,bottom/FT-ctx.f.base]));path.push(outlet);
   const dirLocal=chosen.turn||n,origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...dirLocal,0]);
-  return {top:under,mount:mount.kind,path,outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:chosen.sample.lands},
+  return {top:outletTop,mount:mount.kind,path,outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:chosen.sample.lands},
     flags:[...flags,...(!chosen.sample.allowed?['no-safe-landing']:[])],door:opening.door,
     rank:!chosen.sample.allowed?2:['driveway','hard'].includes(chosen.sample.lands)?1:0};
+}
+function gutterBottom(ctx,segment,at){
+  const p=ctx.f.local(at),offset=GUTTER.fasciaProudFt+GUTTER.profileIn/24;
+  return ctx.f.world([...add(p.slice(0,2),mul(segment.outward,offset)),p[2]-GUTTER.profileIn/12]);
 }
 function hangingEnd(ctx,c,flags){
   // A diagnostic stub still gives the runoff consumer an endpoint when no
   // full drop is safe. Do not route a pipe through an opening or pretend that
   // a prohibited receiving surface is grass. The Check list must resolve it.
-  const top=[...c.at];top[1]-=.04*FT;
-  const outlet=[...top];outlet[1]-=.5*FT;
-  const hit=landing(ctx,outlet),origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...c.segment.outward,0]);
-  const opening=openingCheck(ctx,mountAt(ctx,c.segment,c.at,c.corner),top,hit.height+.4*FT);
+  const top=gutterBottom(ctx,c.segment,c.at);
+  // Start the ray at the drip-line height: a receiver can already be above
+  // the gutter bottom, so a ray starting at top would silently miss it.
+  const hit=landing(ctx,[top[0],c.at[1],top[2]]),blocked=top[1]<=hit.height+2/12*FT;
+  // Accepted: the drip-line cap can leave this point under a receiver within 1 in of the drip line.
+  if(blocked)top[1]=Math.min(c.at[1]-FT/12,Math.max(top[1],hit.height+FT/12));
+  const outlet=[...top];if(!blocked)outlet[1]=Math.max(top[1]-.5*FT,hit.height+FT/12);
+  // Keep door and warning arbitration at the original diagnostic probe.
+  const probe=[...c.at];probe[1]-=.54*FT;
+  const reference=[...c.at];reference[1]-=.04*FT;
+  const diagnostic=landing(ctx,probe),origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...c.segment.outward,0]);
+  const opening=openingCheck(ctx,mountAt(ctx,c.segment,c.at,c.corner),reference,diagnostic.height+.4*FT);
   return {top,mount:'hang',path:[top,outlet],outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:hit.lands},
-    flags:[...flags,'hang','stub',...(!hit.allowed?['no-safe-landing']:[])],door:opening.door,rank:hit.lands==='driveway'?1:0};
+    flags:[...flags,'hang','stub',...(blocked?['outlet-blocked']:[]),...(!diagnostic.allowed?['no-safe-landing']:[])],door:opening.door,rank:diagnostic.lands==='driveway'?1:0};
 }
 function edgeFraction(ctx,segment,top){
   const r=ctx.b.roofs?.find(r=>r.id===segment.roof),area=r?.area,p=ctx.f.local(top).slice(0,2);
@@ -424,8 +505,14 @@ function overrides(ctx,segment){
 
 export function downspouts(plan={},runs=[]){
   for(const run of runs)delete run.drainsTo;
-  const contexts=prepare(plan,null),surfaces=snapshots(contexts,null),sample=createEaveLandingSampler(plan,surfaces,{roofDetails:true}),output=[],compiled=[];
-  const clip=createEaveClipper([...contexts.values()].map(c=>c.f),surfaces);
+  const cached=runContexts.get(runs);
+  // The runs own their rebuild context; no global plan cache can hide edits.
+  // Serialised runs (or another plan object) retain the standalone fallback.
+  const reuse=cached&&cached.original===plan&&cached.signature===placementKey(plan);
+  const prepared=reuse?cached.plan:placementPlan(plan),contexts=reuse?cached.contexts:prepare(prepared,null);
+  const surfaces=reuse?cached.surfaces:snapshots(contexts,null),output=[],compiled=[];
+  const sample=reuse?contexts.values().next().value?.sample:memoSampler(prepared,surfaces);
+  const clip=reuse&&contexts.values().next().value?.clip||createEaveClipper([...contexts.values()].map(c=>c.f),surfaces);
   for(const ctx of contexts.values()){ctx.sample=sample;ctx.clip=clip;}
   const segmentKey=s=>`${s.roof}:${s.edge}:${s.porch}`;
   for(const run of runs){
@@ -445,9 +532,10 @@ export function downspouts(plan={},runs=[]){
       const footprint=dropFootprint(ctx,segment,at),inner=footprint.corners.filter(c=>!c.convex);
       const innerDistance=Math.min(Infinity,...inner.map(c=>dist(c.at,p.slice(0,2))));
       const nearInner=inner.some(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS);
+      let cut;
       const k=`${key(at)}:${segmentKey(segment)}`,entry={segment,at,corner,convex:!!corner?.convex,
         key:`end:${key(at)}`,floor:footprint.floor,end:endCount(segment,at)===1,
-        inner:corner?.convex===false||!corner&&nearInner||innerDistance<=.5+EPS,innerDistance,cut:cutEnd(ctx,segment,at)};
+        inner:corner?.convex===false||!corner&&nearInner||innerDistance<=.5+EPS,innerDistance,cut:()=>cut??=cutEnd(ctx,segment,at)};
       if(!positions.has(k)||entry.convex)positions.set(k,entry);
     }
     compiled.push({run,ctx,active,all:[...positions.values()],selected:[],used:new Set()});
@@ -473,16 +561,16 @@ export function downspouts(plan={},runs=[]){
   for(const state of compiled){
     const {ctx,all}=state,convex=all.filter(c=>c.convex&&!c.inner);
     let valid=convex.map(c=>({...c,value:candidate(ctx,c.segment,c.at,c.corner)})).filter(c=>c.value&&c.value.mount!=='hang');
-    if(!valid.length)valid=all.filter(c=>c.end&&!c.inner&&!c.cut)
+    if(!valid.length)valid=all.filter(c=>c.end&&!c.inner&&!c.cut())
       .map(c=>({...c,value:candidate(ctx,c.segment,c.at,c.corner,['no-outside-corner'])})).filter(c=>c.value&&c.value.mount!=='hang');
     if(!valid.length&&all.length){
       const ends=all.some(c=>c.end)?all.filter(c=>c.end):all;
-      const safe=ends.filter(c=>!c.inner&&!c.cut),nonInner=ends.filter(c=>!c.inner);
+      const safe=ends.filter(c=>!c.inner&&!c.cut()),nonInner=ends.filter(c=>!c.inner);
       const pool=safe.length?safe:nonInner.length?nonInner:ends;
       // Only the final emergency fallback may use an inner end. Leave it at
       // the eave, farthest from the inner footprint vertex, and flag it.
       valid=pool.map(c=>({...c,value:hangingEnd(ctx,c,[...(!c.convex?['no-outside-corner']:[]),
-        ...(c.inner?['inner-end']:[]),...(c.cut?['clipped-end']:[])])}));
+        ...(c.inner?['inner-end']:[]),...(c.cut()?['clipped-end']:[])])}));
       if(!nonInner.length)valid.sort((a,b)=>b.innerDistance-a.innerDistance||compare(key(a.at),key(b.at)));
     }
     valid.sort((a,b)=>Number(a.inner)-Number(b.inner)||(a.inner&&b.inner?b.innerDistance-a.innerDistance:0)
@@ -533,7 +621,7 @@ export function downspouts(plan={},runs=[]){
     const states=compiled.filter(s=>s.run.building===building&&s.active.length);
     if(states.some(s=>s.selected.length))continue;
     const state=states.find(s=>s.valid.length);if(!state)continue;
-    const c=state.valid[0],flags=['no-outlet',...(c.inner?['inner-end']:[]),...(c.cut?['clipped-end']:[])];
+    const c=state.valid[0],flags=['no-outlet',...(c.inner?['inner-end']:[]),...(c.cut()?['clipped-end']:[])];
     state.selected.push({...c,source:'auto',value:hangingEnd(state.ctx,c,flags)});
   }
   for(const {run,ctx,selected} of compiled){
@@ -548,10 +636,14 @@ export function downspouts(plan={},runs=[]){
   for(const state of compiled){
     if(state.selected.length||!state.active.length)continue;
     const ends=state.active.flatMap(s=>[s.a,s.b]);
-    const choices=receivers.filter(v=>v.state.run.building===state.run.building).map(v=>({...v,
-      adjacent:ends.some(p=>Math.hypot(p[0]-v.c.at[0],p[2]-v.c.at[2])<=GUTTER.runJoinFt*FT+EPS&&v.spout.top[1]<=p[1]+EPS)
-        ||state.valid.some(c=>c.corner&&v.c.corner&&c.corner.key===v.c.corner.key&&v.spout.top[1]<=c.at[1]+EPS),
-      distance:Math.min(...ends.map(p=>dist(p,v.spout.top)))}));
+    const choices=receivers.filter(v=>v.state.run.building===state.run.building).map(v=>{
+      // Drainage arbitration stays on its original reference point. The
+      // physical outlet's profile offset must not choose a different owner.
+      const reference=[...v.c.at];reference[1]-=.04*FT;
+      return {...v,
+        adjacent:ends.some(p=>Math.hypot(p[0]-v.c.at[0],p[2]-v.c.at[2])<=GUTTER.runJoinFt*FT+EPS&&reference[1]<=p[1]+EPS)
+          ||state.valid.some(c=>c.corner&&v.c.corner&&c.corner.key===v.c.corner.key&&reference[1]<=c.at[1]+EPS),
+        distance:Math.min(...ends.map(p=>dist(p,reference)))};});
     choices.sort((a,b)=>Number(b.adjacent)-Number(a.adjacent)||a.distance-b.distance||compare(a.spout.id,b.spout.id));
     if(choices.length){const target=choices[0].spout;state.run.drainsTo=target.id;weights.set(target.id,weights.get(target.id)+state.run.length);}
   }
