@@ -129,6 +129,8 @@ READERS = [
     # §4.5 voice
     ((R, 'POST', '/api/v2/converse'), '4.5-voice', ('thread', 'mission', 'program'), 'record_view(HOUSE)'),
     # §4.6 shared screens
+    ((R, 'POST', '/api/house/bakes/{key}/grid/{name}.bin'), 'NONE', (), 'binary visibility grid; auth PARENTS and bake lease'),
+    ((R, 'GET', '/api/house/bakes/{key}/grid/{name}.bin'), 'NONE', (), 'binary visibility grid; auth WALL_OR_SERVICE'),
     ((R, 'GET', '/api/house/state'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),
     ((R, 'GET', '/api/house/programs/{program_id}/session'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),
     ((R, 'GET', '/api/programs/{program_id}/lesson-scenes'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),

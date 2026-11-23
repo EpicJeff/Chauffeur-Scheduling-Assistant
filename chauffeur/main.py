@@ -8039,6 +8039,27 @@ async def house_bake_page_post(key: str, page: str, request: Request):
     return saved
 
 
+@app.post('/api/house/bakes/{key}/grid/{name}.bin')
+async def house_bake_grid_post(key: str, name: str, request: Request):
+    from services import twin_bakes
+    try:
+        twin_bakes.check_key(key)
+        twin_bakes.check_grid_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > twin_bakes.MAX_GRID_BYTES:
+            raise HTTPException(status_code=413, detail='Bake grid exceeds 8 MiB.')
+        data.extend(chunk)
+    try:
+        return await asyncio.to_thread(twin_bakes.save_grid, key, name, bytes(data), request.headers.get('X-Bake-Owner'))
+    except twin_bakes.BakeLeaseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post('/api/house/bakes/{key}/lease')
 def house_bake_lease(key: str, body: dict = Body(...)):
     """Ruling B17: one desk bakes a key at a time (60 s, renewed while baking)."""
@@ -8066,6 +8087,21 @@ def house_bake_page_get(key: str, page: str, request: Request):
         return Response(status_code=304, headers=headers)
     kind = 'image/ktx2' if data.startswith(twin_bakes.KTX2_SIGNATURE) else 'image/png'
     return Response(content=data, media_type=kind, headers=headers)
+
+
+@app.get('/api/house/bakes/{key}/grid/{name}.bin')
+def house_bake_grid_get(key: str, name: str, request: Request):
+    from services import twin_bakes
+    try:
+        data, etag, size = twin_bakes.grid_response(key, name, request.headers.get('if-none-match', '').split(','))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail='No such bake grid.') from exc
+    headers = {'ETag': etag, 'X-Bake-Digest': etag, 'X-Bake-Size': str(size)}
+    if data is None:
+        return Response(status_code=304, headers=headers)
+    return Response(content=data, media_type='application/octet-stream', headers=headers)
 
 
 @app.get('/api/house/bakes/{key}')

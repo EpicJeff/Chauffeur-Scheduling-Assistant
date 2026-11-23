@@ -7,6 +7,8 @@ wall panel. Routes under test:
 
 - POST /api/house/bakes/{key}/{page}.png   PARENTS          raw PNG body
 - GET  /api/house/bakes/{key}/{page}.png   WALL_OR_SERVICE  ETag, 304, 404
+- POST /api/house/bakes/{key}/grid/{name}.bin PARENTS       raw MVG1 body
+- GET  /api/house/bakes/{key}/grid/{name}.bin WALL_OR_SERVICE ETag, 304, 404
 - GET  /api/house/bakes/{key}              WALL_OR_SERVICE  the manifest, 404 when none
 - PUT  /api/house/bakes/{key}              PARENTS          the manifest (JSON body)
 - services.twin_bakes.prune(live_keys)     removes every other key's bakes
@@ -15,8 +17,8 @@ Decisions pinned here where the plan leaves room:
 
 - Where pages live: os.path.join(twin_store.DATA_DIR, 'bakes', key, f'{page}.png')
   (twin_store.DATA_DIR is the house's data folder, <data>/twin). The manifest
-  is a .json file beside the pages; nothing else is left in a key's folder
-  (no temp files after a write, even under concurrent writes).
+  is a .json file beside the pages; grid chunks are grid-<name>.bin beside it.
+  No temp files remain after a write, even under concurrent writes.
 - Key format: lowercase hex, 16 to 64 characters (^[0-9a-f]{16,64}$). A bad key
   is refused with 400 on every write; reads answer 400 or 404; nothing is ever
   written for it. Page: a non-negative decimal integer; anything else is
@@ -40,7 +42,7 @@ Decisions pinned here where the plan leaves room:
   wait and retry); on Linux the rename is atomic by itself.
 
 The every-route-has-a-rule check lives in tests/test_auth.py; this file pins
-the four rules' tiers directly.
+the bake rules' tiers directly.
 
 Run from chauffeur/:  env -u HA_BASE_URL python tests/test_twin_bakes.py
 """
@@ -67,8 +69,11 @@ from services import twin_store  # noqa: E402
 _real_settings = storage.get_settings
 
 PAGE_TEMPLATE = '/api/house/bakes/{key}/{page}.png'
+GRID_TEMPLATE = '/api/house/bakes/{key}/grid/{name}.bin'
 MANIFEST_TEMPLATE = '/api/house/bakes/{key}'
 CAP = 16 * 1024 * 1024
+GRID_CAP = 8 * 1024 * 1024
+GRID_SIG = b'MVG1'
 PNG_SIG = b'\x89PNG\r\n\x1a\n'
 STORED = re.compile(r'^(\d+\.png|[^.][^/]*\.json)$')
 
@@ -84,6 +89,10 @@ def page_url(key, page):
 
 def manifest_url(key):
     return f'/api/house/bakes/{key}'
+
+
+def grid_url(key, name):
+    return f'/api/house/bakes/{key}/grid/{name}.bin'
 
 
 def key_of(n):
@@ -148,6 +157,11 @@ class Ctx:
         return self.client.put(manifest_url(key), json=body,
                                headers={**(self.mum if who is None else who), 'X-Bake-Owner': owner})
 
+    def upload_grid(self, key, name, body, who=None, owner='test-desk'):
+        return self.client.post(grid_url(key, name), content=body,
+                                headers={**(self.mum if who is None else who),
+                                         'Content-Type': 'application/octet-stream', 'X-Bake-Owner': owner})
+
 
 # ---------------------------------------------------------------- tests
 
@@ -206,6 +220,215 @@ def test_routes_have_their_tiers():
     served = {(m, r.path) for r in main.app.routes for m in (getattr(r, 'methods', None) or ())}
     for method, template in (('POST', PAGE_TEMPLATE), ('GET', PAGE_TEMPLATE), ('GET', MANIFEST_TEMPLATE), ('PUT', MANIFEST_TEMPLATE)):
         check((method, template) in served, f'the app serves {method} {template}')
+
+
+def test_grid_routes_have_their_tiers():
+    import main
+    from services import access_readers
+    served = {(m, r.path) for r in main.app.routes for m in (getattr(r, 'methods', None) or ())}
+    for method, tier in (('POST', auth.PARENTS), ('GET', auth.WALL_OR_SERVICE)):
+        check(auth.resolve(method, GRID_TEMPLATE) == tier, f'{method} grid tier')
+        check((method, GRID_TEMPLATE) in served, f'app serves {method} grid')
+        row = access_readers.resolve_route(method, GRID_TEMPLATE)
+        check(row is not None and row[1:3] == ('NONE', ()), 'grid transport reads no piece words')
+
+
+def test_grid_roundtrip():
+    from pathlib import Path
+    from services import twin_bakes
+    key, name, other = key_of(0x301), 'a' * 16, 'b' * 64
+    first, second = GRID_SIG + bytes(range(256)), GRID_SIG + b'new chunk'
+    with Ctx() as c:
+        check(c.client.get(grid_url(key, name), headers=c.panel).status_code == 404, 'missing grid is 404')
+        saved = c.upload_grid(key, name, first)
+        check(saved.status_code == 200, saved.text)
+        info = saved.json()
+        check(set(info) == {'etag', 'version'}, info)
+        check(len(info['version']) == 3 and all(isinstance(n, str) and n.isdecimal() for n in info['version']),
+              'stat identity stays exact through JavaScript JSON')
+        path = Path(bakes_dir()) / key / f'grid-{name}.bin'
+        check(path.read_bytes() == first, 'grid lives next to pages, byte for byte')
+        for who in (c.mum, c.kid, c.panel):
+            got = c.client.get(grid_url(key, name), headers=who)
+            check(got.status_code == 200 and got.content == first, 'authenticated grid read')
+            check(got.headers['content-type'].startswith('application/octet-stream'), got.headers)
+            check(got.headers['etag'] == info['etag'], got.headers)
+            check(got.headers['X-Bake-Digest'] == info['etag'] and int(got.headers['X-Bake-Size']) == len(first),
+                  'grid integrity headers mirror pages')
+            for match in (info['etag'], 'W/' + info['etag'], '*', '"old", ' + info['etag']):
+                same = c.client.get(grid_url(key, name), headers={**who, 'If-None-Match': match})
+                check(same.status_code == 304 and not same.content and same.headers['etag'] == info['etag'],
+                      'matching grid has no response body')
+        check(twin_bakes.grid_response(key, name) == (first, info['etag'], len(first)), 'service read contract')
+        check(twin_bakes.grid_response(key, name, [info['etag']]) == (None, info['etag'], len(first)),
+              'service conditional contract')
+        direct = twin_bakes.save_grid(key, other, first, 'test-desk')
+        check(set(direct) == {'etag', 'version'}, 'service write contract')
+        changed = c.upload_grid(key, name, second)
+        check(changed.status_code == 200, changed.text)
+        fresh = c.client.get(grid_url(key, name), headers={**c.panel, 'If-None-Match': info['etag']})
+        check(fresh.status_code == 200 and fresh.content == second, 'old ETag fetches replacement')
+        check(fresh.headers['etag'] == changed.json()['etag'] != info['etag'], 'new bytes have a new ETag')
+        check(c.client.get(grid_url(key, other), headers=c.panel).content == first, 'chunks are independent')
+        check(sorted(p.name for p in path.parent.iterdir()) == [f'grid-{name}.bin', f'grid-{other}.bin'],
+              'no temporary files remain')
+
+
+def test_grid_rejects_bad_signature():
+    from services import twin_bakes
+    key, name = key_of(0x302), 'a' * 32
+    check(twin_bakes.GRID_SIGNATURE == GRID_SIG, 'MVG1 signature')
+    with Ctx() as c:
+        for body in (b'', b'MVG', b'MVG2bad', PNG_SIG + b'png', b'prefixMVG1'):
+            check(c.upload_grid(key, name, body).status_code == 400, 'bad signature is 400')
+            try:
+                twin_bakes.save_grid(key, name, body, 'test-desk')
+            except ValueError:
+                pass
+            else:
+                raise AssertionError('service must also reject bad signatures')
+        check(not os.path.exists(os.path.join(bakes_dir(), key)), 'no bad grid stored')
+
+
+def test_grid_rejects_oversize():
+    from services import twin_bakes
+    key, name = key_of(0x303), 'a' * 32
+    check(twin_bakes.MAX_GRID_BYTES == GRID_CAP, 'grid cap is exactly 8 MiB')
+    body = GRID_SIG + b'\0' * (GRID_CAP - len(GRID_SIG))
+    with Ctx() as c:
+        check(c.upload_grid(key, name, body).status_code == 200, 'exact cap accepted')
+        with patch.object(twin_bakes, 'save_grid', side_effect=AssertionError('stream cap must precede storage')):
+            check(c.upload_grid(key, name, body + b'!').status_code == 413, 'over cap rejected while streaming')
+        try:
+            twin_bakes.save_grid(key, name, body + b'!', 'test-desk')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('service cap cannot be bypassed')
+        check(c.client.get(grid_url(key, name), headers=c.panel).content == body, 'refused replacement preserves bytes')
+
+
+def test_grid_accepts_gzipped_mvg1_and_validates_it():
+    import gzip
+    from services import twin_bakes
+    key, name = key_of(0x30A), 'c' * 32
+    check(twin_bakes.MAX_GRID_EXPANDED_BYTES == 64 * 1024 * 1024, 'expanded cap is 64 MiB')
+    real = gzip.compress(GRID_SIG + bytes(range(256)) * 40)
+    check(real[:2] == b'\x1f\x8b', 'fixture is gzip')
+    with Ctx() as c:
+        saved = c.upload_grid(key, name, real)
+        check(saved.status_code == 200, saved.text)
+        got = c.client.get(grid_url(key, name), headers=c.panel)
+        check(got.status_code == 200 and got.content == real, 'gzip stored and served byte-identical')
+        bad = {
+            'inner bytes not MVG1': gzip.compress(b'PNG!' + b'x' * 64),
+            'empty gzip': gzip.compress(b''),
+            'truncated gzip': real[:len(real) // 2],
+            'corrupt gzip': real[:10] + bytes(b ^ 0xFF for b in real[10:40]) + real[40:],
+            'bomb over 64 MiB': gzip.compress(GRID_SIG + b'\0' * (64 * 1024 * 1024), compresslevel=9),
+        }
+        check(len(bad['bomb over 64 MiB']) < twin_bakes.MAX_GRID_BYTES, 'bomb fixture fits the wire cap')
+        for label, body in bad.items():
+            other = 'd' * 32
+            check(c.upload_grid(key, other, body).status_code == 400, f'{label} is 400')
+            try:
+                twin_bakes.save_grid(key, other, body, 'test-desk')
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f'service must reject {label}')
+        check(c.client.get(grid_url(key, 'd' * 32), headers=c.panel).status_code == 404, 'no bad gzip stored')
+        okay = gzip.compress(GRID_SIG + b'\0' * (64 * 1024 * 1024 - len(GRID_SIG)), compresslevel=9)
+        check(c.upload_grid(key, 'e' * 32, okay).status_code == 200, 'exactly 64 MiB expanded is accepted')
+
+
+def test_grid_names_and_keys_are_checked():
+    from services import twin_bakes
+    key, name = key_of(0x304), 'a' * 32
+    with Ctx() as c:
+        for bad in ('a' * 15, 'a' * 65, 'A' * 32, 'g' * 32, 'a' * 16 + '_', 'a' * 16 + '.'):
+            for k, n in ((bad, name), (key, bad)):
+                check(c.upload_grid(k, n, GRID_SIG).status_code == 400, 'bad key or name write is 400')
+                check(c.client.get(grid_url(k, n), headers=c.panel).status_code == 400, 'bad key or name read is 400')
+        for bad in ('../escape', '', None, 123, ['a' * 32]):
+            try:
+                twin_bakes.save_grid(key, bad, GRID_SIG, 'test-desk')
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f'invalid grid name accepted: {bad!r}')
+        check(not os.path.exists(os.path.join(bakes_dir(), key)), 'bad names create no directory')
+
+
+def test_grid_auth_and_shared_lease():
+    from services import twin_bakes
+    key, name, first = key_of(0x305), 'a' * 32, GRID_SIG + b'first'
+    clock = [1000.0]
+    with Ctx() as c, patch.object(twin_bakes, '_now', side_effect=lambda: clock[0]):
+        for who, status in ((c.kid, 403), (c.panel, 403), ({}, 401)):
+            check(c.upload_grid(key, name, first, who=who).status_code == status, 'grid writes are parents only')
+        check(c.client.get(grid_url(key, name)).status_code == 401, 'anonymous grid read refused')
+        check(c.client.post(grid_url(key, name), content=first, headers=c.mum).status_code == 400, 'owner required')
+        check(c.upload(key, 0, png(), owner='desk-a').status_code == 200, 'page takes key lease')
+        check(c.upload_grid(key, name, first, owner='desk-b').status_code == 409, 'page lease fences grids')
+        check(c.upload_grid(key, name, first, owner='desk-a').status_code == 200, 'own live grid write')
+        clock[0] += 61
+        check(c.upload_grid(key, name, first, owner='desk-b').status_code == 200, 'expired unclaimed grid write renews')
+        check(twin_bakes._LEASES[key] == ('desk-b', 1121.0), 'grid renews same key lease')
+        check(c.upload(key, 0, png(seed=2), owner='desk-a').status_code == 409, 'grid lease fences pages')
+        check(c.put_manifest(key, manifest(), owner='desk-a').status_code == 409, 'grid lease fences manifest')
+        check(c.upload_grid(key, name, GRID_SIG + b'changed', owner='desk-a').status_code == 409, 'stale grid fenced')
+        check(c.client.get(grid_url(key, name), headers=c.panel).content == first, 'conflict preserves grid')
+
+
+def test_grid_atomic_failure_preserves_previous_chunk():
+    from pathlib import Path
+    from services import twin_bakes
+    key, name, first = key_of(0x306), 'a' * 32, GRID_SIG + b'first'
+    saved = twin_bakes.save_grid(key, name, first, 'test-desk')
+    with patch.object(twin_bakes.os, 'replace', side_effect=OSError('replacement failed')):
+        try:
+            twin_bakes.save_grid(key, name, GRID_SIG + b'second', 'test-desk')
+        except OSError:
+            pass
+        else:
+            raise AssertionError('injected replace failure must run')
+    check(twin_bakes.grid_response(key, name) == (first, saved['etag'], len(first)), 'failed write preserves bytes and tag')
+    check([p.name for p in (Path(bakes_dir()) / key).iterdir()] == [f'grid-{name}.bin'], 'failed write cleans temp file')
+
+
+def test_grid_pruned_with_key():
+    from services import twin_bakes
+    keys, name, body = [key_of(0x310 + i) for i in range(3)], 'a' * 32, GRID_SIG + b'grid'
+    twin_bakes.prune(set())
+    with Ctx() as c:
+        for key in keys:
+            check(c.upload_grid(key, name, body).status_code == 200, 'seed chunk')
+            check(c.put_manifest(key, manifest()).status_code == 200, 'publish key')
+            _age(key, 3600)
+        check(c.client.get(grid_url(keys[0], name), headers=c.panel).status_code == 404, 'older-key prune removes grid')
+        twin_bakes.prune({keys[1]})
+        check(c.client.get(grid_url(keys[2], name), headers=c.panel).status_code == 404, 'explicit prune removes grid')
+        check(c.client.get(grid_url(keys[1], name), headers=c.panel).content == body, 'live key retains grid')
+        twin_bakes.prune(set())
+        check(not os.path.exists(os.path.join(bakes_dir(), keys[1])), 'empty live keys removes grid folder')
+
+
+def test_manifest_accepts_grid_fields():
+    import copy
+    key, body = key_of(0x320), manifest()
+    body['lights']['dev-k-light'].update(grid='a' * 16, gridLayout='b' * 64)
+    body['lights']['dev-k-lamp'].update(grid='c' * 64, gridLayout='d' * 16)
+    with Ctx() as c:
+        check(c.put_manifest(key, body).status_code == 200, 'grid fields accepted beside legacy entries')
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'grid metadata round trips unchanged')
+        for field in ('grid', 'gridLayout'):
+            for value in (None, True, 123, [], '', 'a' * 15, 'a' * 65, 'A' * 32, '../escape', 'g' * 32):
+                bad = copy.deepcopy(body)
+                bad['lights']['dev-k-light'][field] = value
+                check(c.put_manifest(key, bad).status_code == 400, f'invalid {field}: {value!r}')
+        check(c.client.get(manifest_url(key), headers=c.panel).json() == body, 'invalid fields preserve publication')
+        check(c.put_manifest(key, {**body, 'padding': 'x' * (1024 * 1024)}).status_code == 400, 'manifest cap unchanged')
 
 
 def test_upload_then_download_with_etag():
@@ -714,6 +937,16 @@ def test_conditional_page_reads_stat_without_opening_and_detects_damage():
 
 
 TESTS = (
+    test_grid_routes_have_their_tiers,
+    test_grid_roundtrip,
+    test_grid_rejects_bad_signature,
+    test_grid_rejects_oversize,
+    test_grid_accepts_gzipped_mvg1_and_validates_it,
+    test_grid_names_and_keys_are_checked,
+    test_grid_auth_and_shared_lease,
+    test_grid_atomic_failure_preserves_previous_chunk,
+    test_grid_pruned_with_key,
+    test_manifest_accepts_grid_fields,
     test_latest_manifest_is_parent_only_metadata_and_signatures_stay_bounded,
     test_conditional_page_reads_stat_without_opening_and_detects_damage,
     test_viewer_bake_status_parent_flag_uses_authenticated_identity,
