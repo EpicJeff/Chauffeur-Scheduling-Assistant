@@ -56,6 +56,15 @@ export const KINDS = [
     "item": null
   },
   {
+    "kind": "gutter",
+    "label": "Gutters",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": null
+  },
+  {
     "kind": "casing",
     "label": "Casing",
     "scope": "building",

@@ -7,6 +7,7 @@ import { allPorches } from '../twin_generator.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
 import { collectHardSurfaces } from './precipitation.js';
 import { collectCapSurfaces } from './wet_caps.js';
+import { gutterRuns, downspouts } from '../gutters.js';
 
 const FT=.3048, EPS=2e-4;
 const clamp=x=>Number.isFinite(x)?Math.max(0,Math.min(1,x)):0;
@@ -206,8 +207,110 @@ export function eaveSheetCapable(e) {
   return e.kind==='attachment'?1:.75;
 }
 
-export function eaveInstances(plan={},roofs=new Map(),kit={}) {
-  const eaves=extractEaves(plan,roofs,kit),sample=createEaveLandingSampler(plan,roofs),instances=[];
+function planHasGutters(plan) {
+  for (const b of plan?.buildings || []) {
+    if ((b.roofs || []).some(r => (r.edges || []).some(e => e?.gutter === true))) return true;
+    if ((b.roof?.sections || []).some(s => s.gutters && Object.values(s.gutters).some(v => v === true))) return true;
+    if (allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal')) return true;
+    if ((b.roof?.extensions || []).some(e => e?.kind === 'awning' && e.gutter === true && e.state !== 'ghost' && e.state !== 'proposal')) return true;
+  }
+  return false;
+}
+
+function pointOnSegmentXZ(p, a, b) {
+  const dx = b[0] - a[0], dz = b[2] - a[2], l2 = dx * dx + dz * dz;
+  if (l2 < 1e-8) return Math.hypot(p[0] - a[0], p[2] - a[2]);
+  const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[2] - a[2]) * dz) / l2));
+  return Math.hypot(p[0] - (a[0] + dx * t), p[2] - (a[2] + dz * t));
+}
+
+function eaveIsGuttered(plan, roofs, e, runSegsByBuilding) {
+  const segs = runSegsByBuilding.get(e.building) || [];
+  const mid = [(e.a[0] + e.b[0]) * .5, (e.a[1] + e.b[1]) * .5, (e.a[2] + e.b[2]) * .5];
+  for (const seg of segs) {
+    if (Math.abs(mid[1] - (seg.a[1] + seg.b[1]) * .5) > .05) continue;
+    if (pointOnSegmentXZ(mid, seg.a, seg.b) < .04 && pointOnSegmentXZ(e.a, seg.a, seg.b) < .05 && pointOnSegmentXZ(e.b, seg.a, seg.b) < .05)
+      return true;
+  }
+  const b = (plan.buildings || []).find(v => v.id === e.building);
+  if (!b) return false;
+  const sections = roofs?.get(b.id)?.sections || b.roof?.sections || [];
+  const s = sections[e.section];
+  if (e.kind !== 'attachment' && s && e.side) {
+    const rId = s.roof || s.id;
+    const r = b.roofs?.find(v => v.id === rId);
+    const edgeIdx = s.plane_edges ? s.plane_edges[e.side] : ['y0', 'x1', 'y1', 'x0'].indexOf(e.side);
+    const rec = Number.isInteger(edgeIdx) ? r?.edges?.[edgeIdx] : null;
+    if (rec && typeof rec.gutter === 'boolean') {
+      if (rec.gutter === true && rec.setting === 'sloped') return true;
+    } else if (s.gutters?.[e.side] === true) {
+      return true;
+    }
+    const centre = [(s.rect[0] + s.rect[2]) * .5, (s.rect[1] + s.rect[3]) * .5];
+    if (allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal' && p.polygon?.length >= 3 && inPolygon(p.polygon, ...centre)))
+      return true;
+  }
+  return false;
+}
+
+export const _eaveGutterStats = {
+  fallbackCalls: 0,
+  reset() { this.fallbackCalls = 0; },
+};
+
+export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
+  const rawEaves=extractEaves(plan,roofs,kit),sample=createEaveLandingSampler(plan,roofs),instances=[],pours=[];
+  const hasGutters=gutters?(gutters.runs?.length>0||gutters.spouts?.length>0):planHasGutters(plan);
+  let eaves=rawEaves;
+  if(hasGutters){
+    let runs,spouts;
+    if(gutters){
+      runs=gutters.runs||[];
+      spouts=gutters.spouts||[];
+    }else{
+      _eaveGutterStats.fallbackCalls++;
+      runs=gutterRuns(plan,roofs);
+      spouts=runs.length?downspouts(plan,runs):[];
+    }
+    const runSegsByBuilding=new Map();
+    for(const r of runs){
+      if(!runSegsByBuilding.has(r.building))runSegsByBuilding.set(r.building,[]);
+      runSegsByBuilding.get(r.building).push(...r.segments);
+    }
+    eaves=rawEaves.filter(e=>!eaveIsGuttered(plan,roofs,e,runSegsByBuilding));
+    for(let idx=0;idx<spouts.length;idx++){
+      const spout=spouts[idx];
+      if(!spout?.outlet?.at)continue;
+      const isHang=spout.mount==='hang'||(spout.flags||[]).includes('hang')||(spout.flags||[]).includes('stub');
+      const top=[...spout.outlet.at];
+      const rawDir=spout.outlet.dir||[0,0,1],dirLen=Math.hypot(rawDir[0],rawDir[2])||1;
+      const pourDir=[rawDir[0]/dirLen,0,rawDir[2]/dirLen];
+      const share=clamp(spout.share??1);
+      let bottom,pourForward;
+      if(isHang){
+        const hit=sample(top);
+        bottom=Math.min(top[1]-.12,hit.height);
+        pourForward=.04*FT;
+      }else if(spout.outlet.lands==='roof'){
+        pourForward=.25*FT;
+        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
+        const fall=Math.max(.25*FT,Math.min(1.5*FT,top[1]-hit.height));
+        bottom=top[1]-fall;
+      }else{
+        pourForward=.3*FT;
+        const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
+        const fall=Math.max(.32*FT,Math.min(1.2*FT,top[1]-hit.height));
+        bottom=top[1]-fall;
+      }
+      if(top[1]-bottom<.06)continue;
+      const pourWidth=.024+.044*share;
+      const angle=Math.atan2(pourDir[2],pourDir[0]);
+      const seed=hash(0x504f5552+idx*97+1);
+      pours.push({top,bottom,landing:spout.outlet.lands||'ground',seed,rank:-1,
+        eaveS:pourForward,cellStep:pourWidth,sheetCap:-Math.max(.05,share),angle,eave:null,
+        pour:true,spout,share,mount:spout.mount,lands:spout.outlet.lands,pourDir,pourForward,pourWidth});
+    }
+  }
   let serial=1,eaveOffset=0;
   for(const e of eaves){
     const dx=e.b[0]-e.a[0],dz=e.b[2]-e.a[2],length=Math.hypot(dx,dz),n=Math.hypot(...e.outward);
@@ -237,7 +340,8 @@ export function eaveInstances(plan={},roofs=new Map(),kit={}) {
   // Activation order is independent of visual seed, so Low is not restricted
   // to the same thin/dim/early-phase streams.
   instances.sort((a,b)=>a.rank-b.rank);
-  return {eaves,instances};
+  const allInstances=pours.length?[...pours,...instances]:instances;
+  return {eaves,instances:allInstances,pours};
 }
 
 // Scalar shape functions are also exercised directly from the actual shader
@@ -370,19 +474,25 @@ void main(){
   waterUv=uv;
   float seed=eaveTop.w,len=eaveTop.y-eaveBottom;
   float eaveS=eaveMeta.x,cellStep=eaveMeta.y,sheetCap=eaveMeta.z;
+  bool isPour=sheetCap<-.001;
+  float pourShare=isPour?-sheetCap:0.;
+  vec3 pourDir=vec3(cos(eaveMeta.w),0.,sin(eaveMeta.w));
   float d=distance(cameraPosition,eaveTop.xyz);
   float lod=eaveMist>.5?1.-smoothstep(8.,25.,d):eaveLodDensity(d);
   float density=lod*eaveDensity;
-  if(eaveRank>density){gl_Position=vec4(2.,2.,2.,1.);return;}
+  if(!isPour&&eaveRank>density){gl_Position=vec4(2.,2.,2.,1.);return;}
+  if(isPour&&(eaveFlow<=.002||lod<=.001)){gl_Position=vec4(2.,2.,2.,1.);return;}
   float tauEnd=eaveFallTime(len);
-  float sheet=eaveMist>.5?0.:eaveSheetAmount(eaveS,eaveTime,eaveFlow,sheetCap)*(1.-smoothstep(22.,42.,d));
-  float actTop=eaveActivity(eaveS,eaveTime,seed,eaveFlow);
-  float actBot=eaveActivity(eaveS,eaveTime-tauEnd,seed,eaveFlow);
+  float sheet=isPour||eaveMist>.5?0.:eaveSheetAmount(eaveS,eaveTime,eaveFlow,sheetCap)*(1.-smoothstep(22.,42.,d));
+  float pourAct=smoothstep(.002,.12,eaveFlow)*clamp(.25+.75*pourShare,.2,1.);
+  float actTop=isPour?pourAct:eaveActivity(eaveS,eaveTime,seed,eaveFlow);
+  float actBot=isPour?pourAct:eaveActivity(eaveS,eaveTime-tauEnd,seed,eaveFlow);
   float liveMax=max(max(actTop,actBot),sheet);
   if(liveMax<.008){gl_Position=vec4(2.,2.,2.,1.);return;}
   // Whole-instance GPU frustum rejection; no per-frame CPU instance visits.
+  vec3 lowPos=isPour?vec3(eaveTop.x+pourDir.x*eaveS,eaveBottom,eaveTop.z+pourDir.z*eaveS):vec3(eaveTop.x,eaveBottom,eaveTop.z);
   vec4 topClip=projectionMatrix*viewMatrix*vec4(eaveTop.xyz,1.);
-  vec4 lowClip=projectionMatrix*viewMatrix*vec4(eaveTop.x,eaveBottom,eaveTop.z,1.);
+  vec4 lowClip=projectionMatrix*viewMatrix*vec4(lowPos,1.);
   if((topClip.x < -topClip.w&&lowClip.x < -lowClip.w)||(topClip.x > topClip.w&&lowClip.x > lowClip.w)
     ||(topClip.y < -topClip.w&&lowClip.y < -lowClip.w)||(topClip.y > topClip.w&&lowClip.y > lowClip.w)
     ||(topClip.w<0.&&lowClip.w<0.)){gl_Position=vec4(2.,2.,2.,1.);return;}
@@ -393,7 +503,9 @@ void main(){
   float cov=1.,eaveU=eaveS,actV=actBot,sheetV=0.,acrossStream=uv.x*2.-1.;
   if(eaveMist>.5){
     float pulse=fract(eaveTime*(2.7+seed*3.)+seed*23.);
-    float physW=eaveSprayWidth(seed,eaveFlow)*(.6+.4*actBot),physH=eaveSprayHeight(seed,eaveFlow)*(.6+.4*actBot);
+    float pScale=isPour?(.7+.5*pourShare):1.;
+    float physW=eaveSprayWidth(seed,eaveFlow)*(.6+.4*actBot)*pScale,physH=eaveSprayHeight(seed,eaveFlow)*(.6+.4*actBot)*pScale;
+    if(isPour)world.xz+=pourDir.xz*eaveS;
     world.y=eaveBottom+.008;
     world+=right*((pulse-.5)*.035);
     vec4 cEye=viewMatrix*vec4(world,1.);
@@ -402,6 +514,24 @@ void main(){
     cov=(physW/drawnW)*(physH/drawnH)*actBot;
     world.y+=uv.y*drawnH;
     world+=right*((uv.x-.5)*drawnW);
+  }else if(isPour){
+    float arcBlend=smoothstep(.03,.07,eaveS);
+    float fall=mix(uv.y,uv.y*uv.y,arcBlend)*len;
+    world.y=eaveTop.y-fall;
+    world+=pourDir*(eaveS*uv.y);
+    actV=actTop;
+    float wobble=eaveWobble(fall,eaveTime,seed)*smoothstep(0.,.15,fall)*(1.-.75*arcBlend);
+    vec4 cEye=viewMatrix*vec4(world+right*wobble,1.);
+    float minW=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
+    float swell=.85+.28*eaveNoise1((eaveTime-eaveFallTime(fall))*11.3+seed*97.3);
+    float streamW=cellStep*(.45+.75*eaveFlow)*swell*(1.+.22*uv.y);
+    float drawnW=max(streamW,minW);
+    cov=streamW/drawnW;
+    float xOff=(uv.x-.5)*drawnW;
+    world+=right*(wobble+xOff);
+    eaveU=seed*17.3+xOff;
+    acrossStream=uv.x*2.-1.;
+    sheetV=-pourShare;
   }else{
     float fall=uv.y*len;
     world.y=eaveTop.y-fall;
@@ -470,7 +600,9 @@ void main(){
     #include <colorspace_fragment>
     return;
   }
-  float eaveU=waterState.x,sheetAmt=waterState.y,act=waterState.z,acrossStream=waterState.w;
+  bool isPour=waterState.y<-.001;
+  float pourShare=isPour?-waterState.y:0.;
+  float eaveU=waterState.x,sheetAmt=isPour?0.:waterState.y,act=waterState.z,acrossStream=waterState.w;
   float fall=waterUv.y*len,quadAcross=waterUv.x*2.-1.;
   float tEmit=eaveTime-eaveFallTime(fall);
   // Vertical filament breakup of the sheer sheet: solid near the lip, splitting vertically
@@ -490,7 +622,8 @@ void main(){
   float live=max(act,sheetFall);
   if(live<.01)discard;
   float locFlow=clamp(eaveFlow*(.55+.65*live),0.,1.);
-  float pres=mix(eavePresence(fall,len,eaveTime,seed,locFlow),1.,sheetFall);
+  float rawPres=eavePresence(fall,len,eaveTime,seed,locFlow);
+  float pres=isPour?mix(1.,rawPres,smoothstep(.25,1.2,fall)):mix(rawPres,1.,sheetFall);
   if(pres<.01)discard;
   // Silhouette necking toward breakup gaps on streams; merged curtain uses full quadAcross.
   float narrow=mix(.50,1.,pres);
@@ -524,7 +657,8 @@ void main(){
   float q2=qClamped*qClamped;
   float coreCA=(1.-smoothstep(0.,.32,q2))*(.30+.30*nearLip+.65*glint+.40*ripMag);
   float midStreamBoost=1.+.65*smoothstep(11.,22.,dist);
-  float streamAlpha=eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)*midStreamBoost;
+  float pourGain=isPour?mix(.60,1.15,pourShare):1.;
+  float streamAlpha=eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)*midStreamBoost*pourGain;
   float midSheetBoost=1.+.45*smoothstep(10.,22.,dist)*(1.-smoothstep(26.,42.,dist));
   float sheetAlpha=eaveSheetAlpha(quadAcross,fresnel,ripSpec,ripMod,sheetRim,eaveFlow)*midSheetBoost;
   float resolved=streamAlpha*(1.-sheetFall)*act+sheetAlpha*sheetFall;
@@ -561,11 +695,17 @@ function geometry(instances,segments) {
   for(let j=0;j<=segments;j++)for(let i=0;i<2;i++){vertices.push(i-.5,j/segments,0);uv.push(i,j/segments);}
   for(let j=0;j<segments;j++){const k=j*2;indices.push(k,k+1,k+3,k,k+3,k+2);}
   g.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(indices);
+  const streamCount=instances.reduce((n,i)=>n+(i.pour?0:1),0);
+  let streamIdx=0;
   g.setAttribute('eaveTop',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[...i.top,i.seed])),4));
   g.setAttribute('eaveMeta',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[i.eaveS,i.cellStep,i.sheetCap,i.angle])),4));
   g.setAttribute('eaveBottom',new THREE.InstancedBufferAttribute(new Float32Array(instances.map(i=>i.bottom)),1));
-  g.setAttribute('eaveRank',new THREE.InstancedBufferAttribute(new Float32Array(instances.map((_,i)=>(i+.5)/instances.length)),1));
-  const box=new THREE.Box3();for(const i of instances){box.expandByPoint(new THREE.Vector3(...i.top));box.expandByPoint(new THREE.Vector3(i.top[0],i.bottom,i.top[2]));}
+  g.setAttribute('eaveRank',new THREE.InstancedBufferAttribute(new Float32Array(instances.map(i=>i.pour?0:(streamIdx+++.5)/Math.max(1,streamCount))),1));
+  const box=new THREE.Box3();
+  for(const i of instances){
+    box.expandByPoint(new THREE.Vector3(...i.top));
+    box.expandByPoint(new THREE.Vector3(i.top[0]+(i.pourDir?.[0]||0)*(i.pourForward||0),i.bottom,i.top[2]+(i.pourDir?.[2]||0)*(i.pourForward||0)));
+  }
   if(instances.length){box.expandByScalar(.5);g.boundingBox=box;g.boundingSphere=box.getBoundingSphere(new THREE.Sphere());}
   g.instanceCount=instances.length;return g;
 }
@@ -579,13 +719,16 @@ export function createEaveStreams(scene,{tier='high',colour=null}={}) {
     eaveLampColours:{value:Array.from({length:4},()=>new THREE.Color())}};
   const materials=[0,1].map(kind=>new THREE.ShaderMaterial({name:'EaveWater',vertexShader,fragmentShader,
     uniforms:{...uniforms,eaveMist:{value:kind}},transparent:true,depthWrite:false,side:THREE.DoubleSide,forceSinglePass:true}));
-  let data={eaves:[],instances:[]},streams=null,mist=null,disposed=false,maximum=0;
+  let data={eaves:[],instances:[],pours:[]},streams=null,mist=null,disposed=false,maximum=0,poursCount=0,selectedStreams=0;
   let lastFlow=null,lastTime=null,decliningAt=null,lastDecline=-Infinity;
-  const clear=()=>{for(const o of [streams,mist])if(o){o.geometry.dispose();group.remove(o);}streams=mist=null;group.visible=false;};
+  const clear=()=>{for(const o of [streams,mist])if(o){o.geometry.dispose();group.remove(o);}streams=mist=null;maximum=poursCount=selectedStreams=0;group.visible=false;};
   return {group,uniforms,get data(){return data;},get streams(){return streams;},get mist(){return mist;},
-    setPlan(plan={},roofs=new Map(),kit={}){
-      if(disposed)return;clear();data=eaveInstances(plan||{},roofs,kit);
-      const count=Math.floor(data.instances.length*(tier==='low'?.35:tier==='medium'?.65:1));
+    setPlan(plan={},roofs=new Map(),kit={},gutters=null){
+      if(disposed)return;clear();data=eaveInstances(plan||{},roofs,kit,gutters);
+      poursCount=data.pours?.length||0;
+      const streamTotal=data.instances.length-poursCount;
+      selectedStreams=Math.floor(streamTotal*(tier==='low'?.35:tier==='medium'?.65:1));
+      const count=poursCount+selectedStreams;
       maximum=count;
       if(!count)return;
       const selected=data.instances.slice(0,count);
@@ -615,8 +758,8 @@ export function createEaveStreams(scene,{tier='high',colour=null}={}) {
       const density=camera&&streams?lodDensity(dist):1;
       const mistDensity=camera&&streams?1-smooth(8,MIST_FAR,dist):1;
       if(streams){
-        streams.geometry.instanceCount=Math.ceil(maximum*density*demand);
-        mist.geometry.instanceCount=flow>.26&&mistDensity>0?Math.ceil(maximum*mistDensity*demand*.5):0;
+        streams.geometry.instanceCount=flow>.002&&wet>0&&density>0?poursCount+Math.ceil(selectedStreams*density*demand):0;
+        mist.geometry.instanceCount=flow>.26&&wet>0&&mistDensity>0?Math.min(maximum,poursCount+Math.ceil(selectedStreams*mistDensity*demand*.5)):0;
         mist.visible=mist.geometry.instanceCount>0;
       }
       group.visible=!!streams&&density>0&&!unlit&&!neutral&&(level==='house'||level==='building')&&!steep&&flow>.002&&wet>0;

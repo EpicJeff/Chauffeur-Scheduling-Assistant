@@ -140,7 +140,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
   let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
-  let eavePlan=null,eaveRoofs=null;
+  let eavePlan=null,eaveRoofs=null,eaveGutters=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -576,11 +576,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // Eave runoff follows the roof's own drying ladder (roof_water.js), so the
     // streams thin to drips and stop as the roof drains after the rain.
     runoff.flow=eaveRunoff(roofState);runoff.wet=roofState.wet;
-    if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces){
+    if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces||eaveGutters!==twin?.gutters){
       // Optional HA absence and a dry neutral editor allocate no water mesh.
       // Once rain needs it, build once for this immutable roof snapshot.
-      if(runoff.flow>.002&&runoff.wet>0){eaves.setPlan(plan,twin?.roofSurfaces,kit);eavePlan=plan;eaveRoofs=twin?.roofSurfaces;}
-      else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;}
+      if(runoff.flow>.002&&runoff.wet>0){eaves.setPlan(plan,twin?.roofSurfaces,kit,twin?.gutters);eavePlan=plan;eaveRoofs=twin?.roofSurfaces;eaveGutters=twin?.gutters;}
+      else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;eaveGutters=null;}
     }
     eaves.update(runoff,performance.now()/1000,{camera,target:controls.target,
       level:weatherLevel,unlit:state.unlit,neutral:view.weather?.neutral,
@@ -1879,12 +1879,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           // Authored viewer-shaped materials classify alpha and supply physical
           // reach inputs. Drawn editor fades, focus and selection never enter.
           alphaRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true, gutters: twin?.gutters });
             physical.root.updateMatrixWorld(true);
             return [physical.root, ...(yardGroup ? [yardGroup] : [])];
           },
           receiverRoots: () => {
-            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true });
+            physical ||= buildTwin(bakePlan, kit, tier, { viewing: true, bakeSource: true, gutters: twin?.gutters });
             if (!physicalYard && yardGroup) {
               physicalYard = copyReceivers(yardGroup) || new THREE.Group();
               physicalYard.matrixAutoUpdate = false; physicalYard.matrix.copy(yardGroup.matrixWorld);

@@ -3,6 +3,7 @@
 KINDS = [
     {'kind': 'trim', 'label': 'Trim', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
     {'kind': 'fascia', 'label': 'Fascia', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
+    {'kind': 'gutter', 'label': 'Gutters', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
     {'kind': 'casing', 'label': 'Casing', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'opening'},
     {'kind': 'window_frame', 'label': 'Window frames', 'scope': 'building', 'fallback': {'role': 'window_frame'}, 'item': 'opening'},
     {'kind': 'pane', 'label': 'Panes', 'scope': 'building', 'fallback': {'builtin': 'glass'}, 'item': 'opening'},
