@@ -49,7 +49,7 @@ renderer.render(scene, camera);
 const program = renderer.properties.get(probe).currentProgram.program;
 const units = {}; const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS);
 for (let i = 0; i < count; i++) { const u = gl.getActiveUniform(program, i);
-  if ([gl.SAMPLER_2D, gl.SAMPLER_CUBE, gl.SAMPLER_2D_ARRAY].includes(u.type)) units[u.name] = gl.getUniform(program, gl.getUniformLocation(program, u.name)); }
+  if ([gl.SAMPLER_2D, gl.SAMPLER_CUBE, gl.SAMPLER_2D_ARRAY, gl.SAMPLER_3D].includes(u.type)) units[u.name] = gl.getUniform(program, gl.getUniformLocation(program, u.name)); }
 window.result = { units, samplers: Object.keys(units).length, error: gl.getError() };
 </script></body></html>"""
 

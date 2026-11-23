@@ -55,7 +55,7 @@ function convexParts(poly) {
   return parts;
 }
 
-function roomData(plan) {
+export function roomData(plan) {
   const rooms = [], buildings = new Map();
   for (const b of plan.buildings || []) {
     const levels = (b.levels || []).map(withoutSurfaceMaterials).sort((a, c) => a.elevation - c.elevation);
