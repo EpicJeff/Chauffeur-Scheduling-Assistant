@@ -89,7 +89,7 @@ def scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt():
     from services import twin_store,twin_model_ops,twin_energy
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page,served,query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button',name='Energy',exact=True).click()
+        page.get_by_role('button',name='Energy',exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => window.__twin.live.energy().ribbons.filter(r=>r.visible).length===3")
         results=page.evaluate("""() => {
           const v=window.__twin,s=v.live.energy(),a=s.anchors,c=v.camera,r=v.renderer3.domElement.getBoundingClientRect();c.updateMatrixWorld(true);
@@ -104,7 +104,7 @@ def scenario_exact_zone_device_panel_meter_endpoints_and_deleted_meter_prompt():
                                 'edit',note='Browser: remove meter')
         # Like other structural house edits, the current twin model refreshes on reload.
         page.reload();page.wait_for_function('() => !!window.__twin?.live')
-        page.get_by_role('button',name='Energy',exact=True).click()
+        page.get_by_role('button',name='Energy',exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => !window.__twin.live.energy().ribbons.some(r=>r.id.split(':').includes('grid'))")
         check('Place the meter to see grid flow' in page.locator('#twin-mode-legend').inner_text(),'removed meter produces placement prompt')
         L.no_errors(served)
@@ -163,7 +163,7 @@ def scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse():
         card=page.locator('[data-car-card="garage-red"]')
         check('78%' in card.inner_text() and 'Garage charger' in card.inner_text(),'card explains battery and charger')
         card.get_by_role('button',name='Close',exact=True).click()
-        page.get_by_role('button',name='Energy',exact=True).click()
+        page.get_by_role('button',name='Energy',exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => window.__twin.live.energy().ribbons.some(r=>r.id==='charger:0' && r.visible)")
         links=page.evaluate('() => window.__twin.live.energy().ribbons.filter(r=>r.link && r.visible)')
         spots=next(b for b in twin_store.current_model()['buildings'] if b['id']==L.POOL)['anchors']
@@ -174,11 +174,11 @@ def scenario_garage_charger_two_coloured_cars_pulse_card_and_program_reuse():
         # nothing (the repo-wide rule, as in test_house_twin_energy_live's second-entry check).
         modes=['All','Lights','Energy','All']
         for mode in modes:
-            page.get_by_role('button',name=mode,exact=True).click()
+            page.get_by_role('button',name=mode,exact=True).click(modifiers=['Shift'])
         page.wait_for_timeout(200)
         programs=page.evaluate('() => window.__twin.renderer3.info.programs.length')
         for mode in modes:
-            page.get_by_role('button',name=mode,exact=True).click()
+            page.get_by_role('button',name=mode,exact=True).click(modifiers=['Shift'])
         check(page.evaluate('() => window.__twin.renderer3.info.programs.length')==programs,'a second mode round trip compiles no programs')
         push('device_tracker.garage_red','away')
         page.wait_for_function("() => window.__twin.cars.snapshot().find(r=>r.id==='garage-red').visible===false")
@@ -225,7 +225,7 @@ def scenario_nearer_petrol_car_never_gets_the_ev_cable_and_shows_fuel():
     twin_store.update_model(equip,'edit',note='Browser: petrol nearer than EV to active charger')
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page,served,query='tier=low&test=1&panel=true&kiosk=true')
-        page.get_by_role('button',name='Energy',exact=True).click()
+        page.get_by_role('button',name='Energy',exact=True).click(modifiers=['Shift'])
         page.wait_for_function("() => window.__twin.cars?.snapshot().filter(r=>r.visible).length===2 && window.__twin.live.energy().ribbons.some(r=>r.id==='charger:0' && r.visible)")
         positions=page.evaluate("""() => {
             const a=window.__twin.live.energy().anchors,c=a.chargers[0];

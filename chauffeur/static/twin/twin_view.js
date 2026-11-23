@@ -25,7 +25,7 @@ import { registerBakeSource, bakeAuthoredMaterial } from './bake/source.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { atlasMesh } from './bake/atlas.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
-import { lookAt, modelDirection, previewDate, resolveSite } from './sky/look.js';
+import { lookAt, modelDirection, previewDate, resolveSite, readNightBrightness, writeNightBrightness, clampNightBrightness } from './sky/look.js';
 import { createSky, sampleSkyIrradiance, transmittance, fogColour } from './sky/atmosphere.js';
 import { createCloudPass } from './sky/cloud_pass.js';
 import { createWeatherClock, sourceEntity, neutralWeather, createWeatherPreview, mountWeatherState, weatherHaze, weatherExtinction, weatherLightingKey, sunAirVisibility, sunDiscVisibility } from './sky/weather.js';
@@ -39,7 +39,7 @@ import { createPrecipitation } from './sky/precipitation.js';
 import { createEaveStreams } from './sky/eave_streams.js';
 import { createSkyCover, writeWeatherOpen, refreshSlabCover } from './sky/sky_cover.js';
 import { createSeasonTouches } from './sky/season_touches.js';
-import { mountTimeScrub } from './sky/time_scrub.js';
+import { mountTimeScrub, mountNightBrightness } from './sky/time_scrub.js';
 import { defaultStage, mountStageSettings } from './stage_settings.js';
 import { mountWeatherSettings } from './weather_settings.js';
 import { weatherState as pickWeather } from './sky/overcast.js';
@@ -167,6 +167,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   let viewing = null;
   let shadowAutoUpdate;
   let clock = null, previewIdle = null, timeTimer = null, timeLook = null, lastShadowUpdate = -Infinity;
+  let nightBrightness = readNightBrightness();
   const clockNow = () => clock ? new Date(clock) : new Date();
   let liveLamps = false;
   let weatherEntity = null, lastWeather = '', groundWeather = {}, weatherPoll = null;
@@ -663,6 +664,17 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       entity ||= null;
       if(weatherEntity===entity)return;
       weatherEntity=entity; weatherPoll?.refresh(); updateTime();
+    },
+    get nightBrightness() { return nightBrightness; },
+    setNightBrightness(value, { persist = true, commit = false } = {}) {
+      const next = clampNightBrightness(value);
+      nightBrightness = persist ? writeNightBrightness(next) : next;
+      applyTimeLook(false, false, !commit);
+      applyLights();
+      if (commit) reflections.request();
+      render();
+      el.dispatchEvent(new CustomEvent('twintimechange', { detail: state.time }));
+      return nightBrightness;
     },
     get stage() { return stageForPlan(plan); },
     get timeHour() {
@@ -1682,7 +1694,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.bake?.stop();
       view.live?.stop();
       view.idle?.stop(); view.glance?.stop(); view.glanceSettings?.stop();
-      view.energySettings?.stop(); view.stageSettings?.stop(); view.weatherSettings?.stop(); view.timeScrub?.stop();
+      view.energySettings?.stop(); view.stageSettings?.stop(); view.weatherSettings?.stop(); view.timeScrub?.stop(); view.nightBrightnessControl?.stop();
       if (probeRun) {
         probeRun.reject(new Error('The twin was disposed during the probe.')); probeRun = null;
       }
@@ -1790,7 +1802,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
-      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray() });
+      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray(), nightBrightness });
     scene.background = sky.clearCube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
@@ -2104,6 +2116,7 @@ async function boot() {
     view.stageSettings = mountStageSettings(view);
     view.weatherSettings = mountWeatherSettings(view);
     view.timeScrub = mountTimeScrub(view, document.getElementById('twin-time-scrub'));
+    view.nightBrightnessControl = mountNightBrightness(view, document.getElementById('twin-night-brightness'));
     const keeper = keepLive(view, { api: (path, options) => fetch(base() + path, options) });
     window.addEventListener('pagehide', () => { keeper.stop(); clearInterval(hudTimer); view.dispose(); }, { once: true });
     const query = new URLSearchParams(location.search);

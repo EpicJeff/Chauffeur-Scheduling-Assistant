@@ -1,3 +1,5 @@
+import { NIGHT_BRIGHTNESS_DEFAULT, clampNightBrightness } from './look.js';
+
 // Session-only preview. The expensive clock path runs only on release (change).
 export function mountTimeScrub(view, slider, {host = document.getElementById('twin-canvas'),
   output = document.getElementById('twin-time-scrub-value')} = {}) {
@@ -8,6 +10,31 @@ export function mountTimeScrub(view, slider, {host = document.getElementById('tw
     const hour = Math.round((view.timeHour ?? view.state.previewHour ?? 12)*12)/12;
     slider.value = String(hour);
     const minutes = Math.round(hour*60), text = `${String(Math.floor(minutes/60)).padStart(2,'0')}:${String(minutes%60).padStart(2,'0')}`;
+    slider.setAttribute('aria-valuetext', text);
+    if (output) output.textContent = text;
+  };
+  slider.addEventListener('input', input);
+  slider.addEventListener('change', change);
+  host?.addEventListener('twintimechange', sync);
+  sync();
+  return {stop() {
+    slider.removeEventListener('input', input);
+    slider.removeEventListener('change', change);
+    host?.removeEventListener('twintimechange', sync);
+  }};
+}
+
+// Per-device night brightness floor (0% = original darkest night, 50% = default, 100% = brightest).
+export function mountNightBrightness(view, slider, {host = document.getElementById('twin-canvas'),
+  output = document.getElementById('twin-night-brightness-value')} = {}) {
+  if (!slider) return {stop() {}};
+  const input = () => view.setNightBrightness?.(Number(slider.value) / 100);
+  const change = () => view.setNightBrightness?.(Number(slider.value) / 100, {commit: true});
+  const sync = () => {
+    const value = clampNightBrightness(view.nightBrightness ?? NIGHT_BRIGHTNESS_DEFAULT);
+    const pct = Math.round(value * 100);
+    slider.value = String(pct);
+    const text = `${pct}%`;
     slider.setAttribute('aria-valuetext', text);
     if (output) output.textContent = text;
   };

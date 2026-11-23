@@ -237,14 +237,14 @@ def mode_button(page, name):
 
 
 def lights_mode(page):
-    mode_button(page, 'Lights').click()
+    mode_button(page, 'Lights').click(modifiers=['Shift'])
     calm(page)
 
 
 def all_mode(page):
     # Slice 2c-2: All shows every visualization, lights included, so the mode that hands the
     # look back to the house's own lamps is one without lighting. Security is that mode here.
-    mode_button(page, 'Security').click()
+    mode_button(page, 'Security').click(modifiers=['Shift'])
     calm(page)
 
 
@@ -707,7 +707,7 @@ def scenario_wall_panel_lights_mode():
         day = look(page)
         count = len(pool(page))
         check(count == 4, ('the low tier holds a pool of four PointLights from the start', count))
-        mode_button(page, 'Lights').click()   # one tap
+        mode_button(page, 'Lights').click(modifiers=['Shift'])   # solo Lights
         calm(page)
         check(mode_button(page, 'Lights').get_attribute('aria-pressed') == 'true', 'Lights reads pressed')
         for did in ('dev-k-lamp', 'dev-k-pendant', 'dev-changing-light'):
@@ -715,7 +715,7 @@ def scenario_wall_panel_lights_mode():
         check(len(lit_pool(page)) == 3, ('three lit PointLights', lit_pool(page)))
         check(len(pool(page)) == count, ('the pool did not grow', count, len(pool(page))))
         check(look(page) == day, ('Lights keeps the wall time look', look(page)))
-        mode_button(page, 'Security').click()   # one tap to a mode without lighting
+        mode_button(page, 'Security').click(modifiers=['Shift'])   # solo a mode without lighting
         calm(page)
         check(look(page) == day, ('Security restores the wall\'s look', day, look(page)))
         check(lit_pool(page) == [], ('Security: no pool light lit', lit_pool(page)))

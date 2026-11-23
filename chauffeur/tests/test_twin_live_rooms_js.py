@@ -195,8 +195,8 @@ check('lights_mode_builds_transformed_floor_glow_and_restores_all', async () => 
   states['light.lamp'] = {state:'on',attributes:{brightness:128}}; await live.refresh();
   const summary = live.rooms(); assert.ok(Math.abs(summary[0].glow - (128/255+1)/2)<.001);
   assert.equal(summary[1].glow,.6); assert.deepEqual(summary[1].rgb,[0,0,255]); assert.equal(summary[2].glow,0);
-  const strip = document.getElementById('twin-modes'); await click(button(strip,'Lights'));
-  assert.ok(live.markers().every(m => m.dim === (m.kind !== 'light')));
+  const strip = document.getElementById('twin-modes'); live.setMode('lights');
+  assert.ok(live.markers().every(m => !m.dim));
   const floors = view.scene.children.filter(n => n.children[0]?.isMesh);
   assert.equal(floors.length,3); assert.equal(floors.filter(n => n.visible).length,2);
   assert.ok(floors[0].children[0].material.opacity > .6); assert.deepEqual(floors[0].position.toArray(),[30.48,.6096,-15.24]);
@@ -296,8 +296,7 @@ check('far_cards_reuse_nodes_across_updates_modes_and_camera_frames', async()=>{
     t.states['sensor.temp'].state='73'; t.states['light.lamp'].state='off'; await t.live.refresh();
     assert.equal(card(t),node); assert.equal(node.querySelector('small'),text); assert.match(node.textContent,/73°/); assert.doesNotMatch(node.querySelectorAll('small').filter(n=>!n.parentElement.hidden).map(n=>n.textContent).join(' '),/1 on/);
     t.camera.position.x+=1; t.live.draw(); assert.equal(card(t),node);
-    t.live.setMode('climate'); assert.equal(node.hidden,true);
-    let badge; t.view.scene.traverse(o=>{if(o.isSprite&&o.visible&&o.userData.room) badge=o;}); assert.ok(badge);
+    t.live.setMode('climate'); assert.equal(node.hidden,false,'room navigation remains available with any toggle combination');
     t.live.setMode('all'); assert.equal(node.hidden,false);
     const materials=[];t.view.scene.traverse(o=>{if(o.isSprite) materials.push(o.material);});
     for(const height of [50,100,50,100]) {t.camera.position.y=height;t.live.draw();}
@@ -316,7 +315,7 @@ check('viewer_levels_filter_actual_sprites_in_every_mode_and_attention_tap_jumps
    state={level,building:'b',floor:'L1',room:level==='room'?'r':null};
    t.live.setMode(mode);assert.deepEqual(materials(),originalMaterials,'first level visits allocate no materials');assert.equal(t.sprite('lock').visible,true,level+'/'+mode);
    assert.equal(t.sprite('lock').material.opacity,1,'attention never dims by mode');
-   assert.equal(t.sprite('a').visible||!!cluster(t),level==='room','ordinary markers only inside Room');
+   assert.equal(t.sprite('a').visible||!!cluster(t)?.userData.cluster.includes('a'),level==='room' && ['all','lights'].includes(mode),'ordinary light markers only inside Room with Lights enabled');
   }
   state={level:'building',building:'b',floor:null,room:null};t.live.setMode('all');
   await t.tap('lock');assert.deepEqual(jumps.at(-1),{building:'b',room:'r'});

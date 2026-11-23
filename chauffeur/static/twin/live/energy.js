@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { modeShows } from './mode_state.js';
 import { FT } from '../twin_generator.js';
 import { isEnergyEntity } from './glance.js';
 import { guessEnergy, chargingCar, flowReading, watts, energyBalance } from './energy_mapping.js';
@@ -287,7 +288,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       currentMode = mode;
       const states = live.peek(); mapping = guessEnergy(states, view.energySources?.mapping, view.energySources?.cars, view.plan);
       anchors = energyAnchors(view, layout, mapping, states);
-      const shown = mode === 'energy' || mode === 'all';
+      const shown = modeShows(mode, 'energy');
       const total = live.stale() ? 0 : Math.max(0, watts(mapping.solar_power, states) ?? energyBalance(mapping, states, anchors?.zoneEntities).totals.solar ?? 0);
       view.scene.traverse(o => {for (const m of o.material ? [].concat(o.material) : []) if (m.name === 'solar_panel') {
         m.visible = mapping.panels.visible !== false;
@@ -328,7 +329,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
         const flow = flows.get(row.link?'charger:'+chargerIndex:row.id);
         row.reading = {...flowReading(flow?.watts || 0), watts: flow?.watts || 0};
         if(row.link)row.reading.width=.25*.3048;
-        row.wanted = (mode === 'energy' || mode === 'all') && (row.link
+        row.wanted = modeShows(mode, 'energy') && (row.link
           ? !live.stale() && row.reading.visible && !!car && anchors.spots.some(s=>s.car===car.id && s.building===row.link.spot.building && s.id===row.link.spot.id)
           : !!flow?.shown);
         row.mesh.material.uniforms.radius.value = row.reading.width / 2;
@@ -352,7 +353,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       applyShown();
     },
     draw(mode) {
-      labels.hidden = mode !== 'energy' && mode !== 'all';
+      labels.hidden = !modeShows(mode, 'energy');
       // Hide what is tied only to hidden geometry: conduits with their roof, a ribbon
       // when both of its ends are hidden.
       applyShown();
@@ -369,7 +370,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
       const rect = view.renderer3.domElement.getBoundingClientRect();
       const shown = [], entries = [];
       for (const row of ribbons) {
-        row.label.hidden = !!row.link || !row.mesh.visible || mode !== 'energy' && mode !== 'all';
+        row.label.hidden = !!row.link || !row.mesh.visible || !modeShows(mode, 'energy');
         if (!row.label.hidden) {
           const point = row.point.clone().project(view.camera);
           if (!row.label.hidden) {
