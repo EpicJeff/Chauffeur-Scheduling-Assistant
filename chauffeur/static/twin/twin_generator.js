@@ -25,9 +25,10 @@ import { buildEffects } from './effects/index.js';
 import { LUCIDE } from '../vendor/lucide/icons.js';
 
 import { FT } from './twin_light_math.js';
+import { ROOF_THICKNESS, FASCIA } from './trim_dims.js';
 export { FT } from './twin_light_math.js';
+export { ROOF_THICKNESS, FASCIA } from './trim_dims.js';
 export const PICK_LAYER = 31;
-const ROOF_THICKNESS = 0.25;
 // Keep in step with twin_plan.porches: ids win, polygon fallback for aliases
 // without an id. Return the original pieces, preferring collection entries.
 export function allPorches(building) {
@@ -1599,8 +1600,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             if (outside !== null && outside >= (a[2] + c[2]) / 2 - 1e-3) continue;
             // Keep the finish just proud of the solid shell's edge so the
             // roof and trim materials never occupy the same vertical plane.
-            const proud = p => p.map((v, i) => i === axis ? v + sign * 0.01 : v);
-            band(proud(a), proud(c), trim, ROOF_THICKNESS + 0.1);
+            const proud = p => p.map((v, i) => i === axis ? v + sign * FASCIA.proudFt : v);
+            band(proud(a), proud(c), trim, FASCIA.depthFt);
           }
         }
       }
