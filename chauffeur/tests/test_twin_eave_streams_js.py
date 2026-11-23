@@ -93,6 +93,8 @@ await test('two instanced draws share one small sampler-free program; Low submit
   e.update({flow:0,wet:0});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{level:'floor'});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{level:'room'});assert.equal(e.group.visible,false);
+  // A focused building is still an exterior view with its roof: streams stay.
+  e.update({flow:1,wet:1},0,{camera,target,level:'building'});assert.equal(e.group.visible,true,'streams show with one building focused');
   const high=camera.clone();high.position.set(0,100,0);e.update({flow:1,wet:1},0,{camera:high,target});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{camera,target});assert.equal(e.group.visible,true);
   const far=camera.clone();far.position.copy(e.streams.geometry.boundingBox.max).addScalar(40);

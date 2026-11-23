@@ -375,7 +375,7 @@ export function createEaveStreams(scene,{tier='high',colour=null}={}) {
         mist.geometry.instanceCount=flow>.26?Math.ceil(maximum*density*demand*.5):0;
         mist.visible=mist.geometry.instanceCount>0;
       }
-      group.visible=!!streams&&density>0&&!unlit&&!neutral&&level==='house'&&!steep&&flow>.002&&wet>0;
+      group.visible=!!streams&&density>0&&!unlit&&!neutral&&(level==='house'||level==='building')&&!steep&&flow>.002&&wet>0;
       if(!group.visible)return;
       if(light)uniforms.eaveColour.value.fromArray(light);
       // Bounded light input only, independent of the number of water instances.
