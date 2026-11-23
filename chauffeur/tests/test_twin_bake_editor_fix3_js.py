@@ -43,7 +43,7 @@ await check('ha_move_at_same_round_stales_one_and_press_bakes_exact_key_changes'
   assert.deepEqual(d.controller.state().stale,['c1']);assert.equal(output(d).textContent,'Lighting out of date: 1 light');
   const since=d.server.calls.length;await d.controller.start();
   const expected=Object.entries(d.controller.packing().entries).filter(([id,e])=>!((e.key===before.lights[id]?.key)&&(e.location===before.lights[id]?.location)&&(e.channel===before.lights[id]?.channel))).map(([id])=>id);
-  assert.deepEqual(d.controller.state().baked.slice(4),expected);assert.deepEqual(expected,['c1']);assert.equal(output(d).textContent,'Lighting is up to date');
+  assert.deepEqual(d.controller.state().baked.slice(4),expected);assert.deepEqual(expected,['c1']);assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   assert.ok(d.server.writes(since).length);
  }finally{d.controller.stop();}
 });
@@ -118,7 +118,7 @@ await check('committed_wall_finish_press_rebakes_only_real_changes_and_preserves
   const {matchesEntry}=await import(file('static/twin/bake/freshness.js'));
   const entries=next.controller.packing().entries,dirty=Object.entries(entries).filter(([id,e])=>!matchesEntry(e,before.lights[id])).map(([id])=>id);
   assert.ok(dirty.length>0&&dirty.length<list.length);assert.ok(!dirty.includes('remote'));
-  assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort());assert.equal(output(next).textContent,'Lighting is up to date');
+  assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort());assert.match(output(next).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   const changed=new Set(dirty.flatMap(id=>entries[id].pages)),untouched=before.lights.remote.pages.filter(p=>!changed.has(p));assert.ok(untouched.length);
   for(const p of untouched){assert.deepEqual(d.server.pages.get(key+'/'+p),bytes.get(key+'/'+p));assert.ok(!d.server.writes(since).some(c=>c.path===`api/house/bakes/${key}/${p}.png`));}
  }finally{next?.controller.stop();d.controller.stop();}

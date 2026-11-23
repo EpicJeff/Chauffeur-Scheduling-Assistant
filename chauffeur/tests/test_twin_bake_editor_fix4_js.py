@@ -14,7 +14,7 @@ for(const change of ['atlas version','generator version','material alpha','mater
   const d=await seed();let editor,viewer;
   try{
    const key=d.controller.state().key,m=d.server.manifests.get(key),v={round:42};
-   assert.ok(m.keyInputs);assert.equal(output(d).textContent,'Lighting is up to date');
+   assert.ok(m.keyInputs);assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
    if(change==='atlas version')m.keyInputs.atlas='reach-atlas-11';
    if(change==='generator version')m.keyInputs.generator='before-drip-line';
    if(change==='material alpha')v.materialManifest={library:{revision:1,params:{alpha_mode:'cutout'}}};
@@ -62,7 +62,7 @@ await check('addon_key_change_stales_both_desks_until_a_real_rebake',async()=>{
   assert.equal(viewer.controller.state().stale.length,4);assert.equal(viewer.controller.fresh().length,0);
   const renders=editor.renderer.log.renders;await editor.controller.start();
   assert.ok(editor.renderer.log.renders>renders,'a real key change rebakes');
-  assert.equal(output(editor).textContent,'Lighting is up to date');
+  assert.match(output(editor).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   await viewer.controller.refresh();
   await until(()=>viewer.controller.state().stale.length===0&&viewer.controller.fresh().length===4,'viewer adopts the rebake');
  }finally{editor?.controller.stop();viewer?.controller.stop();d.controller.stop();}
@@ -100,7 +100,7 @@ await check('fallback_and_no_reach_settle_current_without_claiming_baked_slots',
   const key=d.controller.state().key,m=d.server.manifests.get(key);
   assert.equal(Object.keys(m.lights).length,6);assert.equal(Object.keys(m.realtime).length,2);
   assert.deepEqual(Object.values(m.realtime).map(e=>e.reason).sort(),['fallback','no reach']);
-  assert.equal(m.complete,true);assert.equal(output(d).textContent,'Lighting is up to date');
+  assert.equal(m.complete,true);assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   assert.equal(d.controller.state().stale.length,0);assert.equal(d.controller.fresh().length,6);
   editor=await context('high',d.server,list,opts());oneChart(editor);await ready(editor);
   assert.equal(output(editor).textContent,'Lighting is up to date');

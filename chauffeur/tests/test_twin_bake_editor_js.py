@@ -46,7 +46,7 @@ await check('manual_idle_poll_and_relight_never_start_but_button_does',async()=>
   const grid=desk.controller.state().grid;
   await desk.controller.refresh();
   assert.deepEqual(desk.controller.state().grid,grid,'idle refresh retains last grid counters');
-  assert.equal(outputOf(desk).textContent,'Lighting is up to date');
+  assert.equal(outputOf(desk).textContent,`Lighting is up to date · Grid ${grid.points} points, ${Math.ceil(grid.bytes/1024)} KB`);
   assert.equal(b.hidden,true);assert.equal(buttonOf(desk,'Re-bake all lighting').hidden,false);
   assert.equal(buttonOf(desk,'Re-bake all lighting').disabled,false);
  }finally{desk.controller.stop();}

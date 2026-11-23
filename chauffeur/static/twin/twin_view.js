@@ -47,6 +47,7 @@ import { createUnlit } from './unlit.js';
 import { createViewing } from './viewing.js';
 import { createLevels } from './levels.js';
 import { mountFrameMeter } from './frame_meter.js';
+import { mountGridDebug } from './bake/grid_debug.js';
 import { createPost, EMITTER_GAIN } from './post.js';
 import { createReflectionProbes } from './reflection_probes.js';
 import { createPieceVisibility } from './twin_visibility.js';
@@ -1684,6 +1685,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       disposed = true; ++revision; view.ready = false;
       el.removeEventListener('twinyardrebuilt', redrawAfterYard);
       view.meter?.stop();
+      view.gridDebug?.stop();
       view.materialWatcher?.stop();
       for (const release of [...materialBindings.values()]) release();
       view.levels?.stop();
@@ -2087,6 +2089,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     });
     if (new URLSearchParams(location.search).get('perf') === '1')
       view.meter = mountFrameMeter(el, { renderer3, gpu: view.renderer, tier, pixelRatio: settings.pixelRatio, stats: () => lastStats });
+    if (new URLSearchParams(location.search).get('grid') === '1')
+      view.gridDebug = mountGridDebug(view, view.bake?.models);
     view.ready = true;
     weatherPoll=mountWeatherState({onChange:ground=>{
       groundWeather=ground;

@@ -12,7 +12,7 @@ await check('neutral_round_stays_current_and_press_renders_nothing',async()=>{
  try{
   assert.equal(d.server.manifests.get(d.controller.state().key).lighting,'baked');
   d.view.round=43;d.controller.syncBlocked();
-  assert.equal(output(d).textContent,'Lighting is up to date');assert.deepEqual(d.controller.state().stale,[]);
+  assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);assert.deepEqual(d.controller.state().stale,[]);
   next=await context('high',d.server,null,opts({round:43,lighting:'baked'}));await ready(next);
   assert.equal(output(next).textContent,'Lighting is up to date');assert.deepEqual(next.controller.state().stale,[]);
   assert.equal(next.controller.fresh().length,4);assert.equal(next.controller.packing(),null);
@@ -27,13 +27,13 @@ await check('lighting_change_and_revert_sync_without_poll_or_atlas',async()=>{
   d.view.round=43;d.view.lighting='changed';d.controller.syncBlocked();
   assert.equal(output(d).textContent,'Lighting out of date since your edits');assert.equal(d.controller.state().stale.length,4);
   d.view.round=44;d.view.lighting='baked';d.controller.syncBlocked();
-  assert.equal(output(d).textContent,'Lighting is up to date');assert.deepEqual(d.controller.state().stale,[]);
+  assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);assert.deepEqual(d.controller.state().stale,[]);
   d.view.round=45;d.view.lighting='changed';await d.controller.refresh();
   assert.equal(output(d).textContent,'Lighting out of date since your edits');
   const renders=d.renderer.log.renders;await d.controller.start();
   assert.equal(d.renderer.log.renders,renders,'unchanged exact keys settle without rendering');
   assert.equal(d.server.manifests.get(d.controller.state().key).lighting,'changed');
-  assert.equal(output(d).textContent,'Lighting is up to date');
+  assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
  }finally{d.controller.stop();}
 });
 for(const missing of ['manifest','view'])await check('legacy_'+missing+'_keeps_round_fallback',async()=>{

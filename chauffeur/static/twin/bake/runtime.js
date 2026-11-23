@@ -138,6 +138,15 @@ function separateLights(layout, root, plan = {}) {
     ...objects.lights.filter(l => !pitIds.has(l.device)), ...fixtures];
 }
 
+export function formatBakeGridStatus(grid, modelStats = null) {
+  if (!grid?.points) return '';
+  const kb = Math.ceil((grid.bytes || 0) / 1024);
+  const k = modelStats
+    ? (modelStats.foldedOrDropped ?? ((modelStats.folded || 0) + (modelStats.dropped || 0)))
+    : (grid.foldedOrDropped || 0);
+  return `Grid ${grid.points} points, ${kb} KB${k > 0 ? ` · ${k} models folded or dropped lamps` : ''}`;
+}
+
 export function mountBake(view, root, { host, mode = 'manual', parent = false, display = true, disabledReason = '', blocked = () => '', controls = view.controls, layout: requestedLayout, poll: pollMs = 10000,
   api: request = (path, init) => fetch(base() + path, init) } = {}) {
   let retained = view.bake?.snapshot?.();
@@ -314,11 +323,15 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     status.textContent = message ? message + (retryAt !== null ? ` Retrying in ${Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))} s` : (!authPaused && manualWait ? ' Press Resume to continue.' : ''))
       : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}${progress.grid?.points ? ` · Grid ${progress.grid.points} points` : ''}` : '');
     if (mode === 'manual') {
-      if (!message && !running) status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
-        : disabledReason ? disabledReason
-        : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
-        : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
-        : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} light${stale.length === 1 ? '' : 's'}` : 'Lighting is up to date';
+      if (!message && !running) {
+        const gridNote = formatBakeGridStatus(progress.grid, models?.stats?.());
+        const upToDate = gridNote ? `Lighting is up to date · ${gridNote}` : 'Lighting is up to date';
+        status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
+          : disabledReason ? disabledReason
+          : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
+          : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
+          : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} light${stale.length === 1 ? '' : 's'}` : upToDate;
+      }
       if (blockReason) status.textContent = blockReason;
       meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
       startButton.hidden = !allowed || !(stale.length || inspectOnly && lights.length && editorManifest?.complete !== true) || running || !!failure || resumePending;
@@ -742,7 +755,11 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (present.size) { await patch(); if (!valid()) return; }
     if (display) {
       const manifest = {...m, key:atlas.key};
-      models ||= mountModelLighting(view, {manifest, layout:gridLayout(round), fresh, tints, api, lights});
+      if (!models) {
+        models = mountModelLighting(view, {manifest, layout:gridLayout(round), fresh, tints, api, lights});
+        if (mode === 'manual') models.subscribe?.(() => showProgress());
+        view.gridDebug?.attach?.(models);
+      }
       models.update(fresh, manifest, lights).catch(reportError);
     }
     for (const id of previous) if (!fresh.has(id)) light(id, [0, 0, 0], 0);

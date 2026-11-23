@@ -66,7 +66,9 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   const halt = new AbortController();
   const inferLights = lights === null;
   const atlasKey = () => manifest.key || view.bake?.state?.().key;
-  let folded = 0, dropped = 0, fills = [], fillIds = new Set();
+  let folded = 0, dropped = 0, foldedOrDropped = 0, fills = [], fillIds = new Set();
+  const listeners = new Set();
+  const notify = () => { for (const fn of listeners) fn(); };
   const black = new THREE.Color(0,0,0);
   for (const [id, tint] of tints || []) if (!colors.has(id)) colors.set(id, tint?.rgb ? tintSum([tint], true) : new THREE.Color(tint?.r || 0, tint?.g || 0, tint?.b || 0));
 
@@ -247,7 +249,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     else if (copies.length > textures.maxBricks || nextTable.length > textures.maxEmitters) {
       old = textures; textures = old.grow(copies.length, nextTable.length);
     }
-    table = nextTable; active = available; installed.clear(); rows.clear(); fills = []; folded = dropped = 0;
+    table = nextTable; active = available; installed.clear(); rows.clear(); fills = []; folded = dropped = foldedOrDropped = 0;
     for (const record of table) {
       installed.set(record.device, deviceSignature(record.device));
       if (!rows.has(record.device)) rows.set(record.device, []);
@@ -262,6 +264,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
       copy.fill = ready.fill; copy.terms = ready.terms; fills.push(copy);
       textures.writeBrick(i, ready.data, ready.chosen, ready.fill, copy.box);
       folded += ready.chosen.folded; dropped += ready.chosen.dropped;
+      if (ready.chosen.folded > 0 || ready.chosen.dropped > 0) foldedOrDropped++;
       for (const range of copy.ranges) {
         if (!indicesInstalled) {
           const a = attribute(range.mesh, range.separate);
@@ -277,6 +280,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     installedPalette = paletteKey; installedFills = fillSignature();
     loadedSignature = JSON.stringify([...installed]);
     builds++; buildMs = performance.now() - start + pendingCollectMs; pendingCollectMs = 0;
+    notify();
     const ready = view.renderer3.compileAsync?.(view.scene, view.camera) || view.compileBehind?.();
     ready?.catch?.(error => console.warn('Model lighting program unavailable:', error));
     view.render?.();
@@ -304,15 +308,22 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     initialized = true;
     const geometryChanged = copiesDirty;
     collectCopies(); prune();
+    const syncDebugChunks = () => {
+      chunks.clear();
+      for (const id of availableIds()) chunks.set(id, cache.get(manifest.lights[id].grid));
+      notify();
+    };
     if (!copies.length) {
       clearIndices(); geometries.clear(); table = []; fills = []; rows.clear(); installed.clear();
-      loadedSignature = ''; return;
+      loadedSignature = '';
+      if (!view.gridDebug) return;
+      syncDebugChunks();
     }
-    if (textures && installedFills !== fillSignature()) {
+    if (copies.length && textures && installedFills !== fillSignature()) {
       for (const copy of fills) copy.terms = fillTerms(copy);
       installedFills = fillSignature(); writeFills(); view.render?.();
     }
-    if (geometryChanged || needsBuild(availableIds())) rebuild(); // Cache hits install before the first await.
+    if (copies.length && (geometryChanged || needsBuild(availableIds()))) rebuild(); // Cache hits install before the first await.
     const atlas = atlasKey(), wanted = [];
     if (atlas) for (const id of freshIds) {
       const e = manifest.lights?.[id];
@@ -342,7 +353,8 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     await Promise.all(wanted.map(({key}) => pending.get(key)));
     if (stopped || mine !== serial) return;
     prune();
-    if (needsBuild(availableIds())) rebuild();
+    if (copies.length) { if (needsBuild(availableIds())) rebuild(); }
+    else if (view.gridDebug) syncDebugChunks();
   }
   // Called from the existing lamp tint path, including mode-hidden zero. A
   // device gets one stored colour on first sight; subsequent calls allocate
@@ -374,13 +386,16 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   return {
     update, setTint, rebuild,
     get textures() { return textures; },
-    stats: () => ({bricks:copies.length, emitters:table.length, folded, dropped, builds, buildMs, collections, collectMs, cachedChunks:cache.size, loadedSignature,
+    get layout() { return layout; },
+    get chunks() { return chunks; },
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    stats: () => ({bricks:copies.length, emitters:table.length, folded, dropped, foldedOrDropped, builds, buildMs, collections, collectMs, cachedChunks:cache.size, loadedSignature,
       bricksSize:textures ? [textures.bricks.image.width,textures.bricks.image.height,textures.bricks.image.depth] : null,
       lampsSize:textures ? [textures.lamps.image.width,textures.lamps.image.height] : null,
       bytes:textures ? textures.bricks.image.data.byteLength + textures.lamps.image.data.byteLength : 0}),
     stop() {
       if (stopped) return;
-      stopped = true; ++serial; halt.abort(); unsubscribe?.();
+      stopped = true; ++serial; halt.abort(); unsubscribe?.(); listeners.clear();
       host?.removeEventListener('twinrebuilt', rebuilt); host?.removeEventListener('twinyardrebuilt', rebuilt);
       clearIndices(); textures?.dispose(); chunks.clear(); geometries.clear();
       // Materials stay patched between mounts. Null samplers cannot re-upload
