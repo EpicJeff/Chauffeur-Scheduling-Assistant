@@ -1,6 +1,35 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.997 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.998 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.998 (2026-11-24, Chromium, NOT device-verified): every quality tier shares one lighting bake, so Low panels show baked lighting.**
+
+Before this, a house with running pool or spa effects gave Low and Medium a different bake key from High. They got a 404 for the bake and drew no baked lighting. High and Max keys are unchanged, so no rebake is needed.
+
+**Cause.** High and Max simulate pool and spa water. That changed how the basin's receiving faces were batched by material, and the bake key hashes those batches.
+
+**What is canonical now.**
+- `BAKE_SOURCE_TIER` (`bake/source.js`) is the tier the neutral building source is built at.
+- The neutral yard source uses High's pool and spa partition. The drawn Low yard keeps its own batching, cheaper water, plants and grass.
+- Terrain keeps the viewer's own step (2 ft on Low, 1 ft otherwise). Keys hash a heightfield by its extent only.
+- `bindHeightfield` (`bake/bindings.js`) maps any drawn terrain onto the shared charts with the closed-form chart address, on both the fresh and the cached path.
+
+**Atlas sharing.** A source whose terrain is coarser than 1 ft never publishes its atlas to the server and keeps its local IndexedDB records under a `:terrain-step-2` key. It can still download and use a 1 ft atlas.
+
+**Measured on the owner's house.**
+- Chromium, with the real bake loaded at Low: 17 of 17 lights fresh, against 0 on main. High and Low keys are equal. High captures match main within capture noise.
+- Low draws: +0 draws, +0 triangles (Node census).
+- Low load CPU for the bake source: +250 to +719 ms warm median on a loaded desktop, noisy. Not measured on the Pi.
+
+**Known follow-ups.**
+- The 2 ft label in `twin_yard.js` is written apart from the grid step in `twin_terrain_mesh.js`.
+- `atlas_transport.js` repeats the 2048 page default.
+- Pages whose file timestamps changed (a copied data folder) read as "damaged stored page". Same on main before this change.
+
+Tests:
+- node: `test_twin_bake_tier_key_js`, `test_twin_atlas_server_js`, and neighbours `test_twin_bake_atlas_js`, `test_twin_baker_js`, `test_twin_bake_runtime_js`, `test_twin_alpha_bake_js`;
+- server: `test_twin_bakes`;
+- Chromium: `test_house_twin_bake_tier_key_live` (fails on main, passes here), `test_twin_texture_units_live`, `test_house_twin_model_light_live`, `test_house_twin_bake_live` (17/20, the same three failures as main). `test_twin_light_reach_js` passes its 20 checks but misses its 5 s timing limit on main too.
 
 **v2.499.997 (2026-11-24, Chromium, no device surface): demo stills from an invented household.**
 
