@@ -76,7 +76,7 @@ await test('test_rake_switch_on_guttered_edge_confirms_and_batches',async()=>{
     assert.match(confirms[0].join(' '),/gutter.*downspout overrides/i);
     assert.equal(ops.length,yes?1:0);
     if(yes)assert.deepEqual(ops[0],{op:'batch',ops:[
-      {op:'set_roof_edge',building:'b',roof:'r',edge:0,gutter:false,downspouts:[]},
+      {op:'set_roof_edge',building:'b',roof:'r',edge:0,gutter:false,downspouts:null},
       {op:'set_roof_edge',building:'b',roof:'r',edge:0,setting}]});
   }
 });
@@ -117,9 +117,11 @@ await test('test_add_disabled_at_8',async()=>{
   setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=Array.from({length:8},(_,i)=>i/7);edge(0);
   const add=button('Add downspout');assert.ok(add);assert.equal(add.disabled,true);
   cards.draw();assert.equal(button('Add downspout').disabled,true,'poll keeps capacity disabled');
-  setup();roof().edges[0].gutter=true;edge(0);await press('Add downspout');
-  assert.equal(ops.length,1);assert.ok(ops[0].downspouts.length>=2&&ops[0].downspouts.length<=8);
+  setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=[0];edge(0);await press('Add downspout');
+  assert.equal(ops.length,1);assert.equal(ops[0].downspouts.length,2);assert.ok(ops[0].downspouts[1]>.9,'adds the other free corner');
   assert.ok(ops[0].downspouts.every(t=>t>=0&&t<=1));
+  setup();roof().edges[0].gutter=true;edge(0);assert.equal(button('Add downspout').disabled,true);
+  assert.match(button('Add downspout').title,/no free/i);
 });
 await test('test_reset_clears_override',async()=>{
   setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=[];edge(0);await press('Reset to automatic');
@@ -133,17 +135,124 @@ await test('test_check_list_lists_each_flag_with_reason',async()=>{
   const spout={id:'b:r:0:0',run:run.id,edge:{roof:'r',edge:0,fraction:.1},top:[0,3,0],flags,
     merged:[{run:'b:other:2',fraction:.75},{run:'b:other:3',fraction:.25}]};
   const items=gutterCheckItems(plan,{runs:[run],spouts:[spout]});
-  for(const flag of flags){const item=items.find(i=>i.flag===flag);assert.ok(item,flag);assert.ok(item.reason.length>15);assert.ok(!item.reason.includes('\n'));assert.equal(item.roof,'r');}
-  const merged=items.find(i=>i.flag==='merged-override');for(const text of ['b:other:2','0.75','b:other:3','0.25'])assert.ok(merged.reason.includes(text),merged.reason);
+  assert.equal(items.length,1,'one physical downspout, one row');
+  for(const flag of flags)assert.ok(items[0].flags.includes(flag),flag);
+  assert.match(items[0].reason,/no downspout location.*building.*short stub/i);
+  assert.ok(!/b:r:|b:other:|0\.75|0\.25/.test(items[0].label+' '+items[0].reason));
+  assert.match(items[0].reason,/merged/i);assert.equal(items[0].roof,'r');
   // Real Check queue consumes builder output and opens the selected roof/downspout.
   roof().edges[0].gutter=true;plan.buildings[0].levels[0].outline=[];
   const selected=[],focused=[],abort=new AbortController();
   const checks=createChecks({},{api:{op:async()=>{},report:e=>{throw e;}},getBuild:()=>null,getModel:()=>plan,getPlan:()=>plan,
     tools:{select:r=>selected.push(r),focusDownspout:r=>focused.push(r)},panel:{checks(){}},canEdit:()=>true,signal:abort.signal,
     flags:{dismiss(){},review(){}},dock:{properties:{clear(){},render(){}}}});
-  const entry=checks.queue().find(i=>i.kind==='gutter');assert.ok(entry,'Check queue contains gutter issues');checks.show(entry);
+  checks.show();const entry=checks.queue().find(i=>i.kind==='gutter');assert.ok(entry,'Check queue contains gutter issues');checks.show(entry);
   const row=document.getElementById('check-card').querySelector('[data-gutter-check]');assert.ok(row,'clickable list of gutter checks');
   click(row);await tick();assert.ok(selected.some(r=>r.id==='r'||r.pieceId==='r'));assert.ok(focused.length);
+  abort.abort();
+});
+await test('test_bulk_actions_disable_noop_batches',async()=>{
+  setup();roofCard();assert.equal(button('Remove all gutters').disabled,true);
+  setup();roof().edges.forEach(e=>e.gutter=true);roofCard();assert.equal(button('Gutters on all eaves').disabled,true);
+  setup();roof().edges[0].gutter=true;roofCard();await press('Gutters on all eaves');assert.deepEqual(ops[0].ops.map(o=>o.edge),[1,2,3]);
+});
+await test('test_merged_locations_use_the_authored_edge_or_porch',async()=>{
+  const {gutterCheckItems}=await import(file('static/twin/editor/gutter_controls.js'));
+  setup();roof().name='Main roof';plan.buildings[0].porches=[{id:'p',name:'Garden porch'}];
+  const runs=[{id:'winner',building:'b',segments:[{roof:'r',edge:0}]},
+    {id:'wrapped',building:'b',segments:[{roof:'r',edge:0},{roof:'r',edge:2}]}];
+  const spout={id:'s',run:'winner',edge:{roof:'r',edge:0,fraction:0},flags:['merged-override'],
+    merged:[{run:'wrapped',roof:'r',edge:2,porch:null,fraction:.3},
+      {run:'wrapped',roof:null,edge:0,porch:'p',fraction:0}]};
+  const [item]=gutterCheckItems(plan,{runs,spouts:[spout]});
+  assert.match(item.reason,/Merged locations: Main roof, back edge, 12 ft from the start; Garden porch, at the start\./);
+});
+await test('test_gutter_check_reason_once_and_header_clear_of_close',async()=>{
+  const {createChecks}=await import(file('static/twin/editor/checks.js'));
+  setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=[.5];plan.buildings[0].levels[0].outline=[];
+  const abort=new AbortController();
+  const checks=createChecks({},{api:{op:async()=>{}},getBuild:()=>null,getModel:()=>plan,getPlan:()=>plan,
+    tools:{select(){},focusDownspout(){}},panel:{checks(){}},canEdit:()=>true,signal:abort.signal,
+    flags:{dismiss(){},review(){}}});
+  try{
+    checks.show();const issues=checks.queue().filter(i=>i.kind==='gutter');assert.equal(issues.length,1);
+    const issue=issues[0];checks.show(issue);
+    const card=document.getElementById('check-card');
+    assert.equal(card.textContent.split(issue.reason).length-1,1,'reason appears only in its issue row');
+    const header=card.querySelector('header');assert.ok(header,'title and Close share a flow header');
+    assert.equal(header.querySelector('h3').textContent,'Check this piece');
+    assert.ok(header.querySelector('[aria-label="Close check"]'),'Close reserves its own space in the header');
+    assert.equal(card.querySelector('p'),null,'no duplicate headline paragraph');
+  }finally{abort.abort();}
+});
+await test('test_edge_typing_survives_plan_swap',async()=>{
+  setup();edge(0);const pitch=control('Pitch');pitch.focus();pitch.value='12.3';
+  plan=structuredClone(plan);plan.buildings[0].name='Renamed';cards.draw();
+  assert.equal(control('Pitch'),pitch);assert.equal(pitch.value,'12.3');
+});
+await test('test_one_shared_content_cache_for_preview_and_confirmed',async()=>{
+  const g=await import(file('static/twin/gutters.js')), {buildTwin}=await import(file('static/twin/twin_generator.js'));
+  const {disposeObject}=await import(file('static/twin/twin_library.js'));
+  const {gutterSnapshot}=await import(file('static/twin/editor/gutter_controls.js'));
+  setup();roof().edges[0].gutter=true;g._gutterPlacementStats.clearCache();
+  const preview=structuredClone(plan),twin=buildTwin(preview,{manifest:{},materials:{}},'low');await twin.ready;
+  const confirmed=structuredClone(plan);assert.equal(gutterSnapshot(confirmed),g.gutterPlacement(preview));
+  assert.equal(g._gutterPlacementStats.calls,1);console.log('PLACEMENT_PREVIEW_CONFIRMED_PASSES',g._gutterPlacementStats.calls);disposeObject(twin.root);
+});
+await test('test_roof_edge_20_moves_make_zero_extra_placement_passes',async()=>{
+  const g=await import(file('static/twin/gutters.js'));
+  setup();roof().edges[0].gutter=true;g._gutterPlacementStats.clearCache();
+  const rig=handleRig();try{
+    const h=rig.handles.handles().find(h=>h.kind==='roof_edge');assert.ok(h);const before=g._gutterPlacementStats.calls;
+    assert.ok(rig.handles.begin(rig.event(h.at)));
+    for(let i=1;i<=20;i++)rig.handles.update(rig.event([h.at[0],h.at[1]-i/10,h.at[2]]));
+    assert.equal(g._gutterPlacementStats.calls-before,0);console.log('PLACEMENT_EXTRA_PASSES_20_MOVES',g._gutterPlacementStats.calls-before);
+    await rig.handles.finish(true);
+  }finally{rig.abort.abort();}
+});
+await test('test_shared_cache_is_bounded_and_empty_placement_is_shared',async()=>{
+  const g=await import(file('static/twin/gutters.js'));
+  setup();g._gutterPlacementStats.clearCache();assert.equal(g.gutterPlacement(plan),g.gutterPlacement(structuredClone(plan)));
+  assert.equal(g._gutterPlacementStats.calls,0);
+  roof().edges[0].gutter=true;const first=structuredClone(plan);g.gutterPlacement(first);
+  for(let i=1;i<=16;i++){const p=structuredClone(plan);p.buildings[0].position=[i*100,0];g.gutterPlacement(p);}
+  assert.equal(g._gutterPlacementStats.calls,17);g.gutterPlacement(first);assert.equal(g._gutterPlacementStats.calls,18,'old object front-cache cannot retain evicted placement');
+});
+await test('test_gutter_acknowledgement_is_not_bake_geometry',async()=>{
+  const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
+  setup();plan.buildings[0].porches=[{id:'p',gutter:true}];
+  const before=authoredGeometry(plan),next=structuredClone(plan);next.buildings[0].porches[0].gutter_ack=['hang'];
+  assert.equal(authoredGeometry(next),before,'acknowledging a note must not dirty lighting');
+});
+await test('test_closed_check_never_computes_and_acknowledgement_leaves_count',async()=>{
+  const g=await import(file('static/twin/gutters.js')), {createChecks}=await import(file('static/twin/editor/checks.js'));
+  setup();roof().edges[0].gutter=true;plan.buildings[0].levels[0].outline=[];g._gutterPlacementStats.clearCache();
+  const abort=new AbortController(),counts=[];
+  const checks=createChecks({},{api:{op:async o=>{
+    ops.push(o);plan=structuredClone(plan);const e=roof().edges[o.edge];e.gutter_ack=o.gutter_ack;
+  }},getBuild:()=>null,getModel:()=>plan,getPlan:()=>plan,tools:{select(){},focusDownspout(){}},panel:{checks:n=>counts.push(n)},canEdit:()=>true,signal:abort.signal,
+    flags:{dismiss(){},review(){}},dock:{properties:{clear(){},render(){}}}});
+  await tick();assert.equal(g._gutterPlacementStats.calls,0);console.log('PLACEMENT_CLOSED_CHECK_PASSES',g._gutterPlacementStats.calls);
+  checks.show();assert.equal(g._gutterPlacementStats.calls,1);const issue=checks.queue().find(i=>i.kind==='gutter');assert.ok(issue);
+  const ok=document.getElementById('check-card').querySelectorAll('button').find(n=>n.textContent==='Looks fine');assert.ok(ok);
+  click(ok);await tick();assert.equal(ops[0].op,'set_roof_edge');assert.ok(ops[0].gutter_ack.includes('hang'));
+  assert.equal(checks.queue().filter(i=>i.kind==='gutter').length,0);assert.equal(counts.at(-1),0);assert.equal(g._gutterPlacementStats.calls,1,'ack metadata reuses placement');
+  checks.dismiss(false);plan=structuredClone(plan);roof().overhang=.5;await tick();
+  assert.equal(g._gutterPlacementStats.calls,1,'closed Check does not place even after geometry changes');
+  abort.abort();
+});
+await test('test_closed_check_counts_renderer_cached_issues_without_placing',async()=>{
+  const g=await import(file('static/twin/gutters.js')), {createChecks}=await import(file('static/twin/editor/checks.js'));
+  setup();roof().edges[0].gutter=true;plan.buildings[0].levels[0].outline=[];g._gutterPlacementStats.clearCache();
+  const abort=new AbortController(),counts=[];
+  const checks=createChecks({},{api:{op:async()=>{}},getBuild:()=>null,getModel:()=>plan,getPlan:()=>plan,
+    tools:{select(){}},panel:{checks:n=>counts.push(n)},canEdit:()=>true,signal:abort.signal,flags:{dismiss(){},review(){}}});
+  assert.equal(g._gutterPlacementStats.calls,0);
+  g.gutterPlacement(structuredClone(plan)); // The renderer publishes an equal-content plan.
+  checks.sync();assert.ok(counts.at(-1)>0,'closed counter consumes the renderer result');
+  assert.equal(g._gutterPlacementStats.calls,1,'Check never adds a placement pass');
+  plan=structuredClone(plan);roof().edges[0].gutter_ack=['no-outside-corner','hang','stub','inner-end','clipped-end','no-safe-landing','no-outlet','outlet-blocked','merged-override'];
+  checks.sync();assert.equal(counts.at(-1),0);assert.equal(g._gutterPlacementStats.calls,1);
   abort.abort();
 });
 await test('test_porch_and_awning_toggle',async()=>{
@@ -155,6 +264,18 @@ await test('test_porch_and_awning_toggle',async()=>{
     cards.draw({pieceId:kind,buildingId:'b'});await toggle();
     assert.deepEqual(ops,[{op:'set',building:'b',id:kind,field:'gutter',value:true}]);
   }
+});
+await test('test_awning_scene_row_omits_ineffective_eye',async()=>{
+  setup();const {createSceneTree}=await import(file('static/twin/editor/scene_tree.js'));
+  plan.buildings[0].roof.extensions=[{id:'shade',kind:'awning',section:'r',level:'L1',name:'Entry awning'}];
+  const treeHost=document.createElement('div');document.body.append(treeHost);
+  const tree=createSceneTree({host:treeHost,getPlan:()=>plan,getSelection:()=>null,select(){},floors:{current:()=> 'b:L1',hidden:()=>false}});
+  const row=treeHost.querySelector('[data-scene-id="shade"]');assert.ok(row);
+  assert.equal(row.querySelector('[data-row-eye]'),null);assert.ok(row.querySelector('[data-scene-select]'));tree.dispose();treeHost.remove();
+});
+await test('test_server_and_ui_eaves_match',async()=>{
+  const {eaveEdgeIndices}=await import(file('static/twin/gutters.js'));
+  for(const sample of input.eaves)assert.deepEqual(eaveEdgeIndices(sample.building,sample.building.roofs[0]),sample.expected);
 });
 await test('test_scene_focus_and_context_remove',async()=>{
   setup();roof().edges[0].gutter=true;
@@ -188,6 +309,16 @@ finish();
 if __name__ == '__main__':
     plan = flatten(house())
     plan['buildings'][0]['levels'][0]['outline'] = plan['buildings'][0]['roofs'][0]['area']
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan})
+    from services import twin_model_roofs
+    samples = []
+    for settings in [('sloped',) * 4, ('sloped', 'gable', 'gable', 'gable'),
+                     ('sloped', 'gable', 'sloped', 'clip'), ('gable', 'sloped', 'clip', 'sloped')]:
+        sample = house()
+        roof = sample['buildings'][0]['roofs'][0]
+        for edge, setting in zip(roof['edges'], settings):
+            edge['setting'] = setting
+        expected = sorted(twin_model_roofs.eave_edge_indices(roof))
+        samples.append({'building': flatten(sample)['buildings'][0], 'expected': expected})
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'eaves': samples})
     print(output, end='')
     sys.exit(code or 0)

@@ -49,6 +49,20 @@ def editor():
             browser._pw.stop()
 
 
+def frame_roof(page, rid):
+    """Outside three-quarter view, including the wall drop and Properties card."""
+    page.wait_for_function('window.__twin.ready')
+    roof = page.evaluate("([bid,rid])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid)", [BID, rid])
+    xs, ys = zip(*roof['area'])
+    x, y = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    span = max(max(xs) - min(xs), max(ys) - min(ys), roof['plate'], 12)
+    # Aim just to the right of the roof so it stays clear of the Properties dock.
+    x, y = x + span * .18, y + span * .18
+    H.look_at(page, BID, [x + span, y - span, roof['plate'] + span * .7],
+              [x, y, roof['plate'] * .65])
+    H.settle(page, 3)
+
+
 def scenario_enable_gutters_drag_downspout_undo():
     with editor() as page:
         roof = page.evaluate("bid=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs[0]", BID)
@@ -65,11 +79,10 @@ def scenario_enable_gutters_drag_downspout_undo():
         page.locator('#scene-floor-actions').get_by_role('button', name='All floors', exact=True).click()
         page.wait_for_function("window.__twin.ready && window.__twin.state.view === 'ext'")
         after_enable = page.evaluate("([bid,rid])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid)", [BID, rid])
+        frame_roof(page, rid)
         handle = page.evaluate("window.__twinEditor.handles().find(h=>h.kind==='downspout')")
         assert handle, 'selected guttered roof must have a downspout handle'
         x, y, z = handle['at']
-        H.look_down(page, BID, x, y, height=z + 55)
-        H.settle(page, 3)
         start = H.screen_of_world(page, x, y, z, BID)
         end_points = [after_enable['area'][handle['edge']], after_enable['area'][(handle['edge'] + 1) % len(after_enable['area'])]]
         target = [a + .6 * (b - a) for a, b in zip(*end_points)]
@@ -91,6 +104,33 @@ def scenario_enable_gutters_drag_downspout_undo():
         assert response.value.status == 200, response.value.text()
         page.wait_for_function("([bid,rid,expected])=>JSON.stringify(window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid).edges)===JSON.stringify(expected)", arg=[BID, rid, after_enable['edges']])
         page.screenshot(path=str(SHOTS / 'downspout-undo.png'))
+        # Produce a real, inspectable gutter issue using the hand controls:
+        # suppress every edge's outlets, then inspect the emergency-stub note.
+        for index, edge in enumerate(after_enable['edges']):
+            if not edge.get('gutter'):
+                continue
+            card.get_by_role('button', name=f'Edge {index + 1}:', exact=False).click()
+            while card.get_by_role('button', name='Remove downspout', exact=False).count():
+                before = card.get_by_role('button', name='Remove downspout', exact=False).count()
+                with page.expect_response(lambda r: r.request.method == 'POST' and r.url.split('?')[0].endswith('/editor/op')) as response:
+                    card.get_by_role('button', name='Remove downspout', exact=False).first.click()
+                assert response.value.status == 200, response.value.text()
+                page.wait_for_function("([bid,rid,i,n])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid).edges[i].downspouts?.length===n", arg=[BID, rid, index, before - 1])
+                H.settle(page, 3)
+            card.get_by_role('button', name='Back to roof', exact=True).click()
+        # The Check walk opens from the "N things to check" count, not the build-pause step button.
+        page.evaluate("document.getElementById('editor-flag-count').click()")
+        check = page.locator('#check-card')
+        check.wait_for(state='visible')
+        for _ in range(100):
+            if check.get_attribute('data-check-kind') == 'gutter':
+                break
+            check.get_by_role('button', name='Skip for now', exact=True).click()
+        assert check.get_attribute('data-check-kind') == 'gutter', 'no gutter issue in Check'
+        assert check.locator('[data-gutter-check]').count() > 0
+        assert check.get_by_role('button', name='Looks fine', exact=True).is_visible()
+        frame_roof(page, rid)
+        page.screenshot(path=str(SHOTS / 'gutter-check-list.png'))
 
 
 if __name__ == '__main__':

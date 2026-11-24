@@ -143,7 +143,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       add('roof_edge', roof.id, [...a.map((v, i) => (v + b[i]) / 2), roof.plate], roof.level, { edge: index });
     });
     if (roof && roof.state !== 'ghost' && roof.edges.some(e => e.gutter)) {
-      const snapshot = gutterSnapshot(gesture?.handle.kind === 'downspout' ? gesture.source : plan());
+      const snapshot = gutterSnapshot(gesture?.handle.kind === 'downspout' ? gesture.source : getPlan());
       const runs = new Set(snapshot.runs.filter(r => r.building === building.id).map(r => r.id));
       for (const spout of snapshot.spouts) {
         if (!runs.has(spout.run) || spout.edge.roof !== roof.id || !Number.isInteger(spout.edge.edge)) continue;

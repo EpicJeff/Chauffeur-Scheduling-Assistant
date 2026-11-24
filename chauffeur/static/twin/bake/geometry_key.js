@@ -1,7 +1,7 @@
 // Streaming geometry identity, shared by atlas and local reach keys.
 // Authored geometry also invalidates bakes when render-only objects/terrain
 // change. Device placement belongs to each light's key, never the atlas.
-const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges']);
+const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges', 'gutter_ack']);
 const finishes = new Set(['materials', 'material', 'plane_materials', 'floor_material', 'ceiling_material', 'wall_material', 'tint']);
 // Keep geometry records intact; only authored finish slots leave the bake domain.
 // In particular an opening's model/asset, a pad's edge kind and every placement

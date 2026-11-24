@@ -437,6 +437,7 @@ def _pieces(building, notes):
                            and ('gutter' not in e or type(e['gutter']) is bool)
                            and (not e.get('gutter') or e['setting'] == 'sloped')
                            and ('downspouts' not in e or twin_plan._downspout_fractions(e['downspouts']))
+                           and ('gutter_ack' not in e or twin_plan._gutter_ack(e['gutter_ack']))
                            for e in edges)
                 or not all(twin_plan._number(roof.get(k)) for k in ('plate', 'overhang'))):
             _note(roof, 'Roof', 'invalid area, edges or dimensions', notes)

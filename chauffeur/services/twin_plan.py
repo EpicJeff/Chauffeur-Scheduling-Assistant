@@ -79,10 +79,23 @@ def _downspout_fractions(value):
             and all(_number(v) and 0 <= v <= 1 for v in value))
 
 
+GUTTER_FLAGS = frozenset(('no-outside-corner', 'hang', 'stub', 'inner-end', 'clipped-end',
+                          'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override'))
+
+
+def _gutter_ack(value):
+    return (isinstance(value, list) and len(value) <= len(GUTTER_FLAGS)
+            and all(isinstance(flag, str) and flag in GUTTER_FLAGS for flag in value)
+            and len(set(value)) == len(value))
+
+
 def _gutter_flag(piece, notes):
     if 'gutter' in piece and type(piece['gutter']) is not bool:
         piece.pop('gutter')
         notes.append(f'Dropped invalid gutter flag on {piece.get("id", "attachment")}; expected a boolean.')
+    if 'gutter_ack' in piece and not _gutter_ack(piece['gutter_ack']):
+        piece.pop('gutter_ack')
+        notes.append(f'Dropped invalid gutter acknowledgement on {piece.get("id", "attachment")}.')
 
 
 def _section_gutters(section, notes):

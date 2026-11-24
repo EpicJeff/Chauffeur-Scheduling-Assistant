@@ -18,7 +18,7 @@ import { siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
 import { drawMoveToButton } from './move_to_action.js';
-import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout } from './gutter_controls.js';
+import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout, gutterLocation } from './gutter_controls.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -158,7 +158,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
-      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
+      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.gutterDisabled !== undefined || b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
         const { input } = state;
@@ -225,11 +225,14 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
           if (!canEdit()) return;
           const b = getPlan().buildings.find(b => b.id === building.id), r = b?.roofs.find(r => r.id === roof.id);
           if (!r) return;
-          const edges = enabled ? eaveEdges(b, r) : r.edges.flatMap((e, i) => e.gutter ? [i] : []);
+          const edges = enabled ? eaveEdges(b, r).filter(i => !r.edges[i].gutter) : r.edges.flatMap((e, i) => e.gutter ? [i] : []);
           if (edges.length) await op({ op: 'batch', ops: edges.map(i => edgeOperation(b.id, r.id, i, { gutter: enabled })) });
           layout = null; draw();
         });
-        host.append(button('Gutters on all eaves', () => allGutters(true)), button('Remove all gutters', () => allGutters(false)));
+        const enable = button('Gutters on all eaves', () => allGutters(true)), remove = button('Remove all gutters', () => allGutters(false));
+        if (!eaveEdges(building, roof).some(i => !roof.edges[i].gutter)) { enable.disabled = true; enable.dataset.gutterDisabled = ''; }
+        if (!roof.edges.some(e => e.gutter)) { remove.disabled = true; remove.dataset.gutterDisabled = ''; }
+        host.append(enable, remove);
         roof.edges.forEach((edge, index) => host.append(button(`Edge ${index + 1}: ${edge.setting === 'clip' ? 'Clipped' : edge.setting === 'gable' ? 'Gable' : 'Sloped'}`, () => {
           edgeIndex = index; layout = null; draw();
         })));
@@ -425,6 +428,10 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const edge = roof.edges[edgeIndex];
     if (!edge) { edgeIndex = null; layout = null; draw(next); return; }
     const signature = `edge:${edgeIndex}:${JSON.stringify([roof.edges, roof.area, record.building.roof?.sections])}:${canEdit()}`;
+    const active = document.activeElement;
+    if (selection?.pieceId === next.pieceId && selection?.buildingId === next.buildingId && canEdit()
+      && host.contains?.(active) && active?.matches?.('input') && active.dataset.edgeBaseline !== undefined
+      && String(active.value) !== active.dataset.edgeBaseline) return;
     selection = next; host.hidden = false;
     dock?.properties.render(host, { crumbs: [...propertyPath(record, getSelection(), select).crumbs, `Edge ${edgeIndex + 1}`], reveal: layout !== signature,
       back: () => { edgeIndex = null; layout = null; draw(); } });
@@ -442,7 +449,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         if (current?.edges[index].gutter && ['gable', 'clip'].includes(change.setting)) {
           if (!await window.promptConfirm('Remove this gutter?', "Changing this edge removes its gutter and its downspout overrides.", 'Remove and change', 'Cancel')) return;
           if (!canEdit()) return;
-          return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: [] }), operation(change)] });
+          return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: null }), operation(change)] });
         }
         // Pitch-only writes still include the current setting for the op contract.
         return op(operation('pitch' in change ? { setting: current?.edges[index].setting || edge.setting, ...change } : change));
@@ -457,24 +464,27 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     if (edge.gutter) {
       const runs = gutterSnapshot(getPlan()).runs.filter(r => r.building === building && r.segments.some(s => s.roof === roof.id && s.edge === index));
       for (const run of runs) {
-        const note = document.createElement('p'); note.textContent = `Gutter run ${run.id}`; host.append(note);
+        const note = document.createElement('p'); note.textContent = gutterLocation(getPlan(), building, { roof: roof.id, edge: index }); note.dataset.gutterRun = run.id; host.append(note);
       }
       const values = downspoutValues(getPlan(), building, roof.id, index);
       const add = button('Add downspout', () => {
-        const next = addDownspout(downspoutValues(getPlan(), building, roof.id, index));
+        const next = addDownspout(getPlan(), building, roof.id, index);
         if (next) return save({ downspouts: next });
       });
-      add.disabled = !canEdit() || values.length >= 8;
+      const next = addDownspout(getPlan(), building, roof.id, index);
+      add.disabled = !canEdit() || !next;
+      if (!next) add.title = values.length >= 8 ? 'At most 8 downspouts per edge.' : 'No free safe corner on this edge.';
       host.append(add, button('Reset to automatic', () => save({ downspouts: null })));
       // Numeric hand path also exposes overrides that placement has merged.
       values.forEach((fraction, i) => {
         const label = document.createElement('label'); label.textContent = `Downspout ${i + 1} fraction`;
         const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '1'; input.step = 'any';
-        input.value = fraction; input.disabled = !canEdit(); input.setAttribute('aria-label', label.textContent);
+        input.value = fraction; input.dataset.edgeBaseline = String(fraction); input.disabled = !canEdit(); input.setAttribute('aria-label', label.textContent);
         input.addEventListener('change', () => {
           const value = Number(input.value);
           if (!input.value.trim() || !Number.isFinite(value) || value < 0 || value > 1) { report(new Error('Choose a fraction from 0 to 1.')); return; }
           const next = downspoutValues(getPlan(), building, roof.id, index); next[i] = value;
+          input.dataset.edgeBaseline = String(input.value);
           save({ downspouts: next });
         });
         label.append(input); host.append(label, button(`Remove downspout ${i + 1}`, () => {
@@ -484,7 +494,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     }
     const label = document.createElement('label'); label.textContent = 'Pitch';
     const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '24'; input.step = 'any';
-    input.setAttribute('aria-label', 'Pitch'); input.value = edge.pitch ?? roof.pitch ?? 6; input.disabled = !canEdit();
+    input.setAttribute('aria-label', 'Pitch'); input.value = edge.pitch ?? roof.pitch ?? 6; input.dataset.edgeBaseline = String(input.value); input.disabled = !canEdit();
     let baseline = String(input.value);
     const savePitch = () => {
       if (String(input.value) === baseline) return;
@@ -492,7 +502,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       if (!input.value.trim() || !Number.isFinite(pitch) || pitch < 0 || pitch > 24) {
         report(new Error('Choose a pitch from 0 to 24 in 12.')); return;
       }
-      baseline = String(input.value); save({ pitch });
+      baseline = String(input.value); input.dataset.edgeBaseline = baseline; save({ pitch });
     };
     input.addEventListener('change', savePitch);
     input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); savePitch(); } });

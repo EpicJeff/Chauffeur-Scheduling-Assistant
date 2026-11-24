@@ -13,7 +13,7 @@ import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry } from '
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
-import { GUTTER, gutterRuns, downspouts } from './gutters.js';
+import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
@@ -521,69 +521,8 @@ function gutterProfile() {
   return _gutterProfileCache;
 }
 
-const GUTTER_BUILDING_FIELDS = ['id', 'position', 'rotation', 'base', 'foundation', 'levels', 'rooms', 'walls', 'joints', 'openings', 'stairs', 'roof', 'roofs', 'porch', 'porches'];
-const GUTTER_SITE_FIELDS = ['hardscape', 'paths', 'beds', 'pool', 'terraces', 'lot', 'edges'];
-const gutterPlacementCache = new Map();
-
-export const _gutterPlacementStats = {
-  calls: 0,
-  hits: 0,
-  lastPlacementMs: 0,
-  lastGeometryMs: 0,
-  reset() { this.calls = 0; this.hits = 0; this.lastPlacementMs = 0; this.lastGeometryMs = 0; },
-  clearCache() { gutterPlacementCache.clear(); this.reset(); },
-};
-
-function buildingHasGutters(b, sections) {
-  return (b.roofs || []).some(r => (r.edges || []).some(e => e?.gutter === true))
-    || sections.some(s => s.gutters && Object.values(s.gutters).some(v => v === true))
-    || allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal')
-    || (b.roof?.extensions || []).some(e => e?.kind === 'awning' && e.gutter === true && e.state !== 'ghost' && e.state !== 'proposal');
-}
-
-function planHasGutters(plan) {
-  return (plan?.buildings || []).some(b => buildingHasGutters(b, b.roof?.sections || []));
-}
-
-function gutterInputKey(plan) {
-  const clean = withoutSurfaceMaterials(plan || {});
-  const canonical = value => {
-    if (Array.isArray(value)) return value.map(canonical);
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])]));
-  };
-  const site = clean.site && Object.fromEntries(GUTTER_SITE_FIELDS.filter(k => k in clean.site).map(k => [k, clean.site[k]]));
-  const buildings = (clean.buildings || []).map(b =>
-    Object.fromEntries(GUTTER_BUILDING_FIELDS.filter(k => k in b).map(k => [k, b[k]]))
-  );
-  const h = fingerprint();
-  h.add(JSON.stringify(canonical({
-    dims: [GUTTER.fasciaFt, GUTTER.fasciaProudFt, GUTTER.profileIn, GUTTER.soffitClearIn, GUTTER.elbowFt],
-    site,
-    buildings,
-  })));
-  return h.key();
-}
-
-function resolveGutterPlacement(plan, timing = null) {
-  if (!planHasGutters(plan)) return { runs: [], spouts: [] };
-  const key = gutterInputKey(plan);
-  if (gutterPlacementCache.has(key)) {
-    _gutterPlacementStats.hits++;
-    return gutterPlacementCache.get(key);
-  }
-  const t0 = performance.now();
-  const runs = gutterRuns(plan, null);
-  const spouts = runs.length ? downspouts(plan, runs) : [];
-  const ms = performance.now() - t0;
-  _gutterPlacementStats.calls++;
-  _gutterPlacementStats.lastPlacementMs += ms;
-  if (timing) timing.gutter_placement_ms = (timing.gutter_placement_ms || 0) + ms;
-  const result = { runs, spouts };
-  if (gutterPlacementCache.size >= 16) gutterPlacementCache.delete(gutterPlacementCache.keys().next().value);
-  gutterPlacementCache.set(key, result);
-  return result;
-}
+export { _gutterPlacementStats } from './gutters.js';
+function resolveGutterPlacement(plan, timing = null) { return gutterPlacement(plan, timing); }
 
 function sliceForBuilding(placement, buildingId) {
   if (!placement || (!placement.runs?.length && !placement.spouts?.length)) return { runs: [], spouts: [] };

@@ -149,6 +149,25 @@ def _section(roof, rect, edges):
     return section
 
 
+def eave_edge_indices(roof: dict) -> set[int]:
+    """Authored indices of the actual horizontal eaves, matching gutters.js.
+
+    Resolve through the same partition and plane_edges as the flat view; a
+    sloped label alone does not make a shed's high side an eave.
+    """
+    result = set()
+    for section in to_sections(roof):
+        for side, index in section['plane_edges'].items():
+            if index is None or roof['edges'][index]['setting'] != 'sloped':
+                continue
+            kind = section['kind']
+            if (kind == 'flat' or kind == 'shed' and section['low_side'] == side
+                    or kind in ('hip', 'gable') and (side[0] != section['ridge']
+                        or section.get('ends', {}).get(side, kind) == 'hip')):
+                result.add(index)
+    return result
+
+
 def to_sections(roof: dict) -> list[dict]:
     """Extend partition rectangles to the boundary, inheriting edge settings."""
     rectangles = _rectangles(roof['area'])

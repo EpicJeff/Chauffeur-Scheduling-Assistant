@@ -112,6 +112,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 /* Dock over the panel's scroll area, leaving Argyle's replies and composer free. */
 #piece-card, :is(#review-card, #check-card) { right: 14px; top: calc(var(--editor-floor-height) + 88px); width: var(--editor-side); max-height: calc(100dvh - var(--editor-floor-height) - 314px); }
 #piece-card h3, :is(#review-card, #check-card) h3 { padding-right: 50px; margin-bottom: 12px; }
+#check-card[data-check-kind="gutter"] > header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+#check-card[data-check-kind="gutter"] > header h3 { flex: 1; min-width: 0; padding-right: 0; margin-bottom: 0; overflow-wrap: anywhere; }
+#check-card[data-check-kind="gutter"] > header button { flex: 0 0 auto; }
 #piece-card > button[aria-label], :is(#review-card, #check-card) > button[aria-label] { position: absolute; right: 8px; top: 8px; }
 .editor-shell[data-reviewing] #piece-card { display: none !important; }
 #editor-flag-count { flex: 0 0 auto; margin: 0 12px; color: var(--editor-accent); }

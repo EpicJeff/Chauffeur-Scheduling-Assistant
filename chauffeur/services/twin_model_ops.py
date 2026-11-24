@@ -1144,10 +1144,13 @@ def _follow_dormers(building, before):
 
 
 def _set_field(building, op, ha_catalogue=None, *, actor='person'):
-    from services import twin_edit, twin_model_bridge
-    if op.get('field') == 'gutter':
-        if type(op.get('value')) is not bool:
+    from services import twin_edit, twin_model_bridge, twin_plan
+    if op.get('field') in ('gutter', 'gutter_ack'):
+        field = op['field']
+        if field == 'gutter' and type(op.get('value')) is not bool:
             raise Refused('Choose a boolean gutter flag.')
+        if field == 'gutter_ack' and not twin_plan._gutter_ack(op.get('value')):
+            raise Refused('Choose gutter flags: ' + '|'.join(sorted(twin_plan.GUTTER_FLAGS)) + '.')
         pid = op.get('id')
         piece = next((p for p in building.get('porches_detail', []) if p.get('id') == pid), None)
         if piece is None:
@@ -1160,7 +1163,9 @@ def _set_field(building, op, ha_catalogue=None, *, actor='person'):
                           if p.get('id') == pid and p.get('kind') == 'awning'), None)
         if piece is None:
             raise Refused('Choose a porch or awning for the gutter flag.')
-        piece['gutter'] = op['value']
+        if field == 'gutter' and piece.get('gutter', False) != op['value']:
+            piece.pop('gutter_ack', None)
+        piece[field] = deepcopy(op['value'])
         if actor == 'person':
             _person(piece)
         return
@@ -1532,12 +1537,21 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         if kind == 'set_roof_edge':
             setting = op.get('setting', edge['setting'])
             if (setting not in ('sloped', 'gable', 'clip')
-                    or not any(k in op for k in ('setting', 'gutter', 'downspouts'))):
+                    or not any(k in op for k in ('setting', 'gutter', 'downspouts', 'gutter_ack'))):
                 raise Refused('Choose a sloped, gable or clipped edge.')
             if 'gutter' in op and type(op['gutter']) is not bool:
                 raise Refused('Choose a boolean gutter flag.')
             if op.get('gutter', edge.get('gutter', False)) and setting != 'sloped':
                 raise Refused('Gutters need a sloped eave, not a gable or clipped edge.')
+            if op.get('gutter') is True:
+                probe = deepcopy(roof)
+                probe['edges'][index]['setting'] = setting
+                if index not in roofs.eave_edge_indices(probe):
+                    raise Refused('Gutters need an eave; this edge has no eave.')
+            if 'gutter_ack' in op:
+                from services import twin_plan
+                if not twin_plan._gutter_ack(op['gutter_ack']):
+                    raise Refused('Choose gutter flags: ' + '|'.join(sorted(twin_plan.GUTTER_FLAGS)) + '.')
             if 'downspouts' in op and op['downspouts'] is not None:
                 from services import twin_plan
                 if not twin_plan._downspout_fractions(op['downspouts']):
@@ -1545,6 +1559,12 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
             if 'setting' in op and setting == 'sloped' and any(o.get('gable') == {'roof': roof['id'], 'edge': index}
                                                 for o in building['openings']):
                 raise Refused('A window sits in that gable; move or delete it first.')
+            drainage_changed = any(k in op and op[k] != edge.get(k, False if k == 'gutter' else None)
+                                   for k in ('gutter', 'downspouts'))
+            if drainage_changed:
+                edge.pop('gutter_ack', None)
+            elif 'gutter_ack' in op:
+                edge['gutter_ack'] = deepcopy(op['gutter_ack'])
             edge['setting'] = setting
             if 'gutter' in op:
                 edge['gutter'] = op['gutter']

@@ -447,7 +447,8 @@ await test('test_colliding_authored_overrides_record_the_merged_request',()=>{
   {...clone(whole),id:'z-left',segments:whole.segments.filter(s=>s.edge===3),length:20}];
  const ss=G.downspouts(p,runs);assert.equal(ss.length,1);assert.equal(ss[0].source,'override');assert.equal(ss[0].run,'a-front');
  assert.ok(ss[0].flags.includes('merged-override'));
- assert.deepEqual(ss[0].merged,[{run:'z-left',fraction:.85}],'preserve the authored fraction before corner snapping');
+ assert.deepEqual(ss[0].merged,[{run:'z-left',fraction:.85,roof:'r',edge:3,porch:null}],
+  'preserve the authored edge and fraction before corner snapping');
  assert.equal(runs[1].drainsTo,ss[0].id);assert.equal(ss[0].share,1);
  assert.deepEqual(G.downspouts(p,clone(runs).reverse()),ss);assert.deepEqual(G.downspouts(p,runs),ss);
  assert.deepEqual(p.buildings[0].roofs[0].edges[3].downspouts,[.85]);

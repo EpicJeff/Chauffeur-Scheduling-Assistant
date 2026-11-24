@@ -1,6 +1,7 @@
 import { createFlags } from './flags.js';
 import { report } from './api.js';
-import { gutterCheckItems } from './gutter_controls.js';
+import { gutterCheckItems, gutterAcknowledgement, gutterOwner } from './gutter_controls.js';
+import { cachedGutterPlacement } from '../gutters.js';
 
 const key = item => !item ? '' : item.kind === 'pause' ? `pause:${item.build}:${item.id || item.step}`
   : item.kind === 'flag' ? `flag:${item.building}:${item.index}:${item.flag.text}` : `proposal:${item.building}:${item.id}`;
@@ -27,7 +28,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   // The queue opens from Check it (or when a build pauses), never by itself on load: opening it
   // moves the camera and the floor, which must not happen before the person asks.
   let rows = [], selected = null, signature = '', busy = false, dismissed = true, framing = false, emptyOpen = false, frame;
-  let seenModel, seenBuild, seenPlan, waiting = false;
+  let seenModel, seenBuild, seenPlan, waiting = false, gutterRows = [];
   const sceneHost = view.renderer3?.domElement?.parentElement;
   const isHidden = () => dismissed || !selected && !emptyOpen || !canEdit();
   // While a flag or proposal check is open its card takes the piece card's slot, so the piece card
@@ -36,12 +37,20 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     ?.toggleAttribute('data-reviewing', !card.hidden && selected?.kind !== 'pause');
   const items = () => {
     const build = getBuild(), buildings = getModel()?.buildings || [];
+    // Closed Check only consumes an existing renderer result. Opening Check
+    // can compute a missing result through the same shared placement cache.
+    const cached = cachedGutterPlacement(getPlan());
+    if (cached || !dismissed || build?.state === 'paused') gutterRows = cached
+      ? gutterCheckItems(getPlan(), cached) : gutterCheckItems(getPlan());
     return [
       ...(build?.state === 'paused' && build.pause ? [{ ...build.pause, kind: 'pause', build: build.id,
         stepInfo: build.steps?.find(s => s.id === build.pause.step) }] : []),
       ...buildings.flatMap(b => (b.flags || []).map((flag, index) => ({ kind: 'flag', building: b.id, index, flag }))),
       ...buildings.flatMap(b => (b.proposals || []).map(p => ({ ...p, kind: 'proposal', building: b.id, id: p.id || p.piece.id }))),
-      ...gutterCheckItems(getPlan()),
+      ...gutterRows.filter(item => {
+        const record = gutterOwner(getPlan(), item.building, item)?.record;
+        return record?.gutter && item.flags.some(flag => !record.gutter_ack?.includes(flag));
+      }),
     ];
   };
   function button(text, action, always = false) {
@@ -92,20 +101,25 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
       // The pause card says what was read and holds its adjustments (drag, pins, turn): it sits under
       // the title, before the answers, and its own title and reason are not repeated above it.
       card.append(title, close, adjustment); adjustment.hidden = false;
+    } else if (item.kind === 'gutter') {
+      // Keep Close in normal flow, above the issue rows, so long reasons have
+      // the full card width and each reason appears only in its row.
+      const header = document.createElement('header'); header.append(title, close); card.append(header);
     } else {
       const text = document.createElement('p');
       text.textContent = item.kind === 'pause' ? item.why || 'Check this part of your house.'
-        : item.kind === 'gutter' ? item.reason : item.kind === 'flag' ? item.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
+        : item.kind === 'flag' ? item.flag.text : 'A new reading suggests a change. Your version stays until you choose Use this.';
       card.append(title, close, text);
     }
     if (item.kind === 'gutter') {
       // Use the Check card's existing button builder, with one plain reason per
       // run/downspout issue. Geometry-derived issues disappear when corrected.
       for (const entry of rows.filter(r => r.kind === 'gutter')) {
-        const row = button(`${entry.run}: ${entry.reason}`, () => { selected = entry; focus(); draw(); });
+        const row = button(`${entry.label}: ${entry.reason}`, () => { selected = entry; focus(); draw(); });
         row.dataset.gutterCheck = entry.id; row.setAttribute('aria-pressed', String(key(entry) === key(item))); card.append(row);
       }
-      card.append(button('Fix it', () => { focus(); dismiss(); }));
+      card.append(button('Looks fine', () => save(() => op(gutterAcknowledgement(getPlan(), item)))),
+        button('Fix it', () => { focus(); dismiss(); }));
     } else if (item.kind === 'proposal') {
       card.append(button('Use this', () => save(() => op({ op: 'accept_proposal', building: item.building, id: item.id }))),
         button('Dismiss', () => save(() => op({ op: 'dismiss_proposal', building: item.building, id: item.id }))));
@@ -179,12 +193,12 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
     panel.checks(rows.length, show); draw();
   }
   function next() {
-    sync(); const index = rows.findIndex(r => key(r) === key(selected));
+    dismissed = false; sync(); const index = rows.findIndex(r => key(r) === key(selected));
     selected = rows[(index + 1) % rows.length] || null; dismissed = false; focus(); draw();
     return selected;
   }
   function show(item) {
-    sync();
+    dismissed = false; sync();
     if (item) selected = rows.find(r => r.kind === item.kind && r.building === item.building && r.id === item.id) || selected;
     dismissed = false; emptyOpen = true; focus(); draw();
   }
@@ -211,6 +225,7 @@ export function createChecks(view, { api, getBuild, getModel, getPlan, tools, pa
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !card.hidden) dismiss();
   }, { signal });
+  sceneHost?.addEventListener('twinrebuilt', sync, { signal });
   sync(); frame = requestAnimationFrame(tick);
   return { queue: () => { sync(); return rows; }, current: () => { sync(); return selected; }, next, show, dismiss, sync };
 }

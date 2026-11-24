@@ -33,6 +33,53 @@ def roof_of(model):
 
 
 class GutterModel(unittest.TestCase):
+    def test_gutter_ack_validated_and_cleared_on_drainage_change(self):
+        model, _ = ops.apply(house(), edge_op(gutter=True))
+        model, _ = ops.apply(model, edge_op(gutter_ack=['hang', 'stub']))
+        self.assertEqual(roof_of(model)['edges'][0]['gutter_ack'], ['hang', 'stub'])
+        self.assertEqual(roof_of(twin_model.normalize(model)[0])['edges'][0]['gutter_ack'], ['hang', 'stub'])
+        for bad in (True, ['unknown'], ['hang', 'hang'], [1]):
+            with self.subTest(bad=bad), self.assertRaises(ops.Refused) as refused:
+                ops.apply(model, edge_op(gutter_ack=bad))
+            for flag in twin_plan.GUTTER_FLAGS:
+                self.assertIn(flag, str(refused.exception))
+        for change in ({'gutter': False}, {'downspouts': [.2]}):
+            changed, _ = ops.apply(model, edge_op(**change))
+            self.assertNotIn('gutter_ack', roof_of(changed)['edges'][0])
+        invalid = copy.deepcopy(model)
+        roof_of(invalid)['edges'][0]['gutter_ack'] = ['unknown']
+        self.assertIn('Roof r: invalid area, edges or dimensions.', twin_model.normalize(invalid)[1])
+
+    def test_gable_to_sloped_with_gutter_in_one_op(self):
+        model = house()
+        roof_of(model)['edges'][1]['setting'] = 'gable'
+        roof_of(model)['edges'][3]['setting'] = 'gable'
+        result, _ = ops.apply(model, dict(edge_op(setting='sloped', gutter=True), edge=1))
+        self.assertEqual(roof_of(result)['edges'][1]['setting'], 'sloped')
+        self.assertTrue(roof_of(result)['edges'][1]['gutter'])
+        self.assertEqual(roof_of(model)['edges'][1]['setting'], 'gable')
+
+    def test_shed_high_edge_cannot_gain_a_gutter(self):
+        model = house()
+        model['buildings'][0]['roofs'][0] = roofs.from_section(dict(
+            id='r', kind='shed', low_side='y0', pitch=6, rect=[0, 0, 40, 30],
+            plate=10, overhang=1, level='L1'))
+        self.assertEqual(roofs.eave_edge_indices(roof_of(model)), {0})
+        with self.assertRaises(ops.Refused):
+            ops.apply(model, dict(edge_op(gutter=True), edge=2))
+        result, _ = ops.apply(model, edge_op(gutter=True))
+        self.assertTrue(roof_of(result)['edges'][0]['gutter'])
+
+    def test_rake_reset_restores_automatic_after_reenable_and_undo(self):
+        model, _ = ops.apply(house(), edge_op(gutter=True, downspouts=[.3]))
+        original = copy.deepcopy(model)
+        changed, undo = ops.apply(model, {'op': 'batch', 'ops': [edge_op(gutter=False, downspouts=None), edge_op(setting='gable')]})
+        self.assertNotIn('downspouts', roof_of(changed)['edges'][0])
+        enabled, _ = ops.apply(changed, edge_op(setting='sloped'))
+        enabled, _ = ops.apply(enabled, edge_op(gutter=True))
+        self.assertNotIn('downspouts', roof_of(enabled)['edges'][0])
+        self.assertEqual(model, original, 'batch leaves the undo source intact')
+
     def test_set_roof_edge_gutter_only(self):
         original = house()
         result, _ = ops.apply(original, edge_op(gutter=True))
@@ -315,11 +362,16 @@ class GutterModel(unittest.TestCase):
                                 depth=4, eave=8, pitch=3)]
         for pid in ('p', 'a'):
             model, _ = ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=True))
+            model, _ = ops.apply(model, dict(op='set', building='b', id=pid, field='gutter_ack', value=['hang', 'stub']))
+            with self.assertRaises(ops.Refused):
+                ops.apply(model, dict(op='set', building='b', id=pid, field='gutter_ack', value=['unknown']))
             with self.assertRaises(ops.Refused):
                 ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=1))
         b = bridge.flatten(model)['buildings'][0]
         self.assertTrue(b['porches'][0]['gutter'])
         self.assertTrue(b['roof']['extensions'][0]['gutter'])
+        self.assertEqual(b['porches'][0]['gutter_ack'], ['hang', 'stub'])
+        self.assertEqual(b['roof']['extensions'][0]['gutter_ack'], ['hang', 'stub'])
         roundtrip = bridge.assemble(twin_plan.normalize(dict(units='ft', buildings=[b], site={}))[0])[0]
         self.assertTrue(roundtrip['buildings'][0]['porches_detail'][0]['gutter'])
         self.assertTrue(roundtrip['buildings'][0]['extensions'][0]['gutter'])
@@ -330,6 +382,8 @@ class GutterModel(unittest.TestCase):
         b = bridge.flatten(model)['buildings'][0]
         self.assertFalse(b['porches'][0]['gutter'])
         self.assertFalse(b['roof']['extensions'][0]['gutter'])
+        self.assertNotIn('gutter_ack', b['porches'][0])
+        self.assertNotIn('gutter_ack', b['roof']['extensions'][0])
 
     def test_attachment_flags_validated(self):
         model = house()
@@ -401,6 +455,20 @@ class GutterRoute(unittest.TestCase):
                          dict(y0=True, x1=True, y1=True, x0=True))
         self.store.revert(before)
         self.assertEqual(self.store.current_model(), original)
+
+    def test_rake_batch_undo_restores_overrides_and_reenable_is_automatic(self):
+        self.load()
+        original = self.post(edge_op(gutter=True, downspouts=[.3]))['model']
+        before, count = self.store.current_id(), len(self.store.rounds())
+        batch = dict(op='batch', ops=[edge_op(gutter=False, downspouts=None), edge_op(setting='gable')])
+        self.post(batch)
+        self.assertEqual(len(self.store.rounds()), count + 1)
+        self.store.revert(before)
+        self.assertEqual(self.store.current_model(), original)
+        self.post(batch)
+        self.post(edge_op(setting='sloped'))
+        result = self.post(edge_op(gutter=True))['model']
+        self.assertNotIn('downspouts', roof_of(result)['edges'][0])
 
     def test_route_override_reset_and_refusal_are_atomic(self):
         self.load()

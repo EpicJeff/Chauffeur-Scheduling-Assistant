@@ -110,11 +110,13 @@ def scenario_tool_is_registered_and_never_runs_from_a_mission():
 
 def scenario_tool_documents_gutter_controls():
     description = agent_tools_v2.TOOL_SCHEMAS['house_design']['properties']['edit']['description']
-    for text in ('gutter?:boolean', 'downspouts?:[fractions 0..1, maximum 8]',
-                 'setting optional for gutter/downspouts', "authored edge's first vertex",
-                 '[]=none', 'null=automatic', 'Drag/add/remove replace the list',
-                 'gutter:false,downspouts:[]', 'one undo', 'Porch/awning', 'field:gutter'):
+    for text in ('gutter?:bool', "<=8 fractions from the edge's first point", 'replaces list',
+                 '[]=none', 'null=auto', 'gutter:false+downspouts:null', 'porch/awning gutter: set field:gutter',
+                 'gutter_ack:[flags]', 'changing gutter/downspouts clears acknowledgement'):
         check(text in description, f'gutter edit contract is missing: {text}')
+    for flag in ('hang', 'stub', 'no-outside-corner', 'inner-end', 'clipped-end',
+                 'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override'):
+        check(flag in description, f'gutter acknowledgement flag is missing: {flag}')
 
 
 def scenario_tool_documents_connected_operation_arguments():

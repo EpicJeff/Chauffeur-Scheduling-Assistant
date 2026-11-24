@@ -1,6 +1,6 @@
 // Rebuild-only plan geometry. No renderer, DOM, HA state, clocks or randomness.
 // Contract: gutterRuns -> {id,building,segments,length,corners,drainsTo?}; downspouts ->
-// {id,run,edge,top,mount,path,outlet,share,source,flags,merged?}. Plan distances are ft;
+// {id,run,edge,top,mount,path,outlet,share,source,flags,authoredFraction?,merged?}. Plan distances are ft;
 // segment/corner/path positions are world metres; segment.outward is local XY.
 // top is the outlet at the gutter bottom, centred half the profile width
 // outward of the fascia face; path[0] equals top. A vertical outlet drop
@@ -39,7 +39,8 @@
 // Each group uses one receiving-floor band: the lowest surface over its faces.
 // Stacked eaves at different heights stay distinct. Authored overrides precede
 // automatic claims. Colliding overrides keep one spout, flagged 'merged-override',
-// with merged: [{run, fraction}] recording each dropped run and authored fraction.
+// with merged: [{run, fraction, roof, edge, porch}] recording each dropped run,
+// authored fraction and owning edge/attachment.
 // Override records also carry authoredFraction: the stored request before it
 // snaps to edge.fraction. Editors use it to move/remove the winning request
 // without deleting another override that snaps to the same corner.
@@ -53,6 +54,7 @@ import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSam
 import { roofMesh, endKind, heightAt, sectionHeight } from './twin_roof.js';
 import { allPorches } from './twin_generator.js';
 import { FASCIA } from './trim_dims.js';
+import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { buildingBase, inPolygon, edgeDistance } from './twin_ground.js';
 import { pathOutline, pathSurfacePolygons } from './path_shapes.js';
 import { paverSettings } from './paver_layout.js';
@@ -60,6 +62,86 @@ import { paverSettings } from './paver_layout.js';
 export const GUTTER = { runJoinFt: 0.3, runJoinHeightIn: 2, spanFt: 35, maxOverhangFt: 4,
   openingClearFt: 1, doorAvoidFt: 6, elbowFt: 0.5, profileIn: 5, spoutIn: [2, 3],
   fasciaFt: FASCIA.depthFt, fasciaProudFt: FASCIA.proudFt, soffitClearIn: 1 };
+
+const GUTTER_BUILDING_FIELDS = ['id', 'position', 'rotation', 'base', 'foundation', 'levels', 'rooms', 'walls', 'joints', 'openings', 'stairs', 'roof', 'roofs', 'porch', 'porches'];
+const GUTTER_SITE_FIELDS = ['hardscape', 'paths', 'beds', 'pool', 'terraces', 'lot', 'edges'];
+const gutterPlacementCache = new Map();
+const emptyPlacement = { runs: [], spouts: [] };
+let objectKeys = new WeakMap();
+
+export const _gutterPlacementStats = {
+  calls: 0,
+  hits: 0,
+  lastPlacementMs: 0,
+  lastGeometryMs: 0,
+  reset() { this.calls = 0; this.hits = 0; this.lastPlacementMs = 0; this.lastGeometryMs = 0; },
+  clearCache() { gutterPlacementCache.clear(); objectKeys = new WeakMap(); this.reset(); },
+};
+
+export function buildingHasGutters(b, sections) {
+  return (b.roofs || []).some(r => (r.edges || []).some(e => e?.gutter === true))
+    || sections.some(s => s.gutters && Object.values(s.gutters).some(v => v === true))
+    || allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal')
+    || (b.roof?.extensions || []).some(e => e?.kind === 'awning' && e.gutter === true && e.state !== 'ghost' && e.state !== 'proposal');
+}
+
+function planHasGutters(plan) {
+  return (plan?.buildings || []).some(b => buildingHasGutters(b, b.roof?.sections || []));
+}
+
+function gutterInputKey(plan) {
+  const clean = withoutSurfaceMaterials(plan || {});
+  const canonical = value => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.keys(value).sort().filter(k => !['gutter_ack', 'src'].includes(k)).map(k => [k, canonical(value[k])]));
+  };
+  const site = clean.site && Object.fromEntries(GUTTER_SITE_FIELDS.filter(k => k in clean.site).map(k => [k, clean.site[k]]));
+  const buildings = (clean.buildings || []).map(b =>
+    Object.fromEntries(GUTTER_BUILDING_FIELDS.filter(k => k in b).map(k => [k, b[k]]))
+  );
+  const h = fingerprint();
+  h.add(JSON.stringify(canonical({
+    dims: [GUTTER, FASCIA],
+    site,
+    buildings,
+  })));
+  return h.key();
+}
+
+function gutterMemoKey(plan) {
+  const dims = JSON.stringify([GUTTER, FASCIA]);
+  let memo = objectKeys.get(plan);
+  if (!memo || memo.dims !== dims) { memo = { dims, key: gutterInputKey(plan) }; objectKeys.set(plan, memo); }
+  return memo.key;
+}
+
+// Closed Check may read the renderer's result, but cannot start placement.
+// This reads the same bounded memo; it owns no second cache or result.
+export function cachedGutterPlacement(plan) {
+  return !planHasGutters(plan) ? emptyPlacement : gutterPlacementCache.get(gutterMemoKey(plan)) || null;
+}
+
+export function gutterPlacement(plan, timing = null) {
+  if (!planHasGutters(plan)) return emptyPlacement;
+  const key = gutterMemoKey(plan);
+  if (gutterPlacementCache.has(key)) {
+    _gutterPlacementStats.hits++;
+    return gutterPlacementCache.get(key);
+  }
+  const t0 = performance.now();
+  const runs = gutterRuns(plan, null);
+  const spouts = runs.length ? downspouts(plan, runs) : [];
+  const ms = performance.now() - t0;
+  _gutterPlacementStats.calls++;
+  _gutterPlacementStats.lastPlacementMs += ms;
+  if (timing) timing.gutter_placement_ms = (timing.gutter_placement_ms || 0) + ms;
+  const result = { runs, spouts };
+  if (gutterPlacementCache.size >= 16) gutterPlacementCache.delete(gutterPlacementCache.keys().next().value);
+  gutterPlacementCache.set(key, result);
+  return result;
+}
+
 
 const FT=.3048, EPS=1e-5, SIDES=['y0','x1','y1','x0'];
 const add=(a,b)=>a.length===2?[a[0]+b[0],a[1]+b[1]]:[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
@@ -72,6 +154,10 @@ const clamp=x=>Math.max(0,Math.min(1,x));
 const key=p=>p.map(v=>v.toFixed(5)).join(',');
 const compare=(a,b)=>a<b?-1:a>b?1:0;
 const runContexts=new WeakMap();
+const candidateSets=new WeakMap();
+export function gutterCandidates(plan) {
+  return candidateSets.get(gutterPlacement(plan).runs) || [];
+}
 const placementKey=plan=>JSON.stringify([plan.buildings,plan.site]);
 const settled=p=>p.state!=='ghost'&&p.state!=='proposal';
 const endpointsTouch=(a,p,b,q,originA,originB)=>Math.hypot(p[0]-q[0],p[2]-q[2])<=GUTTER.runJoinFt*FT+EPS
@@ -159,6 +245,11 @@ function projection(p,a,b){const v=sub(b,a),t=clamp(dot(sub(p,a),v)/(dot(v,v)||1
 function eaveSide(s,side){
   return SIDES.includes(side)&&(s.kind==='flat'||s.kind==='shed'&&s.low_side===side
     ||['hip','gable'].includes(s.kind)&&(side[0]!==s.ridge||endKind(s,side)==='hip'));
+}
+export function eaveEdgeIndices(building, roof) {
+  const sections = building.roof?.sections?.filter(s => (s.roof || s.id) === roof.id) || [];
+  return roof.edges.flatMap((edge, index) => edge.setting === 'sloped' && (!sections.length || sections.some(s =>
+    SIDES.some(side => (s.plane_edges ? s.plane_edges[side] : SIDES.indexOf(side)) === index && eaveSide(s, side)))) ? [index] : []);
 }
 function source(b,s,side){
   const id=s.roof||s.id,edge=s.plane_edges? s.plane_edges[side]:SIDES.indexOf(side),r=b.roofs?.find(r=>r.id===id);
@@ -635,7 +726,8 @@ export function downspouts(plan={},runs=[]){
   for(const claim of claims){const id=globalKey(claim.state,claim.c),winner=claimed.get(id);
     if(!winner)claimed.set(id,claim);
     else if(winner.c.source==='override'&&claim.c.source==='override'&&winner.state!==claim.state){
-      (winner.c.merged??=[]).push({run:claim.state.run.id,fraction:claim.c.overrideFraction});
+      const {roof,edge,porch}=claim.c.segment;
+      (winner.c.merged??=[]).push({run:claim.state.run.id,fraction:claim.c.overrideFraction,roof,edge,porch});
     }
   }
   for(const state of compiled){const desired=state.selected.length;
@@ -678,5 +770,12 @@ export function downspouts(plan={},runs=[]){
   }
   for(const state of compiled){const outlets=output.filter(s=>s.run===state.run.id),total=outlets.reduce((n,s)=>n+weights.get(s.id),0);
     for(const s of outlets)s.share=weights.get(s.id)/total;}
+  // Retain the builder's actual safe candidates for editor Add, without a
+  // second placement pass or a second copy of the corner/mounting rules.
+  candidateSets.set(runs, compiled.flatMap(state => state.valid.filter(c => c.value.mount !== 'hang'
+    && !c.value.flags.some(f => ['no-safe-landing', 'outlet-blocked'].includes(f))).map(c => ({
+      building: state.run.building, roof: c.segment.roof, edge: c.segment.edge, porch: c.segment.porch,
+      fraction: edgeFraction(state.ctx, c.segment, c.at), occupied: claimed.has(globalKey(state, c)),
+    }))));
   return output;
 }
