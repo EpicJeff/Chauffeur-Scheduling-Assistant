@@ -23,127 +23,7 @@ NOON = '2026-06-21T12:00:00Z'
 SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\elbow')
 
 
-def synthetic_plan(gutters_on=True):
-    """A synthetic gable+porch house with a hip wing so corners, mitres and downspouts show clearly."""
-    poly = [[0, 0], [36, 0], [36, 22], [0, 22]]
-    walls = [
-        {'id': f'w{i}', 'from': poly[i], 'to': poly[(i + 1) % 4],
-         'exterior': True, 'height': 10, 'thickness': 0.5, 'level': 'L1'}
-        for i in range(4)
-    ]
-    edges = [
-        {'setting': 'sloped', 'pitch': 6, **({'gutter': True} if gutters_on else {})},
-        {'setting': 'gable', 'pitch': 6},
-        {'setting': 'sloped', 'pitch': 6, **({'gutter': True} if gutters_on else {})},
-        {'setting': 'gable', 'pitch': 6},
-    ]
-    section = {
-        'id': 'r1', 'roof': 'r1', 'kind': 'gable', 'ridge': 'x', 'pitch': 6,
-        'plate': 10, 'overhang': 1.25, 'level': 'L1', 'rect': [0, 0, 36, 22],
-        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-        **({'gutters': {'y0': True, 'y1': True}} if gutters_on else {}),
-    }
-    porch_section = {
-        'id': 'r2', 'roof': 'r2', 'kind': 'shed', 'low_side': 'y0', 'pitch': 3,
-        'plate': 8.5, 'overhang': 1, 'level': 'L1', 'rect': [6, -8, 22, 0],
-        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-    }
-    porch_roof = {
-        'id': 'r2', 'area': [[6, -8], [22, -8], [22, 0], [6, 0]], 'overhang': 1,
-        'edges': [
-            {'setting': 'sloped', 'pitch': 3},
-            {'setting': 'gable', 'pitch': 3},
-            {'setting': 'gable', 'pitch': 3},
-            {'setting': 'gable', 'pitch': 3},
-        ],
-    }
-    building = {
-        'id': 'synth-house', 'name': 'Main House', 'position': [0, 0], 'base': 0, 'rotation': 0,
-        'levels': [{'id': 'L1', 'name': 'Ground', 'elevation': 0, 'ceiling': 10, 'outline': poly}],
-        'rooms': [{'id': 'rm1', 'name': 'Living', 'level': 'L1', 'polygon': poly}],
-        'walls': walls,
-        'openings': [
-            {'id': 'door1', 'wall': 'w0', 'at': 14, 'width': 3.5, 'sill': 0, 'head': 7, 'kind': 'door'},
-            {'id': 'win1', 'wall': 'w0', 'at': 27, 'width': 4, 'sill': 3, 'head': 7, 'kind': 'window'},
-        ],
-        'porches': [{
-            'id': 'front-porch', 'polygon': [[6, -8], [22, -8], [22, 0], [6, 0]],
-            'floor': 0.5, 'columns': [{'at': [6.5, -7.5], 'size': 0.5}, {'at': [21.5, -7.5], 'size': 0.5}],
-            **({'gutter': True} if gutters_on else {}),
-        }],
-        'roof': {'sections': [section, porch_section], 'extensions': []},
-        'roofs': [{'id': 'r1', 'area': poly, 'overhang': 1.25, 'edges': edges}, porch_roof],
-    }
-    shed_poly = [[0, 0], [14, 0], [14, 12], [0, 12]]
-    shed_walls = [
-        {'id': f'sw{i}', 'from': shed_poly[i], 'to': shed_poly[(i + 1) % 4],
-         'exterior': True, 'height': 9, 'thickness': 0.5, 'level': 'L1'}
-        for i in range(4)
-    ]
-    shed_section = {
-        'id': 'sr1', 'roof': 'sr1', 'kind': 'gable', 'ridge': 'x', 'pitch': 5,
-        'plate': 9, 'overhang': 1, 'level': 'L1', 'rect': [0, 0, 14, 12],
-        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-        **({'gutters': {'y0': True, 'y1': True}} if gutters_on else {}),
-    }
-    shed_roof = {
-        'id': 'sr1', 'area': shed_poly, 'overhang': 1,
-        'edges': [
-            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
-            {'setting': 'gable', 'pitch': 5},
-            {'setting': 'sloped', 'pitch': 5, **({'gutter': True} if gutters_on else {})},
-            {'setting': 'gable', 'pitch': 5},
-        ],
-    }
-    # Side carport flat roof + jammed upper shed eave right above it (0.96 in gap) so the live fixture includes an outlet-blocked spill.
-    carport_section = {
-        'id': 'sr_low', 'roof': 'sr_low', 'kind': 'flat', 'ridge': 'x', 'pitch': 0,
-        'plate': 8.32, 'overhang': 0, 'level': 'L1', 'rect': [14, 0, 21, 12],
-        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-    }
-    carport_roof = {
-        'id': 'sr_low', 'area': [[14, 0], [21, 0], [21, 12], [14, 12]], 'overhang': 0,
-        'edges': [{'setting': 'gable', 'pitch': 0} for _ in range(4)],
-    }
-    jammed_section = {
-        'id': 'sr_jam', 'roof': 'sr_jam', 'kind': 'shed', 'low_side': 'x1', 'pitch': 4,
-        'plate': 9.15, 'overhang': 1, 'level': 'L1', 'rect': [14, 2, 16, 10],
-        'plane_edges': {'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3},
-        **({'gutters': {'x1': True}} if gutters_on else {}),
-    }
-    jammed_roof = {
-        'id': 'sr_jam', 'area': [[14, 2], [16, 2], [16, 10], [14, 10]], 'overhang': 1,
-        'edges': [
-            {'setting': 'gable', 'pitch': 4},
-            {'setting': 'sloped', 'pitch': 4, **({'gutter': True} if gutters_on else {})},
-            {'setting': 'gable', 'pitch': 4},
-            {'setting': 'gable', 'pitch': 4},
-        ],
-    }
-    shed = {
-        'id': 'garden-shed', 'name': 'Garden Shed', 'position': [42, 4], 'base': 0, 'rotation': 0,
-        'levels': [{'id': 'L1', 'name': 'Ground', 'elevation': 0, 'ceiling': 9, 'outline': shed_poly}],
-        'rooms': [{'id': 'srm1', 'name': 'Storage', 'level': 'L1', 'polygon': shed_poly}],
-        'walls': shed_walls,
-        'openings': [{'id': 'sdoor', 'wall': 'sw0', 'at': 7, 'width': 3, 'sill': 0, 'head': 7, 'kind': 'door'}],
-        'porches': [],
-        'roof': {'sections': [shed_section, carport_section, jammed_section], 'extensions': []},
-        'roofs': [shed_roof, carport_roof, jammed_roof],
-    }
-    return {
-        'units': 'ft',
-        'buildings': [building, shed],
-        'site': {
-            'lot': [[-25, -30], [75, -30], [75, 45], [-25, 45]],
-            'hardscape': [
-                {'id': 'walk1', 'kind': 'walkway', 'polygon': [[12, -25], [16, -25], [16, -8], [12, -8]]},
-            ],
-            'beds': [
-                {'id': 'bed1', 'polygon': [[-3, -4], [5, -4], [5, 0], [-3, 0]], 'elevation': 0},
-                {'id': 'bed2', 'polygon': [[31, -4], [39, -4], [39, 0], [31, 0]], 'elevation': 0},
-            ],
-        },
-    }
+from tools.demo_seed import synthetic_plan, GUTTER_OUTLET_CAMERA  # shared synthetic fixture
 
 
 def seed_plan(plan):
@@ -346,20 +226,7 @@ def scenario_gutters_pours_and_programs():
             page.screenshot(path=str(SHOTS_DIR / 'building_focus.png'))
 
             # Close-up 1: <= 2.2 m from front-right corner gutter bottom outlet & offset elbows (particles off).
-            page.evaluate("""() => {
-              const v = window.__twin;
-              v.levels.go({ level: 'house' }, { immediate: true });
-              if (v.precipitation?.group) v.precipitation.group.visible = false;
-              v.controls.minDistance = 0.2;
-              v.controls.maxPolarAngle = Math.PI * 0.85;
-              const pours = (v.eaves.data.instances || []).filter(i => i.pour);
-              const pour = pours.find(p => p.mount === 'wall' && p.top[0] > 9 && p.top[0] < 12 && p.top[2] > -2) || pours[0];
-              if (!pour) return;
-              const sTop = pour.spout.top; // [x, y, z] at gutter bottom outlet
-              const target = [sTop[0] - 0.14, sTop[1] - 0.14, sTop[2] - 0.18];
-              const pos = [target[0] + 1.15, target[1] - 0.30, target[2] + 1.15];
-              v.setCameraState({ position: pos, target });
-            }""")
+            page.evaluate(GUTTER_OUTLET_CAMERA)
             H.settle(page, 20)
             cam_outlet = page.evaluate("""() => {
               const v = window.__twin, c = v.cameraState();

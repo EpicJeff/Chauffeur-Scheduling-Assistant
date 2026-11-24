@@ -50,7 +50,10 @@ import re
 from py_vapid import Vapid, utils
 from cryptography.hazmat.primitives import serialization
 
-if os.path.exists('/data/options.json'):
+if os.environ.get('CHAUFFEUR_DATA_DIR'):
+    DATA_DIR = os.environ['CHAUFFEUR_DATA_DIR']
+    os.makedirs(DATA_DIR, exist_ok=True)
+elif os.path.exists('/data/options.json'):
     DATA_DIR = '/data'
 else:
     DATA_DIR = os.path.join(os.path.dirname(__file__), '..', 'data')

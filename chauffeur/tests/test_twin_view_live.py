@@ -17,7 +17,8 @@ import sys
 import tempfile
 import time
 
-os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_twin_view_live_'))
+if not os.environ.get('CHAUFFEUR_DATA_DIR'):
+    os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_twin_view_live_')
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
