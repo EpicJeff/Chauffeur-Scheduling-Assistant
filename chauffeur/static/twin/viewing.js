@@ -52,7 +52,12 @@ export function peelSet(camera, samples, obstacles) {
   return new Set(obstacles.filter(o => samples.some(p => blocks(camera, p, o.box))).map(o => o.id));
 }
 
+// Model warm-up owns these materials. A yard-only viewing rebuild transfers the
+// existing family (source plus variant stand-ins), rather than recloning every
+// house model or releasing any linking program.
+const modelFamilies = new WeakMap(), familyOwners = new WeakMap();
 export function createViewing(view, model, ground, changed, {explicit = false} = {}) {
+  const owner = {}, transferred = new Set();
   const channels = [], buildings = [], obstacles = [];
   const bindings = new Map(), replacements = [];
   let pinned = null, active = false, signature = '', selected = 'ext', transition = 0, previous = 0;
@@ -72,6 +77,19 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       if (object.material && !object.layers.isEnabled(31)) {
         if (object.isMesh) shadows.push({object, cast: object.castShadow});
         const clone = source => {
+          const family = modelFamilies.get(source);
+          if (family) {
+            if (!transferred.has(family)) {
+              transferred.add(family);
+              for (const [m, previous] of family.members) {
+                const binding = {...previous.binding, m};
+                m.clippingPlanes = [plane]; materials.push(binding);
+                const record = {materials, binding, plane, source:family.source, parameters:previous.parameters, registry:bindings};
+                bindings.set(m, record); family.members.set(m, record); familyOwners.set(m, owner);
+              }
+            }
+            return source;
+          }
           if (!originals.has(source)) {
             const m = source.clone();
             // Prepared once: no transparent or clipping-count changes while zooming.
@@ -84,7 +102,10 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
           return originals.get(source);
         };
         const source = object.material;
-        object.material = Array.isArray(source) ? source.map(clone) : clone(source);
+        if (Array.isArray(source)) {
+          const next = source.map(clone);
+          object.material = next.every((m,i) => m === source[i]) ? source : next;
+        } else object.material = clone(source);
         replacements.push({object, source, next: object.material});
       }
       object.children.forEach(visit);
@@ -237,30 +258,56 @@ export function createViewing(view, model, ground, changed, {explicit = false} =
       return () => saved.forEach(([plane, constant]) => { plane.constant = constant; });
     },
     refresh(source) {
-      for (const [material, record] of bindings) if (record.source === source) {
+      const changed = [];
+      for (const [material, record] of bindings) if (record.source === source && record.parameters !== false) {
         copyMaterialParams(source, material);
         const binding = record.binding;
         binding.opacity = material.userData.viewingOpacity; binding.depth = material.userData.viewingDepthWrite;
         material.opacity = binding.opacity * binding.alpha;
         material.depthWrite = binding.depth && binding.alpha > .999;
+        changed.push(material);
       }
+      // Async model owners stage replacements. Updating their installed clone's
+      // shader inputs here would expose a cold program in the next frame.
+      for (const material of changed) material.dispatchEvent({type:'materialparamschange'});
     },
-    adopt(source, material) {
+    adopt(source, material, {parameters = true} = {}) {
       const record = bindings.get(source); if (!record) return;
       const binding = {...record.binding, m: material};
       material.clippingPlanes = [record.plane]; record.materials.push(binding);
-      bindings.set(material, {...record, binding});
+      const next = {...record, binding, parameters, registry:bindings};
+      bindings.set(material, next);
+      if (!parameters) {
+        let family = modelFamilies.get(source);
+        if (!family) {
+          family = {source:record.source, members:new Map([[source,record]])};
+          modelFamilies.set(source, family); familyOwners.set(source, owner);
+        }
+        family.members.set(material, next); modelFamilies.set(material, family); familyOwners.set(material, owner);
+      }
       material.addEventListener('dispose', () => {
-        const index = record.materials.indexOf(binding); if (index >= 0) record.materials.splice(index, 1);
-        bindings.delete(material);
+        const family = modelFamilies.get(material), current = family?.members.get(material) || next;
+        const index = current.materials.indexOf(current.binding); if (index >= 0) current.materials.splice(index, 1);
+        family?.members.delete(material); current.registry?.delete(material); bindings.delete(material);
       });
     },
     dispose({ deferMaterials = false } = {}) {
       domainVisibility.forEach(([group, visible]) => { group.visible = visible; });
-      for (const {object, source, next} of replacements) if (object.material === next) object.material = source;
+      for (const {object, source, next} of replacements) {
+        const current = [].concat(object.material || []);
+        if (deferMaterials && current.some(m => modelFamilies.has(m))) continue;
+        if (current.length && current.every(m => modelFamilies.has(m) && familyOwners.get(m) === owner)) {
+          const authored = current.map(m => modelFamilies.get(m).source);
+          object.material = Array.isArray(object.material) ? authored : authored[0];
+        } else if (object.material === next) object.material = source;
+      }
       for (const c of channels) for (const {object, cast} of c.shadows) object.castShadow = cast;
-      const materials = [...bindings.keys()];
-      const release = () => materials.forEach(material => material.dispose());
+      // Managed model clones have a separate async lifetime owner. Transferred
+      // source materials belong to the next viewing controller already.
+      const materials = [...bindings].filter(([,record]) => record.parameters !== false).map(([material]) => material);
+      const release = () => materials.forEach(material => {
+        if (!familyOwners.has(material) || familyOwners.get(material) === owner) material.dispose();
+      });
       if (!deferMaterials) release();
       bindings.clear();
       return release;

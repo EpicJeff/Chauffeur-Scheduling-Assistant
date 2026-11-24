@@ -227,23 +227,30 @@ export function mountModes(view, live) {
   // The time look (Day/Night) changes the light set every program is keyed on,
   // so the warm-up runs again for the new look (view.onTimeLook), restoring
   // exactly what was shown, whether Lights mode is on or not.
-  function warm() {
+  function warm(compile = null) {
     if (!realLighting || typeof view.renderer3?.compileAsync !== 'function' || !view.camera) return;
+    const pending = [];
+    if (!compile) { const models = view.bake?.models?.warm?.(); if (models) pending.push(models); }
+    const enqueue = () => {
+      const ready = compile ? compile() : view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
+      if (ready) pending.push(ready);
+    };
     const extras = [...flames, ...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group),
       ...[...effects.values()].flatMap(effect => effect.warmObjects?.() || [])];
     const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
     rig.show(true); for (const object of extras) object.visible = true;
     try {
-      rig.warm(() => view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}));
+      rig.warm(enqueue);
       // Programs are keyed on the light set too. All shows the pool and the effects at
       // once (slice 2c-2), so compile the overlays a second time with the pool hidden,
       // the light set Climate, Energy and Security draw them under.
       rig.show(false);
-      view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
-      for (const effect of effects.values()) effect.warm?.();
+      enqueue();
+      if (!compile) for (const effect of effects.values()) effect.warm?.();
     }
-    catch { /* a failed warm-up only leaves the first entry its compile */ }
+    catch (error) { if (compile) pending.push(Promise.reject(error)); }
     finally { rig.show(!!poolShown); extras.forEach((object, i) => { object.visible = shown[i]; }); }
+    return Promise.all(pending);
   }
   warm();
   view.onTimeLook = warm;
@@ -396,7 +403,7 @@ export function mountModes(view, live) {
     },
     modes: () => [...enabled],
     get mode() { return modeName(enabled, ids); },
-    draw, update,
+    draw, update, warm,
     paletteLines: () => [...paletteLineEntities(lamps)],
     energy: () => effects.get('energy')?.snapshot(),
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, fixture_id: lamp.emitter?.fixture_id, at: [...lamp.marker.at],

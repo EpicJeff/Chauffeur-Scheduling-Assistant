@@ -146,6 +146,7 @@ function wrapUniform(entry) {
 // Keep all patch hook state strictly in a WeakMap (never in material.userData, which
 // Material.copy clones through JSON and would leak stale keys onto cloned materials).
 const mvState = new WeakMap();
+export const isModelLightMaterial = material => mvState.has(material);
 
 export function patchModelLighting(material, shared) {
   if (!material || !shared) return material;

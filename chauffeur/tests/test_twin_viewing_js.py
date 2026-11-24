@@ -335,6 +335,137 @@ await test('a sunken room keeps its floor under the level cut and its wall cap s
     assert.ok(floorSeen&&capSeen,'actual floor receiver and closed cut cap were checked');
   }finally{v.dispose();}
 });
+await test('viewing refresh stages model replacements and retains installed shader inputs',async()=>{
+  const {createModelWarmup}=await import(file('static/twin/bake/model_warmup.js'));
+  const p=plan(),model=buildTwin(p,{materials:{}},'low',{viewing:true}),scene=new THREE.Scene();scene.add(model.root);
+  const source=new THREE.MeshStandardMaterial({side:THREE.DoubleSide}),mesh=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),source);
+  mesh.frustumCulled=false;model.groups.levels['main:L1'].add(mesh);
+  const view={plan:p,scene,roomLights:[],camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},
+    renderer3:{domElement:{},shadowMap:{}},render(){}};
+  const viewing=M.createViewing(view,model,()=>0,()=>{}),gates=[];
+  view.prepareModelMaterial=(source,material)=>viewing.adopt(source,material,{parameters:false});
+  view.compileModelMaterials=root=>new Promise(resolve=>gates.push(resolve));
+  const models=createModelWarmup(view,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+  try{
+    assert.equal(mesh.material.transparent,true,'production viewing prep');models.prepare(mesh);models.setEnabled(true);
+    let work=models.queue();for(let i=0;i<100&&gates.length<2;i++)await new Promise(r=>setTimeout(r,1));
+    assert.equal(gates.length,2);gates.forEach(resolve=>resolve());await work;const installed=mesh.material;
+    source.map=new THREE.Texture();source.needsUpdate=true;viewing.refresh(source);work=models.queue();
+    assert.equal(mesh.material,installed);assert.equal(installed.map,null,'installed program inputs are frozen during replacement');
+    for(let i=0;i<100&&gates.length<4;i++)await new Promise(r=>setTimeout(r,1));assert.equal(gates.length,4);
+    gates.slice(2).forEach(resolve=>resolve());await work;assert.notEqual(mesh.material,installed);assert.equal(mesh.material.map,source.map);
+  }finally{models.stop();viewing.dispose();}
+});
+await test('yard viewing rebuild transfers model families without compiling existing bindings',async()=>{
+  const {createModelWarmup}=await import(file('static/twin/bake/model_warmup.js'));
+  const p=plan(),model=buildTwin(p,{materials:{}},'low',{viewing:true}),scene=new THREE.Scene();scene.add(model.root);
+  const source=new THREE.MeshStandardMaterial({side:THREE.DoubleSide}),mesh=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),source);
+  mesh.frustumCulled=false;model.groups.levels['main:L1'].add(mesh);
+  const view={plan:p,scene,roomLights:[],camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},
+    renderer3:{domElement:{},shadowMap:{}},render(){}};
+  let viewing=M.createViewing(view,model,()=>0,()=>{});const gates=[];
+  view.prepareModelMaterial=(source,material)=>viewing.adopt(source,material,{parameters:false});
+  view.compileModelMaterials=root=>new Promise(resolve=>gates.push(resolve));
+  const models=createModelWarmup(view,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+  try{
+    models.prepare(mesh);models.setEnabled(true);let work=models.queue();
+    for(let i=0;i<100&&gates.length<2;i++)await new Promise(r=>setTimeout(r,1));gates.forEach(resolve=>resolve());await work;
+    const installed=mesh.material;let disposed=0;installed.addEventListener('dispose',()=>disposed++);
+    const release=viewing.dispose({deferMaterials:true});
+    const late=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),new THREE.MeshStandardMaterial());late.frustumCulled=false;model.groups.levels['main:L1'].add(late);
+    viewing=M.createViewing(view,model,()=>0,()=>{});release();assert.equal(mesh.material,installed);assert.equal(disposed,0);
+    models.prepare(mesh);models.prepare(late);work=models.queue();
+    for(let i=0;i<100&&gates.length<3;i++)await new Promise(r=>setTimeout(r,1));assert.equal(gates.length,3,'only late single-sided binding compiles');
+    gates[2]();await work;assert.equal(mesh.material,installed);assert.equal(disposed,0);
+  }finally{models.stop();viewing.dispose();}
+});
+await test('viewing disposal cannot release model programs while linking',async()=>{
+  const {createModelWarmup}=await import(file('static/twin/bake/model_warmup.js'));
+  const p=plan(),model=buildTwin(p,{materials:{}},'low',{viewing:true}),scene=new THREE.Scene();scene.add(model.root);
+  const mesh=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),new THREE.MeshStandardMaterial({side:THREE.DoubleSide}));
+  mesh.frustumCulled=false;model.groups.levels['main:L1'].add(mesh);
+  const view={plan:p,scene,roomLights:[],camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},
+    renderer3:{domElement:{},shadowMap:{}},render(){}};
+  const viewing=M.createViewing(view,model,()=>0,()=>{}),gates=[],staged=[];
+  view.prepareModelMaterial=(source,material)=>viewing.adopt(source,material,{parameters:false});
+  view.compileModelMaterials=root=>{root.traverse(o=>{if(o.material)staged.push(...[].concat(o.material));});return new Promise(resolve=>gates.push(resolve));};
+  const models=createModelWarmup(view,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+  try{
+    models.prepare(mesh);models.setEnabled(true);const work=models.queue();
+    for(let i=0;i<100&&gates.length<2;i++)await new Promise(r=>setTimeout(r,1));assert.equal(gates.length,2);
+    let disposed=0;for(const m of staged)m.addEventListener('dispose',()=>disposed++);
+    models.stop();viewing.dispose();assert.equal(disposed,0,'viewing also respects async ownership');await work;
+    gates[0]();await new Promise(r=>setTimeout(r,1));assert.equal(disposed,0);
+    gates[1]();await new Promise(r=>setTimeout(r,1));assert.equal(disposed,staged.length);
+  }finally{models.stop();}
+});
+await test('model warm-up cooperates with faint level copies and restoreFloors ownership',async()=>{
+  const {createModelWarmup}=await import(file('static/twin/bake/model_warmup.js'));
+  const v=await mounted();let models;
+  try {
+    const source=new THREE.MeshStandardMaterial({side:THREE.DoubleSide});
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),source);mesh.frustumCulled=false;
+    v.groups.levels['main:L1'].add(mesh);v.scene.updateMatrixWorld(true);
+    // The production viewing preparation makes level materials transparent.
+    source.transparent=true;source.clippingPlanes=[new THREE.Plane(new THREE.Vector3(0,1,0),100)];
+    const gates=[];v.compileModelMaterials=root=>new Promise(resolve=>gates.push(resolve));
+    models=createModelWarmup(v,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+    models.prepare(mesh);models.setEnabled(true);const work=models.queue();
+    for(let i=0;i<100&&gates.length<2;i++)await new Promise(r=>setTimeout(r,1));assert.equal(gates.length,2,'transparent level compiles front and back');
+    v.showLevels(null,{faint:['main:L1']});const fade=mesh.material;
+    gates.forEach(resolve=>resolve());await work;
+    assert.equal(mesh.material,fade,'pending warm-up never overwrites faint copy');
+    const installed=v.modelMaterial(mesh);assert.notEqual(installed,source);
+    let disposed=0;installed.addEventListener('dispose',()=>disposed++);
+    v.showLevels(null);assert.equal(mesh.material,installed);assert.equal(disposed,0,'restoreFloors does not dispose installed clone');
+    v.showLevels(null,{faint:['main:L1']});assert.notEqual(mesh.material,installed);
+    assert.equal(mesh.material.customProgramCacheKey(),installed.customProgramCacheKey(),'fade retains model shader');
+    v.showLevels(null);assert.equal(mesh.material,installed);assert.equal(disposed,0);
+    models.stop();assert.equal(mesh.material,source);assert.equal(disposed,1);
+  }finally{models?.stop();v.dispose();}
+});
+await test('multi-material viewing rebuild preserves installed clones and safe stop materials',async()=>{
+  const {createModelWarmup}=await import(file('static/twin/bake/model_warmup.js'));
+  const p=plan(),model=buildTwin(p,{materials:{}},'low',{viewing:true}),scene=new THREE.Scene();scene.add(model.root);
+  const A=new THREE.MeshStandardMaterial({color:'red'}),B=new THREE.MeshStandardMaterial({color:'blue'});
+  const geometry=new THREE.BoxGeometry(.2,.2,.2);geometry.clearGroups();geometry.addGroup(0,18,0);geometry.addGroup(18,18,1);
+  const mesh=new THREE.Mesh(geometry,[A,B]);mesh.frustumCulled=false;model.groups.levels['main:L1'].add(mesh);
+  const view={plan:p,scene,roomLights:[],camera:new THREE.PerspectiveCamera(),controls:{target:new THREE.Vector3()},
+    renderer3:{domElement:{},shadowMap:{}},render(){}};
+  let viewing=M.createViewing(view,model,()=>0,()=>{});const gates=[],disposed=new Set();
+  view.prepareModelMaterial=(source,material)=>viewing.adopt(source,material,{parameters:false});
+  view.compileModelMaterials=root=>{root.traverse(o=>{if(o.material)for(const m of [].concat(o.material))m.addEventListener('dispose',()=>disposed.add(m));});return new Promise(resolve=>gates.push(resolve));};
+  const models=createModelWarmup(view,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+  try{
+    const originals=[...mesh.material];models.prepare(mesh);models.setEnabled(true);const work=models.queue();
+    for(let i=0;i<100&&!gates.length;i++)await new Promise(r=>setTimeout(r,1));assert.equal(gates.length,1);gates[0]();await work;
+    const installed=[...mesh.material],release=viewing.dispose({deferMaterials:true});
+    viewing=M.createViewing(view,model,()=>0,()=>{});release();
+    assert.ok(mesh.material.every((m,i)=>m===installed[i]));
+    // Also exercise an owner that wraps the transferred slots in a fresh array.
+    mesh.material=[...mesh.material];models.prepare(mesh);
+    assert.equal(disposed.size,0,'installed clones are never disposed by prepare');await models.queue();assert.equal(gates.length,1,'no new programs after array wrapping');
+    assert.ok(mesh.material.every((m,i)=>m===installed[i]));
+    models.stop();assert.ok(mesh.material.every((m,i)=>m===originals[i]));
+    scene.traverse(o=>{for(const m of [].concat(o.material||[]))assert.ok(!disposed.has(m),'stop left a disposed clone on a mesh');});
+  }finally{models.stop();viewing.dispose();}
+});
+await test('faint surface drops lightmap hooks while faint model keeps its warmed hook',async()=>{
+  const {patchLightmaps,lightmapUniforms}=await import(file('static/twin/bake/lightmap_material.js'));
+  const {patchModelLighting}=await import(file('static/twin/bake/model_light_material.js'));
+  const v=await mounted();
+  try{
+    const surface=new THREE.Mesh(new THREE.BoxGeometry(.2,.2,.2),new THREE.MeshStandardMaterial());
+    const model=surface.clone();model.material=surface.material.clone();
+    v.groups.levels['main:L1'].add(surface,model);
+    patchLightmaps([surface.material],{banks:[new THREE.DataArrayTexture(new Uint8Array(4),1,1,1)]},lightmapUniforms(1,1));
+    patchModelLighting(model.material,{mvBricks:{value:null},mvLamps:{value:null},mvSize:{value:new THREE.Vector4()}});
+    const modelHook=model.material.onBeforeCompile;assert.notEqual(surface.material.onBeforeCompile,THREE.Material.prototype.onBeforeCompile);
+    v.showLevels(null,{faint:['main:L1']});
+    assert.equal(surface.material.onBeforeCompile,THREE.Material.prototype.onBeforeCompile,'faint surfaces keep earlier plain shader behavior');
+    assert.equal(model.material.onBeforeCompile,modelHook);assert.ok(model.material.customProgramCacheKey().includes('|mv-1'));
+  }finally{v.showLevels(null);v.dispose();}
+});
 finish();
 """
 

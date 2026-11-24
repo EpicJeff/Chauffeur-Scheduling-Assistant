@@ -21,6 +21,7 @@ import { mountIdle } from './live/idle.js';
 import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
+import { isModelLightMaterial } from './bake/model_light_material.js';
 import { registerBakeSource, bakeAuthoredMaterial } from './bake/source.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { atlasMesh } from './bake/atlas.js';
@@ -211,6 +212,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const raycaster = new THREE.Raycaster(); raycaster.layers.set(PICK_LAYER);
   const visible = object => { for (let o = object; o; o = o.parent) if (!o.visible) return false; return true; };
   const faded = new Map();
+  const fadeCopies = new Map();
   let editableLevel = null, selectionStyle = null, boundsCache = null, selectionBoundsRevision = 0;
   const hoverBoxCache = new Map();
   const invalidateSelectionBounds = () => { boundsCache = null; hoverBoxCache.clear(); ++selectionBoundsRevision; };
@@ -401,9 +403,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   function restoreFloors() {
     unlit.restore();
     for (const [object, material] of faded) {
-      [].concat(object.material).forEach(m => m.dispose()); object.material = material;
+      // Only this owner's fade copy may be disposed. Model warm-up updates the
+      // saved floor material, never the temporary faint copy on the mesh.
+      const copy = fadeCopies.get(object);
+      if (object.material === copy) object.material = material;
+      [].concat(copy || []).forEach(m => m.dispose());
     }
-    faded.clear();
+    faded.clear(); fadeCopies.clear();
   }
   function floorFrame(key) {
     const building = plan.buildings.find(b => b.levels.some(l => `${b.id}:${l.id}` === key));
@@ -786,7 +792,24 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     isPieceHidden: candidate => pieceVisibility?.hidden(candidate) || false,
     // A warm-up for a change not yet on screen: the picture keeps drawing.
     compileBehind: () => compileFor ? compileBehind(scene, camera) : null,
+    // Detached model stand-ins never enter a frame. Warm them for this scene's
+    // lights/post target without the live-scene render hold in compileAsync.
+    compileModelMaterials: target => compileFor ? compileBehind(target, camera, scene) : null,
     prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
+    prepareModelMaterial(source, material) { viewing?.adopt(source, material, {parameters:false}); },
+    modelMaterial(mesh) { return faded.get(mesh) || selectedMaterials.get(mesh) || mesh.material; },
+    replaceModelMaterial(mesh, expected, material) {
+      if (faded.has(mesh)) {
+        if (faded.get(mesh) !== expected) return false;
+        faded.set(mesh, material); return true;
+      }
+      if (selectedMaterials.has(mesh)) {
+        if (selectedMaterials.get(mesh) !== expected) return false;
+        selectedMaterials.set(mesh, material); return true;
+      }
+      if (mesh.material !== expected) return false;
+      mesh.material = material; return true;
+    },
     cameraKind() { return camera.isOrthographicCamera ? 'orthographic-top' : 'perspective'; },
     saveView() {
       return { camera, position: camera.position.clone(), quaternion: camera.quaternion.clone(), target: controls.target.clone(),
@@ -976,8 +999,18 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       for (const key of faint) twin.groups.levels[key]?.traverse(object => {
         if (!object.material || object.layers.isEnabled(PICK_LAYER)) return;
         faded.set(object, object.material);
-        const clone = m => { const next = m.clone(); next.userData.styledFade = true; next.transparent = true; next.opacity = 0.18; next.depthWrite = false; scaleStyledFadeAlpha(m, next); return next; };
+        const clone = m => {
+          const next = m.clone();
+          // Only model clones have their transparent variants warmed. Surface
+          // fades retain the earlier plain shader behavior and its low cost.
+          if (isModelLightMaterial(m)) {
+            next.onBeforeCompile = m.onBeforeCompile; next.customProgramCacheKey = m.customProgramCacheKey;
+            next.defaultAttributeValues = m.defaultAttributeValues;
+          }
+          next.userData.styledFade = true; next.transparent = true; next.opacity = 0.18; next.depthWrite = false; scaleStyledFadeAlpha(m, next); return next;
+        };
         object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
+        fadeCopies.set(object, object.material);
       });
       const buildings = new Set(Object.values(twin.groups.levels).filter(g => g.visible).map(g => g.userData.buildingId));
       for (const domain of ['roof', 'gableFull', 'gableCut']) for (const group of twin.groups[domain].children) group.visible = buildings.has(group.userData.buildingId);

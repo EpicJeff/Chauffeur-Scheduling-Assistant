@@ -136,6 +136,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
       rooms: () => [], looks: () => ({}), state: () => undefined, subscribe: () => () => {},
       draw: () => modes?.draw(), lights: () => modes?.lights() || [],
       paletteLines: () => modes?.paletteLines() || [],
+      warm: compile => modes?.warm(compile),
       setMode(value) { const result = modes?.setMode(value); view.render(); return result; },
       setModes(values) { const result = modes?.setModes(values); view.render(); return result; },
       toggleMode(id) { const result = modes?.toggleMode(id); view.render(); return result; },
@@ -774,6 +775,7 @@ export async function mountLive(view, { api = (path, options) => fetch(base() + 
     // From the room panel: the ring takes the keyboard focus, and gives it back (review L7).
     openRing: row => { const from = document.activeElement; roomPanel?.close(); ring?.open(row, {focus: from}); },
     ring: () => ring?.current() || null,
+    warm: compile => modes?.warm(compile),
     setMode(name) { return changeModes('setMode', name || 'all'); },
     setModes(values) { return changeModes('setModes', values); },
     toggleMode(id) { return changeModes('toggleMode', id); },

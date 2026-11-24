@@ -293,6 +293,97 @@ const emitter=(models,i)=>{const t=models.textures,w=t.mvSize.z;
  assert.equal(s.mesh.geometry.attributes.mvBrick,attr);assert.equal(s.requests(),1);
  s.models.stop();console.log('Passed: test_late_yard_models_fetch_grids');
 }
+
+// A renderer that refuses to draw an unready model program. Each pending
+// light-state compile must resolve independently before a clone reaches scene.
+const tick=()=>new Promise(r=>setTimeout(r,0));
+async function waitFor(test){for(let n=0;n<100&&!test();n++)await tick();assert.ok(test(),'async warm-up starts');}
+function asyncRig(){
+ const s=setup(),queue=[],ready=new Set(),owned=new Set();let inClick=false,frames=0;
+ s.view.camera=new THREE.PerspectiveCamera(60,1,.01,100);s.view.camera.position.set(0,0,5);s.view.camera.lookAt(0,0,0);
+ const pool=new THREE.PointLight();pool.visible=false;s.scene.add(pool);
+ const program=(m,state,side=m.side)=>`${m.customProgramCacheKey()}|pool:${state}|side:${side}`;
+ s.view.live.warm=compile=>{const shown=pool.visible;pool.visible=true;try{return compile();}finally{pool.visible=shown;}};
+ s.view.renderer3.compileAsync=(root,camera,scene)=>{
+  assert.equal(inClick,false,'no compile inside a switch handler');assert.notEqual(root,s.scene);assert.equal(scene,s.scene);assert.equal(camera,s.view.camera);
+  const materials=[];root.traverse(o=>{if(o.material)materials.push(...[].concat(o.material));});
+  assert.ok(materials.length);for(const m of materials){owned.add(m);assert.ok(m.customProgramCacheKey().includes('|mv-1'));}
+  const state=pool.visible;
+  return new Promise((resolve,reject)=>queue.push({materials,pool:state,resolve(){materials.forEach(m=>ready.add(program(m,state,m.transparent&&m.side===THREE.DoubleSide&&!m.forceSinglePass?THREE.FrontSide:m.side)));resolve();},reject}));
+ };
+ // setup's original CPU controller was created before compileAsync existed.
+ s.models.stop();s.models=mountModelLighting(s.view,{manifest:{key:'atlas',lights:{a:{grid:'chunk',gridLayout:layout.hash}}},layout,fresh:['a'],tints:new Map(),lights:[lamp],api:async()=>new Response(bytes)});
+ s.view.render=()=>{frames++;s.scene.traverseVisible(o=>{for(const m of o.material?[].concat(o.material):[])if(m.customProgramCacheKey().includes('|mv-1'))for(const side of m.transparent&&m.side===THREE.DoubleSide&&!m.forceSinglePass?[THREE.FrontSide,THREE.BackSide]:[m.side])assert.ok(ready.has(program(m,pool.visible,side)),'frame-stall detector: program not compiled for the state being drawn');});};
+ return {...s,queue,owned,pool,frames:()=>frames,switch(){inClick=true;try{pool.visible=!pool.visible;s.view.render();}finally{inClick=false;}}};
+}
+
+{
+ const s=asyncRig(),compile=s.view.renderer3.compileAsync;let held=0;
+ s.view.renderer3.compileAsync=()=>{held++;throw Error('live-scene hold used');};
+ s.view.compileModelMaterials=root=>compile(root,s.view.camera,s.scene);
+ const original=s.mesh.material,work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);
+ s.view.render();s.view.render();assert.equal(s.mesh.material,original);assert.equal(held,0,'detached compile bypasses the live-scene hold');
+ s.queue.forEach(q=>q.resolve());await work;s.view.render();s.models.stop();
+ console.log('Passed: test_detached_warmup_keeps_original_frames_running');
+}
+{
+ const s=asyncRig(),original=s.mesh.material,work=s.models.update(['a']);
+ await waitFor(()=>s.queue.length===2);assert.equal(s.mesh.material,original);s.view.render();
+ assert.notEqual(s.queue[0].materials[0],s.queue[1].materials[0],'pending variants cannot overwrite material.currentProgram');
+ s.queue[0].resolve();await tick();assert.equal(s.mesh.material,original,'wait for pool-on too');s.switch();
+ s.queue[1].resolve();await work;assert.notEqual(s.mesh.material,original);s.view.render();
+ const compiled=s.queue.length;await s.models.update(['a']);s.switch();assert.equal(s.queue.length,compiled,'unchanged update/click compiles nothing');
+ original.emissiveIntensity=3;assert.equal(s.mesh.material.emissiveIntensity,3,'live emissive owner survives clone');
+ s.models.stop();assert.equal(s.mesh.material,original);console.log('Passed: test_async_compile_before_live_swap_and_no_click_compile');
+}
+{
+ const s=asyncRig(),original=s.mesh.material,work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);
+ let disposed=0;for(const m of s.owned)m.addEventListener('dispose',()=>disposed++);
+ s.models.stop();await work;assert.equal(s.mesh.material,original);assert.equal(disposed,0,'never dispose a linking program');
+ s.queue[0].resolve();await tick();assert.equal(disposed,0,'wait for every compile to settle');
+ s.queue[1].resolve();await tick();assert.equal(disposed,s.owned.size,'settled cancelled clones released exactly once');assert.equal(s.mesh.material,original);console.log('Passed: test_pending_model_compile_stop_disposes_clones');
+}
+
+{
+ const s=asyncRig(),original=s.mesh.material,warn=console.warn;let warnings=0;
+ const work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);console.warn=()=>warnings++;
+ try{s.queue[0].reject(new Error('link failed'));await tick();assert.equal(s.mesh.material,original);s.queue[1].resolve();await work;assert.equal(warnings,1);assert.equal(s.mesh.material,original);}
+ finally{console.warn=warn;s.models.stop();}
+ console.log('Passed: test_failed_compile_keeps_unpatched_models');
+}
+{
+ const s=asyncRig(),original=s.mesh.material,work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);
+ const next=s.models.update([], {key:'atlas',lights:{}});await next;await work;
+ s.queue.forEach(q=>q.resolve());await tick();assert.equal(s.mesh.material,original);s.models.stop();console.log('Passed: test_grid_change_cancels_pending_model_swap');
+}
+{
+ const s=asyncRig(),hidden=merged();hidden.material=new THREE.MeshStandardMaterial({color:'red'});hidden.position.x=2;
+ hidden.userData.snapRanges.forEach(r=>r.pieceId='hidden-'+r.pieceId);const gate=new THREE.Group();gate.visible=false;gate.add(hidden);s.scene.add(gate);
+ const original=hidden.material,work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);
+ assert.ok([...s.owned].every(m=>m.color.getHex()!==original.color.getHex()),'hidden material is not cloned/compiled');
+ s.queue.forEach(q=>q.resolve());await work;assert.equal(hidden.material,original);
+ gate.visible=true;s.host.dispatchEvent(new Event('twinviewchange'));assert.equal(s.queue.length,2,'visibility handler only schedules');
+ await waitFor(()=>s.queue.length===4);assert.equal(hidden.material,original);s.view.render();
+ s.queue.slice(2).forEach(q=>q.resolve());await tick();await tick();assert.notEqual(hidden.material,original);
+ s.models.stop();console.log('Passed: test_hidden_models_compile_lazily_after_level_gate');
+}
+{
+ const s=asyncRig(),work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);s.queue.forEach(q=>q.resolve());await work;
+ const previous=s.mesh.material;let disposed=0;for(const m of s.owned)m.addEventListener('dispose',()=>disposed++);
+ for(let i=0;i<60;i++){await s.models.warm();assert.equal(s.mesh.material,previous);s.view.render();}
+ assert.equal(s.queue.length,2,'60 unchanged clock ticks compile nothing');assert.equal(disposed,0);s.models.stop();
+ console.log('Passed: test_time_look_keeps_ready_clones_for_unchanged_light_state');
+}
+{
+ const s=asyncRig(),work=s.models.update(['a']);await waitFor(()=>s.queue.length===2);
+ const next=s.models.update(['a'],{key:'atlas',lights:{a:{grid:'replacement',gridLayout:layout.hash}}});
+ await tick();assert.equal(s.queue.length,2,'grid inputs retain linking clones');
+ s.queue.forEach(q=>q.resolve());await Promise.all([work,next]);const installed=s.mesh.material;
+ let disposed=0;for(const m of s.owned)m.addEventListener('dispose',()=>disposed++);
+ await s.models.update(['a'],{key:'atlas',lights:{a:{grid:'third',gridLayout:layout.hash}}});
+ assert.equal(s.mesh.material,installed);assert.equal(s.queue.length,2);assert.equal(disposed,0,'grid and tint data never retire programs');
+ s.models.stop();console.log('Passed: test_grid_uniform_changes_retain_pending_and_installed_programs');
+}
 """
 
 

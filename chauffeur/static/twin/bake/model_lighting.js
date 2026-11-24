@@ -7,6 +7,7 @@ import { tintSum } from './lightmap_material.js';
 import { decodeGridChunk } from './grid_chunk.js';
 import { emitterTable, chooseEmitters, buildBrick, createModelLightTextures, fillFor } from './model_bricks.js';
 import { patchModelLighting } from './model_light_material.js';
+import { createModelWarmup } from './model_warmup.js';
 
 // Grid keys survive bake-controller remounts after a save. The view owns their
 // lifetime; each load prunes keys no longer named by its compatible manifest.
@@ -63,6 +64,9 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   const geometries = new Set(), ownGeometry = saved.ownGeometry, materialCopies = new WeakMap(), ownMaterials = new WeakSet();
   let surfaceMaterials = new Set();
   const shared = { mvBricks: {value:null}, mvLamps: {value:null}, mvSize: {value:null} };
+  // Real r187 renderers always expose compileAsync. CPU-only callers without a
+  // compiler retain their synchronous, non-GPU material ownership contract.
+  const programs = view.renderer3.compileAsync ? createModelWarmup(view, shared) : null;
   const halt = new AbortController();
   const inferLights = lights === null;
   const atlasKey = () => manifest.key || view.bake?.state?.().key;
@@ -135,6 +139,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     return result;
   }
   function patch(mesh) {
+    if (programs) { programs.prepare(mesh); return; }
     const bind = original => {
       // Model caches already isolate their materials. Keep their live emissive
       // owners and late texture updates intact; clone only a material that is
@@ -174,6 +179,9 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   const excluded = id => palette.has(id) || palette.has(lights?.find(l => l.device === id)?.entity);
   const deviceSignature = id => JSON.stringify([manifest.lights[id]?.grid, lights?.find(l => l.device === id)]);
   const fillSignature = () => JSON.stringify(Object.entries(manifest.lights || {}).map(([id,e]) => [id,e.fill]));
+  // A replacement grid is uniform data. Keep installed/pending programs while
+  // its bytes download; cache availability only controls emitter rows.
+  const wantsPrograms = () => [...freshIds].some(id => !excluded(id) && manifest.lights?.[id]?.grid && manifest.lights[id].gridLayout === layout.hash);
   function availableIds() {
     const available = new Set();
     for (const id of freshIds) {
@@ -213,6 +221,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   function collectCopies() {
     if (!copiesDirty) return;
     copies = collect(); copiesDirty = false; indicesInstalled = false;
+    programs?.retain(new Set(copies.flatMap(copy => copy.ranges.map(range => range.mesh))));
   }
   function fillTerms(copy) {
     const terms = [];
@@ -232,6 +241,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     const start = performance.now();
     readPalette(); collectCopies(); syncFreshness();
     const available = availableIds();
+    programs?.setEnabled(wantsPrograms());
     const nextTable = emitterTable(lights, available, manifest, {paletteLines:palette, plan:view.bakePlan || view.plan});
     if (!copies.length || !nextTable.length) return; // No grid: no texture, attribute, material or program.
     chunks.clear();
@@ -281,9 +291,8 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     loadedSignature = JSON.stringify([...installed]);
     builds++; buildMs = performance.now() - start + pendingCollectMs; pendingCollectMs = 0;
     notify();
-    const ready = view.renderer3.compileAsync?.(view.scene, view.camera) || view.compileBehind?.();
-    ready?.catch?.(error => console.warn('Model lighting program unavailable:', error));
-    view.render?.();
+    if (programs) programs.queue();
+    else view.render?.();
   }
   function prune() {
     // Stale but still authored lamp grids remain wanted for their next rebake;
@@ -305,6 +314,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     const mine = ++serial;
     // Retire only departing rows. Other lamps and every existing brick remain
     // live while missing chunks download; no geometry walk on a lamp change.
+    programs?.setEnabled(wantsPrograms());
     if (syncFreshness()) view.render?.();
     if (inferLights && (!lights || copiesDirty)) {
       const {bakeLights} = await import('./runtime.js');
@@ -350,12 +360,13 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
         } finally { pending.delete(key); }
       }));
     }
-    if (!wanted.length) return;
+    if (!wanted.length) { await programs?.queue(); return; }
     await Promise.all(wanted.map(({key}) => pending.get(key)));
     if (stopped || mine !== serial) return;
     prune();
     if (copies.length) { if (needsBuild(availableIds())) rebuild(); }
     else if (view.gridDebug) syncDebugChunks();
+    await programs?.queue();
   }
   // Called from the existing lamp tint path, including mode-hidden zero. A
   // device gets one stored colour on first sight; subsequent calls allocate
@@ -386,6 +397,7 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
   observeLive();
   return {
     update, setTint, rebuild,
+    warm: () => programs?.warm(),
     get textures() { return textures; },
     get layout() { return layout; },
     get chunks() { return chunks; },
@@ -396,11 +408,11 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
       bytes:textures ? textures.bricks.image.data.byteLength + textures.lamps.image.data.byteLength : 0}),
     stop() {
       if (stopped) return;
-      stopped = true; ++serial; halt.abort(); unsubscribe?.(); listeners.clear();
+      stopped = true; ++serial; halt.abort(); unsubscribe?.(); listeners.clear(); programs?.stop();
       host?.removeEventListener('twinrebuilt', rebuilt); host?.removeEventListener('twinyardrebuilt', rebuilt);
       clearIndices(); textures?.dispose(); chunks.clear(); geometries.clear();
-      // Materials stay patched between mounts. Null samplers cannot re-upload
-      // disposed textures; zero mvBrick indices skip model lighting.
+      // Async clones have been restored/disposed. CPU-only patched originals
+      // keep their hook; null bindings and zero indices prevent stale uploads.
       shared.mvBricks.value = null; shared.mvLamps.value = null;
     },
   };
