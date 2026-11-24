@@ -52,3 +52,9 @@ Several sessions (Claude Code and Codex) often work on this repo at the same tim
 - Reviews are read-only. Report findings as `path:line`, the defect, a concrete failure scenario, and the fix. Verify a finding against the code before reporting it.
 - When a task names a test to make green, make that test green without weakening it, and keep the surrounding behaviour. If the test is wrong, say so instead of changing it.
 - If you find a locked decision in the memory files that the task contradicts, stop and report the conflict rather than picking a side.
+
+## Demo shots
+
+A change adding a new visible surface also adds a named shot to
+`chauffeur/tools/demo_capture.py` and its fake data to `chauffeur/tools/demo_seed.py`,
+so the Product Hub can picture it without real household data.

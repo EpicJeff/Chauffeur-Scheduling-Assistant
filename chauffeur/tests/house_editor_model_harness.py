@@ -44,7 +44,8 @@ import sys
 import tempfile
 import time
 
-os.environ.setdefault('CHAUFFEUR_DATA_DIR', tempfile.mkdtemp(prefix='chauffeur_house_editor_model_'))
+if not os.environ.get('CHAUFFEUR_DATA_DIR'):
+    os.environ['CHAUFFEUR_DATA_DIR'] = tempfile.mkdtemp(prefix='chauffeur_house_editor_model_')
 os.environ.pop('HA_BASE_URL', None)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -88,10 +89,10 @@ def seed(mutate=None):
     twin_store.push_round(plan, 'build')
 
 
-def serve(mutate=None):
+def serve(mutate=None, *, seed_fn=None):
     """The served app (seeded once per process), or None when playwright is missing."""
     if 'served' not in _SERVED:
-        _SERVED['served'] = live_app(lambda: seed(mutate))
+        _SERVED['served'] = live_app(seed_fn or (lambda: seed(mutate)))
     return _SERVED['served']
 
 
@@ -154,13 +155,13 @@ def settle(page, frames=2):
                   frames)
 
 
-def open_editor(page, served, query='tier=high&test=1'):
+def open_editor(page, served, query='tier=high&test=1', *, timeout=None):
     """Sign in, open the editor, wait for the house to draw, and require window.__twinEditor."""
     signed_in(page)
     goto_retry(page, served.url(f'house/editor?{query}'))
-    page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
+    page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=timeout or 90000)
     page.wait_for_function("() => window.__twin && window.__twin.plan && (window.__twin.plan.buildings || []).length > 0"
-                           " && window.__twin.pieceIds(window.__twin.plan.buildings[0].id).length > 0", timeout=60000)
+                           " && window.__twin.pieceIds(window.__twin.plan.buildings[0].id).length > 0", timeout=timeout or 60000)
     if page.locator('#editor-dialog #place-view').is_visible():
         page.click('#place-close')
         page.wait_for_selector('#editor-dialog #place-view', state='hidden', timeout=10000)
