@@ -1,6 +1,45 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.995 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.996 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.996 (2026-11-24, Chromium, NOT device-verified): eave streams are sized by the roof area that drains to them.**
+
+A small overhang now gives thin streams and stops soon after the rain. A big roof, or a roof that other roofs drain onto, keeps heavy streams and runs longest.
+
+**Catchment.** `eaveInstances` (`sky/eave_streams.js`) works out each eave instance's upslope run when instances are built, never per frame.
+- It traces the run along the roof plane's fall line to the ridge or high edge.
+- It crosses continuous slope breaks, such as a steep gable running onto a shallow patio shed.
+- Water from an upper eave that lands on a lower roof is routed down that roof's fall line. It is added to the lower eave over the upper eave's projected width only.
+- Roof-landing downspouts route the same way.
+- One step threshold (`STEP_DROP_M` = 0.08 m) decides continuation, routing and whether an eave draws streams, so no step height loses or double-counts water.
+- A failed trace falls back to the eave's own local run.
+
+**Normalised catchment.** The run normalises to c = run / 20 ft, clamped to 0..1. Downspout pours use the captured roof area over a 15 ft by 20 ft reference, and the share is applied once.
+
+**Shader.**
+- `eaveCatchFlow` scales flow and drying per instance:
+  - catchments under 10 ft (c < 0.5) cut out early as `eaveFlow` falls, and stay thin with no sheet curtains even in a downpour;
+  - c >= 0.5 keeps at least 0.906 of the global flow;
+  - c = 1 is identical to before.
+- On the owner's house:
+  - the 4 ft pool house window overhang shows about 9 thin streams in a downpour and is dry by 40% of the drying curve;
+  - the 2 ft garage awning only drips;
+  - the pool house patio, which the main roof drains onto, reaches c = 1 from a 23.5 ft run.
+
+**Costs** (owner's house, High tier, ANGLE D3D11):
+- Shader: +21 vertex FXC slots, -2 fragment, +0 transcendentals; EaveWater cold compile and link about 543 ms, unchanged.
+- c is packed into the existing `eaveMeta.z`, so +0 attributes, varyings, samplers, programs, draws and triangles, and one fewer uniform vector.
+- CPU: +45 ms cold on an instance rebuild, +0 per frame.
+
+**Known minor follow-ups.**
+- A guttered upper eave less than 0.26 ft above a lower roof may double count (not probed).
+- The pour share drives both width and flow.
+- The fallback run for hips is approximate (never hit on the owner's house).
+
+Tests:
+- node: `test_twin_eave_streams_js` (catchment, routing at 0.10, 0.233 and 0.40 ft steps, area conservation, drying constraints, packing round-trip, pours, flat and pan roofs);
+- neighbours: `test_twin_gutters_js`, `test_twin_gutter_geometry_js`, `test_twin_precipitation_js`;
+- Chromium: `test_twin_gutters_live`.
 
 **v2.499.995 (2026-11-24, Chromium, NOT device-verified): placed models take part in the lighting bake.**
 
