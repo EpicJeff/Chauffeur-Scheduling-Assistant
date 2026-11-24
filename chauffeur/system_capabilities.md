@@ -1,6 +1,24 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.996 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.997 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.997 (2026-11-24, Chromium, no device surface): demo stills from an invented household.**
+
+`chauffeur/tools/demo_capture.py --out <dir> [--shot <name>]... [--timeout <30-600 s>]` writes six PNG stills for the Product Hub: `my-day`, `plan`, `wall-board`, `twin-overview`, `twin-editor`, `twin-gutters`. Measured 81-93 s through the hub on a quiet PC.
+
+**Data.** `demo_seed.py` holds an invented family, week and synthetic cottage, with one explicit list of invented text. It refuses any folder that is not a fresh demo folder.
+
+**Isolation fails closed** (`demo_isolation.py`):
+- the worker gets an allowlisted environment, so tokens on the PC never reach it;
+- credential lookups return nothing, and file, SQLite and network access outside the run is refused before any app import;
+- the browser reaches only the local app;
+- every still first checks the database path, the four demo members and a visible demo event or tile; any mismatch writes no still.
+
+**Output** is staged and published only after the whole run succeeds. A failed run clears the requested shot names and leaves other files alone.
+
+**Data folder.** Startup push keys now honour `CHAUFFEUR_DATA_DIR`. Installs that do not set it, including the add-on, are unchanged.
+
+**Known limits.** A lazily imported credential lookup that is renamed stays blocked, but may not fail the capture. Connectionless async UDP is not guarded; no use is known. The default House overview camera crops long or asymmetric houses with porches, so the demo sets its own camera.
 
 **v2.499.996 (2026-11-24, Chromium, NOT device-verified): eave streams are sized by the roof area that drains to them.**
 
