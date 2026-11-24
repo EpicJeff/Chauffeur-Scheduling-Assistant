@@ -1,6 +1,55 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.992 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.993 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.993 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): gutters and downspouts.** The owner's request: "Roof sections should be able to have gutters and gutters should stop eave stream from occurring on that roof edge. I'll give you bonus points if you can have gutters flow into downspouts and have those downspouts placed at the correct locations." Their rule for placement: "downspouts are on the outside corners - there is never a downspout on an inner corner. They prefer to go down into grass or plant beds, though there are some that flow onto the driveway." Spec: `docs/superpowers/specs/2026-11-23-gutters-downspouts-design.md`; plan: `docs/superpowers/plans/2026-11-23-gutters-downspouts.md`.
+
+**Data** (off by default; existing houses build byte-identical geometry until a gutter is enabled):
+- `building.roofs[].edges[i].gutter` (bool) and `.downspouts` (fractions 0..1 along the authored edge from its first vertex, at most 8; `null` = automatic, `[]` = none). Mirrored onto flattened sections as `gutters{side}` / `downspouts{side}`.
+- Porches (`porch.gutter`) and awnings (`roof.extensions[].gutter`) have their own flag.
+- `gutter_ack: [flags]` on an edge, porch or awning records the person's "Looks fine" for that record's gutter issues. Changing that record's gutter or downspouts clears it. It is metadata: it does not change placement or the bake key.
+- `set_roof_edge` accepts `gutter`, `downspouts` and `gutter_ack` without `setting`. It refuses a gutter on an edge with no eave, judged after the op's own setting (rake edges, a shed's high edge), and refuses turning a guttered edge into a rake. Area vertex insert/delete remaps the fields like `plane_materials`.
+
+**Placement** (`static/twin/gutters.js`, pure and deterministic; `gutterPlacement(plan)` is the single content-keyed cache, bounded at 16 entries, shared by the generator, eave streams, bake and editor):
+- `gutterRuns` joins guttered eave segments into runs: 0.3 ft apart horizontally, and within 3 in vertically on the same roof or 2 in across different roofs.
+- `downspouts` places `ceil(length / 35 ft)` per run, on outside corners of the union footprint below the eave (quadrant test at ±0.3 ft). Never an inner corner, never mid-run.
+- Corners are ranked by landing: grass or a bed, then the driveway or a plain patio or deck. Never a walkway, path, step, stair or water.
+- Mounting is on a wall or a porch post within the overhang + 1 ft. Overhangs up to 4 ft get a horizontal leader under the soffit. Columns outside the porch floor are ignored.
+- No drop passes within 1 ft of an opening on any level; ends within 6 ft of a door lose ties.
+- Each downspout ends in a short curved elbow (owner: "Just a little bend at the bottom with water pouring out is fine"): mouth 0.5 ft from the wall and about 4 in above the surface. Beside a walkway the elbow swivels up to 90° along the wall toward grass or a bed. On a raised porch the pipe continues past the deck rim to the ground.
+- Fallbacks carry flags for the Check list: `no-outside-corner`, `hang`, `stub`, `inner-end`, `clipped-end`, `no-safe-landing`, `no-outlet`, `outlet-blocked` (a gutter jammed against a lower roof gets a flush outlet and a short spill), `merged-override`.
+- A run without its own outlet sets `drainsTo` to a neighbouring outlet. Shares are length-weighted and normalised per outlet set.
+- Speed: downspouts reuse gutterRuns' contexts. The landing sampler builds cap receivers lazily (`createCapSurfaceIndex` in `sky/wet_caps.js`; bit-identical to the eager sampler over 78k test queries).
+
+**Geometry and water:**
+- 5 in K-style gutters along the runs, with mitres and end caps; 2×3 in downspouts with 45° offsets, a leader, the wall drop and a 5-segment formed elbow.
+- Merged into the roof trim batches as surface kind `gutter` (Trim group, defaults to the trim finish). Section and level finish overrides apply.
+- Inner gutter faces share their outer face's lightmap chart.
+- Guttered edges shed no eave streams. Each downspout pours its share from the elbow mouth as an instance in the existing eave-stream draw. Pours follow `eaveRunoff`.
+- Generator version `gutters-1`.
+
+**Editor and Argyle:**
+- An eave-only Gutter toggle on the edge card.
+- Roof card: "Gutters on all eaves" and "Remove all gutters", each one batch (one undo) and disabled when there is nothing to do.
+- Choosing Gable or Clipped on a guttered edge asks first, then sends one batch (gutter off, downspouts automatic, the setting).
+- Porch and awning toggles; awnings are listed in the Scene tree.
+- Downspout handles on a selected guttered roof: drag along the run (writes the authored fraction on release), right-click to remove; Add downspout (picks a free safe corner; disabled at 8 or when none is free) and Reset to automatic on the card.
+- Gutter issues in the Check list: one row per physical issue, plain names, Looks fine / Fix it.
+- Argyle's edit tool documents the gutter fields and the acknowledgement flags.
+
+**Owner's house, gutters on every eave, porch and awning, against off:**
+- **Placement:** 22 runs and 22 downspouts. None on an inner corner and none within 1 ft of an opening; every run drains. 12 are clean, and 10 are flagged: mostly short eave pieces boxed in by a lower roof, window or garage door, plus two over the rear patio.
+- **Costs:**
+  - **Geometry and draws:** +2,460 triangles, +0 draws, +0 programs, +0 samplers.
+  - **Water:** 845 eave streams become 22 pours. The first rainy frame is 582 → 440 ms.
+  - **Placement time per rebuild:** about 240 ms cold and 90-150 ms warm inside `buildTwin`, after a roof, wall or site edit; 0 ms on a memo hit. This is above the 80 ms target.
+  - **Bake:** atlas +1.7% charts and +0.3% area, no new pages. A full editor bake (2 lights) takes 104 → 108 s.
+- **Found in the owner's data:** two columns on the back porch at x = 33.3 ft lie 2.3 ft outside its floor and render floating. This is pre-existing, and the owner will fix it in the editor.
+
+**Tests:**
+- New: `test_twin_gutters_model` 26, `test_twin_gutters_js` 80, `test_twin_gutter_geometry_js` 23, `test_twin_gutters_editor_js` 23, `test_twin_lazy_caps_js` 4, `test_twin_gutters_live` 1, `test_house_editor_gutters_live` 1.
+- Neighbours green: eave streams, bake fingerprint and atlas, surface kinds, wet receivers, checks, scene tree, house defaults, covered sky, precipitation.
+- `test_house_design_tool`'s 6,000-character schema gate was already failing on main (6,186). This change makes it 6,714; every other scenario in that file passes.
 
 **v2.499.992 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): surfaces under a roof stop taking blue sky light; the sky fill is softer everywhere.** The owner: "Is it me or does the top surface of this patio look way too blue-ish?", about the covered front porch. The vertical faces of the same material looked neutral.
 
