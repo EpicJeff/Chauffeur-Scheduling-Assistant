@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.993 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.994 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.994 (2026-11-23, Chromium, NOT device-verified): the editor's Check list can frame a gutter issue again.**
+
+The owner reported this from the live editor: `Uncaught TypeError: view.setCameraState is not a function at focusDownspout (scene_tools.js)`.
+
+**Cause.** `setCameraState` existed only in the `?test=1` hook block of `twin_view.js`. Every browser test ran with test hooks, so walking Check onto a gutter issue threw on real pages.
+
+**Fix.**
+- `setCameraState({position, target})` is now part of the view's production API.
+- `tests/test_house_editor_gutters_live.py` gains `scenario_check_focus_without_test_hooks`. It opens the editor without `?test=1` on a pool house whose guttered sections have every downspout removed, walks Check to the flagged gutter issue, and asserts:
+  - the camera target moves;
+  - no page error occurs.
+- The scenario fails on v2.499.993 with "view.setCameraState is missing without test hooks".
+
+Tests: `test_house_editor_gutters_live` 2/2, `test_twin_gutters_editor_js` and `test_twin_checks_js` green.
 
 **v2.499.993 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): gutters and downspouts.** The owner's request: "Roof sections should be able to have gutters and gutters should stop eave stream from occurring on that roof edge. I'll give you bonus points if you can have gutters flow into downspouts and have those downspouts placed at the correct locations." Their rule for placement: "downspouts are on the outside corners - there is never a downspout on an inner corner. They prefer to go down into grass or plant beds, though there are some that flow onto the driveway." Spec: `docs/superpowers/specs/2026-11-23-gutters-downspouts-design.md`; plan: `docs/superpowers/plans/2026-11-23-gutters-downspouts.md`.
 

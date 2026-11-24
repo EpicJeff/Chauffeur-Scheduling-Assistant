@@ -927,6 +927,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const x = point.x / FT - (b.position?.[0] || 0), y = -point.z / FT - (b.position?.[1] || 0);
       return [Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y];
     },
+    // Production camera placement (the editor's Check focus uses it); tests
+    // read it back through cameraState().
+    setCameraState({ position, target }) {
+      cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
+    },
     // The Top camera in perspective, straight above the focused room or floor.
     setTopCamera(key) {
       view.setCamera('top');
@@ -1966,9 +1971,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
     // Retain the late-sky/test hook; the atmosphere now owns the fixed environment.
     applySky(texture) { texture?.dispose(); updateTime(false, true); },
-    setCameraState({ position, target }) {
-      cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
-    },
     roofStats(buildingId) {
       let triangles = 0, maxError = 0;
       for (const [id, roof] of twin?.roofSurfaces || []) {

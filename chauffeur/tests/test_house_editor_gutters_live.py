@@ -27,20 +27,43 @@ def fixture(plan):
     return plan
 
 
+def guttered_fixture(plan):
+    # Every sloped edge of the pool house guttered with all downspouts removed,
+    # so placement must report a flagged no-outlet stub for Check to walk to.
+    # The household pool house has flattened roof sections only (no authored
+    # roofs), so the flags go on the sections; rake sides are ignored by placement.
+    plan = fixture(plan)
+    for section in H.building(plan, BID)['roof']['sections']:
+        section['gutters'] = {side: True for side in ('y0', 'x1', 'y1', 'x0')}
+        section['downspouts'] = {side: [] for side in ('y0', 'x1', 'y1', 'x0')}
+    return plan
+
+
 @contextmanager
-def editor():
-    served = H.serve(fixture)
+def editor(query='tier=low&test=1', build=fixture):
+    served = H.serve(build)
     assert served is not None, 'Playwright is required'
     from services import twin_store
     twin_store.start_over()
-    twin_store.push_round(fixture(H.household_plan()), 'build')
+    twin_store.push_round(build(H.household_plan()), 'build')
     browser = served.browser(launch_args=H.GPU_ARGS)
     try:
         with browser as page:
             dialogs = []
             page.on('dialog', lambda dialog: (dialogs.append(dialog.type), dialog.dismiss()))
-            H.open_editor(page, served, query='tier=low&test=1')
-            H.choose_floor(page, f'{BID}:L1')
+            if 'test=1' in query:
+                H.open_editor(page, served, query=query)
+                H.choose_floor(page, f'{BID}:L1')
+            else:
+                # Production page: no test hooks, so open it without the harness helpers that need them.
+                H.signed_in(page)
+                H.goto_retry(page, served.url(f'house/editor?{query}'))
+                page.wait_for_function('window.__editor && window.__editor.ready === true', timeout=90000)
+                page.wait_for_function("() => window.__twin && window.__twin.plan && (window.__twin.plan.buildings || []).length > 0", timeout=60000)
+                if page.locator('#editor-dialog #place-view').is_visible():
+                    page.click('#place-close')
+                    page.wait_for_selector('#editor-dialog #place-view', state='hidden', timeout=10000)
+                H.settle(page)
             yield page
             assert not dialogs, dialogs
             assert not H.unexpected(browser.errors), browser.errors
@@ -133,6 +156,29 @@ def scenario_enable_gutters_drag_downspout_undo():
         page.screenshot(path=str(SHOTS / 'gutter-check-list.png'))
 
 
+def scenario_check_focus_without_test_hooks():
+    # Production pages have no ?test=1 hooks; walking Check onto a gutter issue
+    # frames its downspout through the view's real camera API.
+    with editor(query='tier=low', build=guttered_fixture) as page:
+        assert page.evaluate("typeof window.__twin.setCameraState === 'function'"), \
+            'view.setCameraState is missing without test hooks'
+        page.locator('#editor-flag-count').wait_for(state='attached')
+        before = page.evaluate("window.__twin.controls.target.toArray()")
+        page.evaluate("document.getElementById('editor-flag-count').click()")
+        check = page.locator('#check-card')
+        check.wait_for(state='visible')
+        for _ in range(100):
+            if check.get_attribute('data-check-kind') == 'gutter':
+                break
+            check.get_by_role('button', name='Skip for now', exact=True).click()
+        assert check.get_attribute('data-check-kind') == 'gutter', 'no gutter issue in Check'
+        H.settle(page, 3)
+        after = page.evaluate("window.__twin.controls.target.toArray()")
+        assert after != before, ('Check did not frame the downspout', before, after)
+        page.screenshot(path=str(SHOTS / 'gutter-check-focus-production.png'))
+        # editor() asserts no page errors (the TypeError this guards against) on exit.
+
+
 if __name__ == '__main__':
     print(f'screenshots: {SHOTS}')
-    H.run([scenario_enable_gutters_drag_downspout_undo])
+    H.run([scenario_enable_gutters_drag_downspout_undo, scenario_check_focus_without_test_hooks])
