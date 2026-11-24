@@ -292,6 +292,12 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     for (const key of cache.keys()) if (!wanted.has(key)) cache.delete(key);
     for (const key of failures.keys()) if (!wanted.has(key)) failures.delete(key);
   }
+  const syncDebugChunks = () => {
+    chunks.clear();
+    for (const id of availableIds()) chunks.set(id, cache.get(manifest.lights[id].grid));
+    notify();
+  };
+
   async function update(nextFresh, nextManifest = manifest, nextLights = lights) {
     if (stopped) return;
     freshIds = new Set(nextFresh); manifest = nextManifest; lights = nextLights;
@@ -308,11 +314,6 @@ export function mountModelLighting(view, { manifest, layout, fresh, tints, api =
     initialized = true;
     const geometryChanged = copiesDirty;
     collectCopies(); prune();
-    const syncDebugChunks = () => {
-      chunks.clear();
-      for (const id of availableIds()) chunks.set(id, cache.get(manifest.lights[id].grid));
-      notify();
-    };
     if (!copies.length) {
       clearIndices(); geometries.clear(); table = []; fills = []; rows.clear(); installed.clear();
       loadedSignature = '';

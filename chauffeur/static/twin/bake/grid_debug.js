@@ -3,7 +3,7 @@
 // Layer 31 excludes the cloud from bake, AO, reflection probes and view fades;
 // layer 0 stays enabled so the main camera draws it, and raycast is a no-op.
 import * as THREE from '../../vendor/three-r187/three.module.js';
-import { gridPoints, GRID_INVALID } from './grid_layout.js';
+import { gridPoints, cellInBlock, GRID_INVALID } from './grid_layout.js';
 
 export function mountGridDebug(view, modelLighting = null) {
   const geometry = new THREE.BufferGeometry();
@@ -98,6 +98,7 @@ export function mountGridDebug(view, modelLighting = null) {
   }
 
   function clearPoints(chunksSize = 0) {
+    geometry.dispose();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(0), 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(0), 3));
     points.visible = false;
@@ -119,7 +120,18 @@ export function mountGridDebug(view, modelLighting = null) {
       return;
     }
 
-    const count = chunk.indices.length;
+    const layout = source.layout;
+    // Chunk indices are sorted global addresses. Filter rectangular padding,
+    // retaining chunk offsets so emitter columns still address the right bytes.
+    let blockIndex = 0;
+    const kept = [];
+    for (let i = 0; i < chunk.indices.length; i++) {
+      const index = chunk.indices[i];
+      while (layout && blockIndex + 1 < layout.blocks.length && layout.blocks[blockIndex + 1].first <= index) blockIndex++;
+      const block = layout?.blocks[blockIndex];
+      if (!layout || block && cellInBlock(layout, block, index - block.first)) kept.push(i);
+    }
+    const count = kept.length;
     const emitters = chunk.emitters || 1;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
@@ -127,14 +139,14 @@ export function mountGridDebug(view, modelLighting = null) {
     const vals = chunk.values;
 
     for (let i = 0; i < count; i++) {
-      const gi = idx[i] * 3;
+      const ci = kept[i], gi = idx[ci] * 3;
       const o = i * 3;
       positions[o] = allPoints[gi];
       positions[o + 1] = allPoints[gi + 1];
       positions[o + 2] = allPoints[gi + 2];
 
       if (emitters === 1) {
-        const v = vals[i];
+        const v = vals[ci];
         if (v === GRID_INVALID) {
           colors[o] = 1; colors[o + 1] = 0; colors[o + 2] = 0;
         } else {
@@ -142,7 +154,7 @@ export function mountGridDebug(view, modelLighting = null) {
           colors[o] = c; colors[o + 1] = c; colors[o + 2] = c;
         }
       } else {
-        const base = i * emitters;
+        const base = ci * emitters;
         let maxV = -1;
         for (let e = 0; e < emitters; e++) {
           const v = vals[base + e];
@@ -157,10 +169,11 @@ export function mountGridDebug(view, modelLighting = null) {
       }
     }
 
+    geometry.dispose();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.computeBoundingSphere();
-    points.visible = true;
+    points.visible = count > 0;
     countEl.textContent = `${count} pts`;
     view.render?.();
   }

@@ -16,7 +16,7 @@ import { invalidateMaterialReach } from './reach.js';
 import { releaseBakeSource, bakeReceiverRoots, bakeModelRoot, prepareBakeModels } from './source.js';
 import { matchesEntry, pageDamage, cheapSignatures, realtimeCurrent } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
-import { gridLayout } from './grid_layout.js';
+import { gridLayout, GRID_MASK_RULE } from './grid_layout.js';
 import { mountModelLighting } from './model_lighting.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -178,6 +178,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
   let failure = '', failureSource = null, errorReason = null, manifestText = null, initialized = false, mounting = null, manifestRead = false;
   let editorKey = null, editorManifest = null, editedRound = false, materialDirty = false;
+  let staleGrids = [];
+  const presentGrids = new Set();
   let blockReason = blocked();
   let authPaused = false, manualWait = false, retryAt = null, retryTimer = null, retryAttempts = 0;
   let hiddenSince = document.hidden ? Date.now() : null, forceIntent = null, resumePending = false;
@@ -324,17 +326,18 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       : (running && progress.total ? `Baking lights ${progress.done} of ${progress.total}${progress.grid?.points ? ` · Grid ${progress.grid.points} points` : ''}` : '');
     if (mode === 'manual') {
       if (!message && !running) {
-        const gridNote = formatBakeGridStatus(progress.grid, models?.stats?.());
+        const gridNote = formatBakeGridStatus(progress.grid);
         const upToDate = gridNote ? `Lighting is up to date · ${gridNote}` : 'Lighting is up to date';
         status.textContent = !['high', 'max'].includes(view.tier) ? 'Baking needs High or Max quality'
           : disabledReason ? disabledReason
           : !permissionChecked ? 'Checking baked lighting…' : !allowed ? 'Only a parent can bake lighting'
           : !manifestRead ? 'Checking baked lighting…' : !lights.length ? 'Lighting is up to date'
-          : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} light${stale.length === 1 ? '' : 's'}` : upToDate;
+          : stale.length || inspectOnly && editorManifest?.complete !== true ? editedRound ? 'Lighting out of date since your edits' : `Lighting out of date: ${stale.length} light${stale.length === 1 ? '' : 's'}`
+          : staleGrids.length ? `Lighting grid out of date: ${staleGrids.length} light${staleGrids.length === 1 ? '' : 's'}` : upToDate;
       }
       if (blockReason) status.textContent = blockReason;
       meter.hidden = !running || !progress.total; meter.max = progress.total || 1; meter.value = progress.done;
-      startButton.hidden = !allowed || !(stale.length || inspectOnly && lights.length && editorManifest?.complete !== true) || running || !!failure || resumePending;
+      startButton.hidden = !allowed || !(stale.length || staleGrids.length || inspectOnly && lights.length && editorManifest?.complete !== true) || running || !!failure || resumePending;
       startButton.disabled = !manifestRead || authPaused || layerOverflow || !!blockReason;
       button.hidden = !allowed;
     }
@@ -611,6 +614,14 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     editorKey = latest?.key || null; editorManifest = m;
     if (text !== manifestText || !manifestRead) {
       present.clear(); pageErrors.clear();
+      presentGrids.clear();
+      for (const e of Object.values(m?.lights || {})) {
+        if (!e.grid || !e.gridLayout || e.gridRule !== GRID_MASK_RULE) continue;
+        const r = await api(`api/house/bakes/${editorKey}/grid/${e.grid}.bin`, {headers:{'If-None-Match':'*'}});
+        if (!valid() || mine !== generation) return;
+        if (r.status === 304 || r.ok) presentGrids.add(e.grid);
+        else if (r.status !== 404) throw bakeHTTPError('Could not check the lighting grid', r.status);
+      }
       for (const p of new Set(Object.values(m?.lights || {}).flatMap(e => e.pages || [e.page]))) {
         const saved = m?.pageIntegrity?.[p];
         // Unsigned legacy pages remain conservatively stale until a press.
@@ -644,6 +655,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     resumePending = !!m?.forceRound;
     stale = lights.filter(l => !(currentInputs && !m?.lights?.[l.device] && realtimeCurrent(m, l.device, cheap[l.device])) &&
       (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
+    staleGrids = lights.filter(l => fresh.has(l.device) && !presentGrids.has(m.lights[l.device]?.grid)).map(l => l.device);
     if (!running) progress = { done: lights.length - stale.length, total: lights.length, grid: progress.grid };
     showProgress();
   }
@@ -757,7 +769,6 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       const manifest = {...m, key:atlas.key};
       if (!models) {
         models = mountModelLighting(view, {manifest, layout:gridLayout(round), fresh, tints, api, lights});
-        if (mode === 'manual') models.subscribe?.(() => showProgress());
         view.gridDebug?.attach?.(models);
       }
       models.update(fresh, manifest, lights).catch(reportError);
@@ -832,7 +843,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         codec ||= workerCodec();
       }
       baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly,
-        onGrid(grid) { if (grid.points) progress = {...progress, grid}; showProgress(); } });
+        damagedGrids: inspectOnly ? Object.values(editorManifest?.lights || {}).filter(e => e.grid && !presentGrids.has(e.grid)).map(e => e.grid) : [],
+        onGrid(grid) {
+          if (grid.points) progress = {...progress, grid};
+          else progress = {...progress, grid:{...progress.grid, foldedOrDropped:grid.foldedOrDropped || 0}};
+          showProgress();
+        } });
       const initialStale = await baker.staleLights();
       if (!baker.forcePending()) forceIntent = null;
       if (!valid() || mine !== generation || input !== lightsKey) return;
@@ -843,6 +859,9 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (!baker.forcePending()) forceIntent = null;
         if (!id || !valid() || mine !== generation || input !== lightsKey) break;
         baked.push(id); progress = bakeProgress(); stale = await baker.staleLights(); showProgress();
+        // A repaired missing chunk can leave the manifest byte-for-byte equal.
+        // Recheck existence after this person's step rather than keeping 404s.
+        if (inspectOnly) manifestText = null;
         await loadPages();
       }
       // Publish completion for the current house round.

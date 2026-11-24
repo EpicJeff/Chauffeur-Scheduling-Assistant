@@ -57,7 +57,7 @@ export function collectStaticOccluders(scene, view = null) {
 // Flat AABB BVH over world-space triangles inside optional bounding box(es).
 // Double-sided Möller–Trumbore ensures single-sided roofs, ceilings, floors and
 // walls stop rays from either side.
-export function buildOccluderBVH(meshes, bounds = null) {
+export function buildOccluderBVH(meshes, bounds = null, { facing = false } = {}) {
   const boxes = !bounds ? null : Array.isArray(bounds) ? bounds : [bounds];
   const boxCount = boxes ? boxes.length : 0;
   const bMinX = new Float32Array(boxCount), bMinY = new Float32Array(boxCount), bMinZ = new Float32Array(boxCount);
@@ -92,9 +92,16 @@ export function buildOccluderBVH(meshes, bounds = null) {
     maxTris += (count / 3) | 0;
   }
 
-  if (!maxTris) return { triCount: 0, nodeCount: 0, castRay: (_ox, _oy, _oz, _dx, _dy, _dz, _tMin, tMax) => tMax };
+  const empty = () => {
+    const miss = (_ox, _oy, _oz, _dx, _dy, _dz, _tMin, tMax) => tMax;
+    return {triCount:0, nodeCount:0, castRay:miss, ...(facing ? {castRayFacing:miss} : {})};
+  };
+  if (!maxTris) return empty();
 
   const tris = new Float32Array(maxTris * 9);
+  // Only probe validity needs material-facing metadata. Cone callers retain
+  // their original allocation and ray traversal, including double-sided hits.
+  const signs = facing ? new Int8Array(maxTris) : null;
   let triCount = 0;
   for (let m = 0; m < keptMeshes.length; m++) {
     const mesh = keptMeshes[m], geom = mesh.geometry, pos = geom.attributes.position;
@@ -103,7 +110,20 @@ export function buildOccluderBVH(meshes, bounds = null) {
     const offset = pos.isInterleavedBufferAttribute ? pos.offset : 0;
     const e = mesh.matrixWorld.elements;
     const e0 = e[0], e1 = e[1], e2 = e[2], e4 = e[4], e5 = e[5], e6 = e[6], e8 = e[8], e9 = e[9], e10 = e[10], e12 = e[12], e13 = e[13], e14 = e[14];
+    const mirror = signs && mesh.matrixWorld.determinant() < 0 ? -1 : 1;
+    const materialSign = mat => (mat?.side === THREE.BackSide ? -1 : 1) * mirror;
+    const defaultSign = signs ? materialSign(Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) : 1;
+    const groups = signs && Array.isArray(mesh.material) ? geom.groups.map(g => ({
+      start:g.start, end:g.start + g.count, sign:materialSign(mesh.material[g.materialIndex || 0]),
+    })).sort((a,b) => a.start - b.start) : null;
+    let groupIndex = 0;
     for (let i = 0; i + 2 < count; i += 3) {
+      let sign = defaultSign;
+      if (groups) {
+        while (groupIndex < groups.length && groups[groupIndex].end <= i) groupIndex++;
+        const group = groups[groupIndex];
+        if (group && i >= group.start) sign = group.sign;
+      }
       const a = (idxArr ? idxArr[i] : i) * stride + offset;
       const b = (idxArr ? idxArr[i + 1] : i + 1) * stride + offset;
       const c = (idxArr ? idxArr[i + 2] : i + 2) * stride + offset;
@@ -132,11 +152,12 @@ export function buildOccluderBVH(meshes, bounds = null) {
       tris[o] = v0x; tris[o + 1] = v0y; tris[o + 2] = v0z;
       tris[o + 3] = v1x - v0x; tris[o + 4] = v1y - v0y; tris[o + 5] = v1z - v0z;
       tris[o + 6] = v2x - v0x; tris[o + 7] = v2y - v0y; tris[o + 8] = v2z - v0z;
+      if (signs) signs[triCount] = sign;
       triCount++;
     }
   }
 
-  if (!triCount) return { triCount: 0, nodeCount: 0, castRay: (_ox, _oy, _oz, _dx, _dy, _dz, _tMin, tMax) => tMax };
+  if (!triCount) return empty();
   const tBounds = new Float32Array(triCount * 6);
   const centroids = new Float32Array(triCount * 3);
   const order = new Int32Array(triCount);
@@ -212,7 +233,9 @@ export function buildOccluderBVH(meshes, bounds = null) {
 
   // Reorder triangles into leaf-contiguous layout for tight cache locality.
   const packed = new Float32Array(triCount * 9);
+  const packedSigns = signs ? new Int8Array(triCount) : null;
   for (let i = 0; i < triCount; i++) {
+    if (packedSigns) packedSigns[i] = signs[order[i]];
     const src = order[i] * 9, dst = i * 9;
     for (let k = 0; k < 9; k++) packed[dst + k] = tris[src + k];
   }
@@ -278,7 +301,54 @@ export function buildOccluderBVH(meshes, bounds = null) {
     return closest;
   }
 
-  return { triCount, nodeCount, castRay };
+  // Separate signed traversal keeps the cone hot path byte-for-byte unchanged.
+  function castRayFacing(ox, oy, oz, dx, dy, dz, tMin, tMax) {
+    const ix = Math.abs(dx) > 1e-12 ? 1 / dx : (dx >= 0 ? 1e30 : -1e30);
+    const iy = Math.abs(dy) > 1e-12 ? 1 / dy : (dy >= 0 ? 1e30 : -1e30);
+    const iz = Math.abs(dz) > 1e-12 ? 1 / dz : (dz >= 0 ? 1e30 : -1e30);
+    let closest = tMax, back = false;
+    if (hitBox(0, ox, oy, oz, ix, iy, iz, tMin, closest) < 0) return tMax;
+    let sp = 0;
+    stack[sp++] = 0;
+    while (sp > 0) {
+      const id = stack[--sp], m0 = nodeMeta[id * 2], m1 = nodeMeta[id * 2 + 1];
+      if (m1 <= 0) {
+        const end = m0 - m1;
+        for (let i = m0; i < end; i++) {
+          const o = i * 9;
+          const v0x = packed[o], v0y = packed[o + 1], v0z = packed[o + 2];
+          const e1x = packed[o + 3], e1y = packed[o + 4], e1z = packed[o + 5];
+          const e2x = packed[o + 6], e2y = packed[o + 7], e2z = packed[o + 8];
+          const px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+          const det = e1x * px + e1y * py + e1z * pz;
+          if (det > -1e-10 && det < 1e-10) continue;
+          const invDet = 1 / det;
+          const tx = ox - v0x, ty = oy - v0y, tz = oz - v0z;
+          const u = (tx * px + ty * py + tz * pz) * invDet;
+          if (u < -1e-6 || u > 1 + 1e-6) continue;
+          const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+          const v = (dx * qx + dy * qy + dz * qz) * invDet;
+          if (v < -1e-6 || u + v > 1 + 1e-6) continue;
+          const t = (e2x * qx + e2y * qy + e2z * qz) * invDet;
+          if (t >= tMin && t < closest) { closest = t; back = det * packedSigns[i] < 0; }
+        }
+      } else {
+        const dL = hitBox(m0 * 6, ox, oy, oz, ix, iy, iz, tMin, closest);
+        const dR = hitBox(m1 * 6, ox, oy, oz, ix, iy, iz, tMin, closest);
+        if (dL >= 0 && dR >= 0) {
+          if (dL < dR) { stack[sp++] = m1; stack[sp++] = m0; }
+          else { stack[sp++] = m0; stack[sp++] = m1; }
+        } else if (dL >= 0) {
+          stack[sp++] = m0;
+        } else if (dR >= 0) {
+          stack[sp++] = m1;
+        }
+      }
+    }
+    return back ? -closest : closest;
+  }
+
+  return { triCount, nodeCount, castRay, ...(facing ? {castRayFacing} : {}) };
 }
 
 export function createConeMaterials() {

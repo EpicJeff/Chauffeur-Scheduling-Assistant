@@ -351,6 +351,44 @@ function makeView() {
   console.log('Passed: test_editor_status_text_format');
 }
 
+
+{
+ const {view,host,scene}=makeView();
+ const plan=structuredClone(view.plan);
+ plan.buildings[0].rooms[0].polygon=[[0,0],[4,0],[4,2],[2,2],[2,4],[0,4]];
+ const l=gridLayout(plan), idx=Uint32Array.from({length:l.count},(_,i)=>i);
+ const dbg=mountGridDebug(view,{layout:l,chunks:new Map([['a',{indices:idx,values:new Uint8Array(l.count).fill(255),emitters:1}]])});
+ const pts=scene.children.find(o=>o.isPoints);let disposed=0;
+ pts.geometry.addEventListener('dispose',()=>disposed++);
+ dbg.setLamp('a');
+ const {cellInBlock}=await import(file('static/twin/bake/grid_layout.js'));
+ const expected=[];
+ for(const b of l.blocks)for(let i=0;i<b.dims.reduce((a,v)=>a*v,1);i++)if(cellInBlock(l,b,i))expected.push(b.first+i);
+ const p=gridPoints(l), actual=pts.geometry.attributes.position.array;
+ assert.equal(actual.length,expected.length*3);
+ assert.ok(expected.length<l.count,'L shape has padding');
+ expected.forEach((v,i)=>assert.deepEqual([...actual.slice(i*3,i*3+3)],[...p.slice(v*3,v*3+3)]));
+ dbg.setLamp('a');dbg.setLamp('');assert.equal(disposed,3,'switch/off releases previous GPU attributes');
+ dbg.stop();host.remove();console.log('Passed: test_l_shape_skips_padding_and_disposes_switch_buffers');
+}
+{
+ for(const flag of [false,true]) {
+  const {view,host}=makeView();if(flag)view.gridDebug={};let reads=0;
+  const bytes=await encodeGridChunk({layoutHash:layout.hash,device:'a',emitters:1,indices:new Uint32Array([0]),values:new Uint8Array([254])});
+  const models=mountModelLighting(view,{manifest:{key:'atlas',lights:{a:{grid:'g',gridLayout:layout.hash}}},layout,fresh:new Set(['a']),tints:new Map(),lights:[{device:'a',absolute:true,at:[2,2,6],range:25}],api:async()=>{reads++;return new Response(bytes);}});
+  await models.update(['a']);assert.equal(reads,flag?1:0);assert.equal(models.chunks.size,flag?1:0);assert.equal(models.stats().bricks,0);
+  models.stop();host.remove();
+ }
+ console.log('Passed: test_no_models_debug_flag_fetch_boundary');
+}
+
+
+{
+ const {view,host,scene}=makeView();
+ const debug=mountGridDebug(view,{points:new Float32Array([1,2,3]),chunks:new Map([['a',{indices:new Uint32Array([0]),values:new Uint8Array([255]),emitters:1}]])});
+ debug.setLamp('a');assert.equal(scene.children.find(o=>o.isPoints).geometry.attributes.position.count,1);
+ debug.stop();host.remove();console.log('Passed: test_debug_explicit_points_without_layout');
+}
 process.exit(0);
 """
 

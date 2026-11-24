@@ -207,6 +207,7 @@ function fakeServer({ leaseRequired = false } = {}) {
         grids.set(id, b);
         return answer(200, '{}', 'application/json');
       }
+      if (grids.has(id) && call.inm === '*') return answer(304,null,null);
       return grids.has(id) ? answer(200, grids.get(id), 'application/octet-stream') : answer(404, '{}', 'application/json');
     }
     m = p.match(/^api\/house\/bakes\/([0-9a-f]{16,64})\/(\d+)\.(\w+)$/);
@@ -424,6 +425,49 @@ check('test_forced_grid_reaccumulates_and_layout_mismatch_cannot_reuse', async (
   await baker.settle();
   assert.deepEqual(baker.progress().grid,counters,'cache release preserves counters');
   baker.cancel();assert.deepEqual(baker.progress().grid,counters);
+});
+
+
+check('test_grid_mask_version_changes_only_grid_and_rebakes_without_page_writes', async()=>{
+ const {fingerprint}=await import(file('static/twin/bake/atlas.js'));
+ const ctx=await setup(),server=fakeServer();
+ const packed=B.bakeLayout(ctx.atlas,LAYOUT,[k1]);
+ const l=packed.lights[0],slot=packed.slots.k1;
+ function priorKey(models){
+  const hash=fingerprint();
+  hash.add(JSON.stringify([l.signature?'light-slots-9':'light-slots-8',l.reach||ctx.atlas.key,l.device,l.at,...(models?[l.occluders||'']:[]),...(l.signature?['fixtures-2',l.signature,...(l.kind===3?[]:[null])]:[])]));
+  if(slot.assignments){const rank=new Uint8Array(2);for(const a of [...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0)){hash.add(a.chartKey);rank[0]=a.bank;rank[1]=a.channel;hash.add(rank);}}
+  else hash.add(JSON.stringify([slot.bank,slot.channel]));
+  return hash.key();
+ }
+ assert.equal(B.lightKey(ctx.atlas,l,slot),priorKey(true),'page key unchanged');
+ assert.notEqual(B.gridKey(ctx.atlas,l,slot),priorKey(false),'mask version changes grid key');
+ await bakeAll(makeBaker(ctx,server,[k1]));
+ const m=server.manifests.get(ctx.atlas.key);m.lights.k1.grid=priorKey(false);
+ const before=server.calls.length, pages=new Map(server.pages), baker=makeBaker(ctx,server,[k1]);
+ assert.deepEqual(await baker.staleLights(),['k1'],'old grid triggers pressed bake');
+ assert.deepEqual(await bakeAll(baker),['k1']);await baker.settle();
+ assert.ok(server.calls.slice(before).some(c=>c.method==='POST'&&c.path.includes('/grid/')));
+ assert.ok(!server.calls.slice(before).some(c=>c.method==='POST'&&c.path.endsWith('.png')),'fresh lighting pages never uploaded');
+ assert.deepEqual(server.pages,pages,'page bytes preserved');
+ assert.equal(server.manifests.get(ctx.atlas.key).lights.k1.grid,packed.entries.k1.grid);
+});
+
+
+check('test_grid_only_reused_receipt_does_not_render',async()=>{
+ const ctx=await setup(),server=fakeServer();await bakeAll(makeBaker(ctx,server,[k1]));
+ const m=server.manifests.get(ctx.atlas.key),good=structuredClone(m.lights.k1);
+ m.lights.k1.gridLayout='0'.repeat(32);m.lights.receipt=good;
+ const baker=makeBaker(ctx,server,[k1]),renders=ctx.renderer.log.renders,since=server.calls.length;
+ assert.deepEqual(await baker.staleLights(),['k1']);assert.equal(await baker.bakeNext(),'k1');
+ assert.equal(ctx.renderer.log.renders,renders,'reusable grid needs no page-0/cube work');
+ assert.ok(!server.writes(since).some(c=>c.method==='POST'),'only the manifest is updated');
+});
+check('test_low_baker_settle_with_placed_copies_is_safe',async()=>{
+ const ctx=await setup('low');ctx.view.plan=structuredClone(ctx.view.plan);
+ ctx.view.plan.site={...ctx.view.plan.site,furniture:[{id:'copy',kind:'chair',at:[0,0]}]};
+ const server=fakeServer(),baker=makeBaker(ctx,server,[k1]);
+ assert.equal(await baker.settle(),false);assert.equal(baker.progress().grid.foldedOrDropped,0);assert.equal(server.calls.length,0);
 });
 
 check('test_grid_mask_cancellation_stops_before_any_upload', async () => {

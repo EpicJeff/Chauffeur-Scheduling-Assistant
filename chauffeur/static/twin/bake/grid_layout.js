@@ -14,15 +14,19 @@ export const YARD_SPACING = YARD_SPACING_FT * FT;
 export const YARD_HEIGHT_FT = 10;
 export const YARD_LAYERS = 5;
 export const GRID_INVALID = 255;
+// Cheap manifest evidence for the editor, and part of grid-only chunk identity.
+export const GRID_MASK_RULE = 'backface-3-close-2-0.5';
 
+// Fixed 8-degree rotation about a skew axis avoids grazing lattice-aligned
+// siding and stair faces while keeping six balanced, deterministic directions.
+const tilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 2, 3).normalize(), 8 * Math.PI / 180);
 const RAY_DIRS = [
   [1, 0, 0], [-1, 0, 0],
   [0, 1, 0], [0, -1, 0],
   [0, 0, 1], [0, 0, -1],
-];
+].map(v => new THREE.Vector3(...v).applyQuaternion(tilt).toArray());
 const RAY_EPS = 1e-4;
 const RAY_MAX = 1e4;
-const RAY_MAX_HITS = 256;
 
 const quant = v => Math.round((v || 0) * 1e6);
 
@@ -245,6 +249,17 @@ export function pointsInRange(layout, points, source, range) {
   return new Uint32Array(hits);
 }
 
+// Cell is the block-local flat address, including rectangular padding cells.
+// Keep these addresses in chunks for interpolation, but omit them in debug.
+export function cellInBlock(layout, b, cell) {
+  const [nx, ny, nz] = b.dims;
+  if (cell < 0 || cell >= nx * ny * nz) return false;
+  const ix = cell % nx, iy = Math.floor(cell / nx) % ny, iz = Math.floor(cell / (nx * ny));
+  const spFt = b.spacing / FT;
+  return !(b.poly?.length >= 3 && !inPolygon(b.poly, b.origin[0] + (ix + .5) * spFt, b.origin[1] + (iy + .5) * spFt) ||
+    b.kind === 'room' && Number.isFinite(b.heightFt) && (iz + .5) * spFt > b.heightFt + 1e-6);
+}
+
 // Optional indices produce a compact mask in that exact order. The baker uses
 // small subsets; legacy callers can still request the complete mask explicitly.
 export function insideMask(points, bvh, layout, indices = null) {
@@ -258,29 +273,20 @@ export function insideMask(points, bvh, layout, indices = null) {
       const mid = (lo + hi) >>> 1;
       if (layout.blocks[mid].first <= i) lo = mid; else hi = mid;
     }
-    const b = layout.blocks[lo], [nx, ny] = b.dims, cell = i - b.first;
-    const ix = cell % nx, iy = Math.floor(cell / nx) % ny, iz = Math.floor(cell / (nx * ny));
-    const spFt = b.spacing / FT;
-    if (b.poly?.length >= 3 && !inPolygon(b.poly, b.origin[0] + (ix + .5) * spFt, b.origin[1] + (iy + .5) * spFt) ||
-        b.kind === 'room' && Number.isFinite(b.heightFt) && (iz + .5) * spFt > b.heightFt + 1e-6) {
+    const b = layout.blocks[lo];
+    if (!cellInBlock(layout, b, i - b.first)) {
       mask[n] = 1; continue;
     }
     if (!bvh?.triCount) continue;
     const o = i * 3, ox = points[o], oy = points[o + 1], oz = points[o + 2];
-    let odd = 0;
+    let back = 0, close = 0;
     for (let d = 0; d < 6; d++) {
       const [dx, dy, dz] = RAY_DIRS[d];
-      let hits = 0, tMin = RAY_EPS;
-      while (hits < RAY_MAX_HITS) {
-        const t = bvh.castRay(ox, oy, oz, dx, dy, dz, tMin, RAY_MAX);
-        if (!(t < RAY_MAX)) break;
-        hits++;
-        tMin = t + RAY_EPS;
-      }
-      if (hits & 1) {
-        odd++;
-        if (odd >= 4) { mask[n] = 1; break; }
-      } else if (odd + (5 - d) < 4) break;
+      // Signed nearest t: negative means back face, positive is front/miss.
+      const t = bvh.castRayFacing(ox, oy, oz, dx, dy, dz, RAY_EPS, RAY_MAX);
+      if (t < 0) { back++; if (-t <= .5) close++; }
+      if (back >= 3 && close >= 2) { mask[n] = 1; break; }
+      if (back + (5 - d) < 3 || close + (5 - d) < 2) break;
     }
   }
   return mask;

@@ -267,7 +267,7 @@ function basePlan() {
   addBox(cx, -t / 2, cz, 3 * FT + 2 * t, t, 3 * FT + 2 * t);   // floor slab
   addBox(cx, 9 * FT + t / 2, cz, 3 * FT + 2 * t, t, 3 * FT + 2 * t); // ceiling slab
 
-  const bvh = buildOccluderBVH(meshes);
+  const bvh = buildOccluderBVH(meshes, null, {facing:true});
   const mask = insideMask(pts, bvh, layout);
   assert.ok(mask instanceof Uint8Array);
   assert.equal(mask.length, layout.count);
@@ -276,8 +276,14 @@ function basePlan() {
   const closetBlock = layout.blocks[1];
   const idxOf = (blk, ix, iy, iz) => blk.first + (iz * blk.dims[1] + iy) * blk.dims[0] + ix;
 
-  // Inside the closed 1 m box -> invalid (1)
-  assert.equal(mask[idxOf(mainBlock, 2, 2, 2)], 1, 'point inside closed 1 m box is 1');
+  // The 1 m cube centre has no back hit within .5 m after tilt: valid, but fully occluded.
+  assert.equal(mask[idxOf(mainBlock, 2, 2, 2)], 0, '1 m cube centre is valid under the near-hit rule');
+  for (const dir of [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]]) {
+    const source = new THREE.Vector3(...dir).multiplyScalar(2).add(new THREE.Vector3(2.5*FT,2.5*FT,-2.5*FT));
+    const centre = new THREE.Vector3().fromArray(pts,idxOf(mainBlock,2,2,2)*3), toLamp=source.sub(centre), distance=toLamp.length();toLamp.normalize();
+    const visibility=bvh.castRay(centre.x,centre.y,centre.z,toLamp.x,toLamp.y,toLamp.z,1e-4,distance)<distance?0:254;
+    assert.equal(visibility,0,'cube body blocks every exterior lamp direction');
+  }
   // Open room air (e.g., ix=8, iy=2, iz=4 -> x=8.5 ft, y=2.5 ft, z=4.5 ft) -> valid (0)
   assert.equal(mask[idxOf(mainBlock, 8, 2, 4)], 0, 'point in open room air is 0');
   // Outside the L polygon (e.g., ix=8, iy=9, iz=4 -> x=8.5 ft, y=9.5 ft is in the cutout) -> invalid (1)
@@ -292,17 +298,17 @@ function basePlan() {
     }
   }
   const subset = new Uint32Array([idxOf(mainBlock,2,2,2), idxOf(mainBlock,8,2,4), idxOf(mainBlock,8,9,4), idxOf(closetBlock,1,1,4)]);
-  assert.deepEqual([...insideMask(pts,bvh,layout,subset)], [...subset].map(i=>mask[i]), 'subset matches full parity and polygon mask');
+  assert.deepEqual([...insideMask(pts,bvh,layout,subset)], [...subset].map(i=>mask[i]), 'subset matches full facing and polygon mask');
   const cache = new Uint8Array(layout.count);
   let casts = 0, yields = 0;
-  const counted = {triCount:bvh.triCount,castRay(...args){casts++;return bvh.castRay(...args);}};
+  const counted = {triCount:bvh.triCount,castRayFacing(...args){casts++;return bvh.castRayFacing(...args);}};
   const measured = await maskGridIndices(pts,counted,layout,subset,cache,async()=>{yields++;});
   assert.ok(yields>0); assert.ok(measured.maskMs>0); assert.equal(measured.maskPoints,subset.length);
   for(const i of subset) assert.equal(cache[i],mask[i]+1);
   assert.equal(cache.filter(v=>v!==0).length,subset.length,'unrelated points remain unknown');
   const before = casts;
   assert.equal((await maskGridIndices(pts,counted,layout,subset,cache,async()=>{throw Error('cached points must not yield');})).maskPoints,0);
-  assert.equal(casts,before,'overlapping lights reuse parity results');
+  assert.equal(casts,before,'overlapping lights reuse facing results');
   const all = Uint32Array.from({length:layout.count},(_,i)=>i), cancelledCache = new Uint8Array(layout.count);
   let slices=0, beforeCancel=0;
   await assert.rejects(maskGridIndices(pts,bvh,layout,all,cancelledCache,async()=>{if(++slices===2){beforeCancel=cancelledCache.filter(v=>v!==0).length;throw Error('cancelled');}}),/cancelled/);
@@ -311,7 +317,53 @@ function basePlan() {
   console.log('Passed: test_inside_mask');
 }
 
-// Geometry-only memory and desktop parity measurements (no GPU claims).
+
+// Nearest facing is opt-in; ordinary cone distances stay identical. Material
+// groups, BackSide and mirrored transforms all retain rendered facing.
+{
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), new THREE.MeshStandardMaterial());
+  mesh.updateMatrixWorld(true);
+  const old = buildOccluderBVH([mesh]), signed = buildOccluderBVH([mesh], null, {facing:true});
+  assert.equal(old.castRayFacing, undefined);
+  for (let n=0;n<100;n++) {
+    const origin = new THREE.Vector3(Math.sin(n)*3, Math.cos(n*.7)*3, Math.sin(n*.3)*3);
+    const dir = origin.clone().negate().normalize();
+    const args=[...origin.toArray(),...dir.toArray(),1e-4,100];
+    assert.equal(old.castRay(...args),signed.castRay(...args));
+    assert.equal(Math.abs(signed.castRayFacing(...args)),old.castRay(...args));
+  }
+  assert.ok(signed.castRayFacing(0,0,0,1,0,0,1e-4,100)<0);
+  for(const side of [THREE.FrontSide,THREE.BackSide,THREE.DoubleSide]) {
+    mesh.material.side=side;mesh.scale.x=-1;mesh.updateMatrixWorld(true);
+    const b=buildOccluderBVH([mesh],null,{facing:true});
+    assert.equal(b.castRayFacing(0,0,0,1,0,0,1e-4,100)<0,side!==THREE.BackSide);
+  }
+  mesh.scale.x=1;mesh.material=Array.from({length:6},()=>new THREE.MeshStandardMaterial({side:THREE.BackSide}));mesh.updateMatrixWorld(true);
+  assert.ok(buildOccluderBVH([mesh],null,{facing:true}).castRayFacing(0,0,0,1,0,0,1e-4,100)>0);
+
+  let determinants=0;const determinant=mesh.matrixWorld.determinant.bind(mesh.matrixWorld);
+  mesh.matrixWorld.determinant=()=>{determinants++;return determinant();};
+  buildOccluderBVH([mesh],null,{facing:true});assert.equal(determinants,1,'one determinant per mesh');
+  const empty=buildOccluderBVH([],null,{facing:true});assert.equal(empty.castRayFacing(0,0,0,1,0,0,1e-4,10),10);
+  // Wall body, floor slab, and column: thin geometry still has >=3 back hits.
+  const layout=gridLayout({buildings:[{id:'b',levels:[{id:'l',ceiling:10}],rooms:[{id:'r',level:'l',polygon:[[0,0],[10,0],[10,10],[0,10]]}]}]});
+  const p=new THREE.Vector3(.5*FT,.5*FT,-.5*FT);
+  for(const size of [[.1,5,5],[.15,5,5],[5,.15,5],[5,5,.15],[.4,5,.4],[.8,.8,.8]]) {
+    const m=new THREE.Mesh(new THREE.BoxGeometry(...size),new THREE.MeshStandardMaterial());m.position.copy(p);m.updateMatrixWorld(true);
+    const b=buildOccluderBVH([m],null,{facing:true});
+    assert.equal(insideMask(new Float32Array(p.toArray()),b,layout,new Uint32Array([0]))[0],1);
+  }
+  for(const side of [THREE.FrontSide,THREE.BackSide]) {
+    const floor=new THREE.Mesh(new THREE.PlaneGeometry(20,20).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial({side}));
+    floor.position.y=2;floor.updateMatrixWorld(true);
+    const b=buildOccluderBVH([floor],null,{facing:true});
+    assert.equal(insideMask(new Float32Array(p.toArray()),b,layout,new Uint32Array([0]))[0],0,'open single plane cannot invalidate air');
+    assert.deepEqual(insideMask(gridPoints(layout),b,layout),insideMask(gridPoints(layout),b,layout),'deterministic');
+  }
+  console.log('Passed: test_nearest_facing_and_legacy_occlusion');
+}
+
+// Geometry-only memory and desktop facing measurements (no GPU claims).
 {
   const household = JSON.parse(readFileSync(new URL(file('tests/fixtures/twin_model/household-2026-11-09.json')), 'utf8'));
   const lot200 = {buildings:[],site:{lot:[[0,0],[200,0],[200,200],[0,200]]}};
@@ -324,7 +376,7 @@ function basePlan() {
     const {collectStaticOccluders}=await import(file('static/twin/live/cone_occluder.js'));
     const {atlasMesh}=await import(file('static/twin/bake/atlas.js'));
     const out=buildTwin(plan,kit,'high');await out.ready;out.root.updateMatrixWorld(true);
-    const bvh=buildOccluderBVH(collectStaticOccluders(out.root).filter(o=>atlasMesh(o)&&o.material.name!=='glass'&&!o.geometry?.userData.bakeHeightfield));
+    const bvh=buildOccluderBVH(collectStaticOccluders(out.root).filter(o=>atlasMesh(o)&&o.material.name!=='glass'&&!o.geometry?.userData.bakeHeightfield), null, {facing:true});
     const cache=new Uint8Array(layout.count);
     const blocks=layout.blocks.filter(b=>b.kind==='room').sort((a,b)=>b.dims.reduce((x,y)=>x*y,1)-a.dims.reduce((x,y)=>x*y,1)).slice(0,3);
     // Exercise the real unclamped fallback, never setImmediate disguised as a scheduler.
@@ -372,6 +424,54 @@ function basePlan() {
     }
   }
   console.log('Passed: test_layout_memory_and_mask_slices');
+}
+
+
+// The normalized household and its yard reproduce the 922/4620 Kitchen
+// parity failure. Every in-polygon Kitchen cell is open air in this fixture.
+{
+ const job=JSON.parse(readFileSync(process.argv[2]));
+ const {buildTwin}=await import(file('static/twin/twin_generator.js'));
+ const {buildYard}=await import(file('static/twin/twin_yard.js'));
+ const {buildAtlas,atlasMesh}=await import(file('static/twin/bake/atlas.js'));
+ const {collectStaticOccluders}=await import(file('static/twin/live/cone_occluder.js'));
+ const {cellInBlock}=await import(file('static/twin/bake/grid_layout.js'));
+ const plan=job.householdPlan,out=buildTwin(plan,job.householdKit,'high');await out.ready;
+ const yard=await buildYard(plan,{materials:{}},'high',{viewing:true});(out.groups.site||out.root).add(yard.group);await yard.ready;out.root.updateMatrixWorld(true);
+ const atlas=buildAtlas(out.root,plan,{room:{density:1,page:256,gutter:2}}),root=atlas.sourceRoot||out.root;root.updateMatrixWorld(true);
+ const meshes=collectStaticOccluders(root,{plan,groups:out.groups}).filter(o=>atlasMesh(o)&&o.material.name!=='glass'&&!o.geometry?.userData.bakeHeightfield);
+ const bvh=buildOccluderBVH(meshes,null,{facing:true}),layout=gridLayout(plan),points=gridPoints(layout),mask=insideMask(points,bvh,layout);
+ const b=layout.blocks.find(b=>b.id==='pool-house:room:5d7de10ca48340ae85c407d22337c6f7');let checked=0;
+ for(let cell=0;cell<b.dims.reduce((a,v)=>a*v,1);cell++)if(cellInBlock(layout,b,cell)){assert.equal(mask[b.first+cell],0,'Kitchen air remains valid');checked++;}
+ assert.equal(checked,4620);assert.deepEqual(insideMask(points,bvh,layout),mask,'household deterministic');
+
+ const attic=layout.blocks.find(b=>b.id==='main-house:room:16d975d5056e4f74810ed1e0cdaf716f');
+ const tri=new THREE.Triangle(),closest=new THREE.Vector3(),point=new THREE.Vector3();
+ const soups=meshes.map(m=>{
+  const g=m.geometry,p=g.attributes.position,idx=g.index,xyz=new Float32Array((idx?idx.count:p.count)*3);
+  const v=new THREE.Vector3();for(let i=0;i<xyz.length/3;i++){v.fromBufferAttribute(p,idx?idx.getX(i):i).applyMatrix4(m.matrixWorld);xyz.set(v.toArray(),i*3);}
+  return {xyz,box:new THREE.Box3().setFromObject(m)};
+ });
+ function nearSurface(point){
+  for(const {xyz,box} of soups){if(box.distanceToPoint(point)>.1)continue;
+   for(let i=0;i+8<xyz.length;i+=9){tri.a.fromArray(xyz,i);tri.b.fromArray(xyz,i+3);tri.c.fromArray(xyz,i+6);tri.closestPointToPoint(point,closest);if(closest.distanceTo(point)<=.1)return true;}
+  }return false;
+ }
+ let invalid=0,openInvalid=0,openDead=0;
+ const [nx,ny,nz]=attic.dims;
+ for(let cell=0;cell<nx*ny*nz;cell++)if(cellInBlock(layout,attic,cell)&&mask[attic.first+cell]){
+  invalid++;point.fromArray(points,(attic.first+cell)*3);if(!nearSurface(point))openInvalid++;
+ }
+ for(let z=0;z<nz-1;z++)for(let y=0;y<ny-1;y++)for(let x=0;x<nx-1;x++){
+  const cells=[];for(let dz=0;dz<2;dz++)for(let dy=0;dy<2;dy++)for(let dx=0;dx<2;dx++)cells.push(((z+dz)*ny+y+dy)*nx+x+dx);
+  if(!cells.every(c=>cellInBlock(layout,attic,c)&&mask[attic.first+c]))continue;
+  point.set(0,0,0);for(const c of cells)point.add(new THREE.Vector3().fromArray(points,(attic.first+c)*3));point.multiplyScalar(1/8);
+  if(!nearSurface(point))openDead++;
+ }
+ assert.equal(invalid,52);assert.equal(openInvalid,0,'attic has no invalid air >10 cm from any triangle');
+ assert.equal(openDead,0,'attic has no fully invalid open-air trilinear stencil');
+ console.log('Passed: test_household_attic_no_open_invalid_points_or_stencils');
+ console.log('Passed: test_household_kitchen_open_air_zero_invalid');
 }
 
 // 6. test_chunk_roundtrip
@@ -451,10 +551,14 @@ function basePlan() {
 def run():
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
+    import test_twin_baker_js as B
+    B.household_pool_house()
+    household_plan = B.twin_store.current()
+    household_kit = {**B.tl.kit('modern_farmhouse'), 'manifest': {}}
     with tempfile.TemporaryDirectory(prefix='chauffeur_grid_layout_') as directory:
         driver, data = Path(directory) / 'driver.mjs', Path(directory) / 'input.json'
         driver.write_text(DRIVER, encoding='utf-8')
-        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit}), encoding='utf-8')
+        data.write_text(json.dumps({'root': ROOT.as_posix(), 'flat': {}, 'kit': kit, 'householdPlan': household_plan, 'householdKit': household_kit}), encoding='utf-8')
         result = subprocess.run([shutil.which('node'), str(driver), str(data)], capture_output=True,
                                 text=True, timeout=120)
         print(result.stdout, end='')
