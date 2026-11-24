@@ -112,6 +112,8 @@ def test_parity_with_js():                       # support_points(roof) == node 
 
 **Interfaces:** Consumes `isSupported`, `roofEnvelope`.
 
+- **Section indices (task 1 review, Important):** `roofEnvelope(...).walled` labels index the filtered list, while `exclude` (1119) and the loops at 1571, 1635, 1666 and 2195 index the full `sections`. Split `sections` into walled and supported once, right after it is read, and use the walled array everywhere those loops and `exclude` do; keep a map back to the original section for names, materials and picks. The other `roofMesh` callers (`ghost_geometry`, `eave_streams`, `sky_cover`, `gutters`, `twin_solar`) must be listed in the report with what each does for a supported roof. A mixed test has a walled roof, then a supported one, then a walled one, so a shifted index shows.
+
 - [ ] **Step 1: Write the failing tests** (node, on a two-storey fixture with an awning against a wall, one under a higher roof, and one free-standing on posts):
 
 ```js
