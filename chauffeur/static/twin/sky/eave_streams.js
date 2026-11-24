@@ -1,7 +1,7 @@
 // Roof envelope -> exposed downhill edges -> immutable GPU instances. All plan
 // queries and downward rays happen on rebuild, never in update(). No lit patch.
 import * as THREE from 'three';
-import { roofMesh, planes } from '../twin_roof.js';
+import { roofMesh, planes, sectionHeight } from '../twin_roof.js';
 import { buildingBase, groundAt, inPolygon, segmentIntersection, poolDatum } from '../twin_ground.js';
 import { allPorches } from '../twin_generator.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
@@ -10,7 +10,11 @@ import { collectCapSurfaces, createCapSurfaceIndex } from './wet_caps.js';
 import { gutterRuns, downspouts } from '../gutters.js';
 
 const FT=.3048, EPS=2e-4;
+const STEP_DROP_M=.08, STEP_DROP_FT=STEP_DROP_M/FT;
+export const CATCHMENT_REF_RUN_FT=20;
+export const CATCHMENT_REF_AREA_SQFT=300;
 const clamp=x=>Number.isFinite(x)?Math.max(0,Math.min(1,x)):0;
+export function normalizeCatchment(runFt){return Number.isFinite(runFt)&&runFt>0?clamp(runFt/CATCHMENT_REF_RUN_FT):0;}
 const smooth=(a,b,x)=>{const t=clamp((x-a)/(b-a));return t*t*(3-2*t);};
 const LOD_NEAR=22,LOD_MID=54,LOD_FADE=95,LOD_FAR=120,LOD_FLOOR=.35,MIST_FAR=25;
 const lodDensity=d=>(1-(1-LOD_FLOOR)*smooth(LOD_NEAR,LOD_MID,d))*(1-smooth(LOD_FADE,LOD_FAR,d));
@@ -81,7 +85,8 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
     // Coverings outside the section envelope (wall awnings / continuations)
     // retain their actual top triangles before batching. Horizontal downhill
     // edges only: triangle diagonals, high wall edges and rakes cannot qualify.
-    for(const attachment of envelope.eaveAttachments||[]){
+    for(let attIdx=0;attIdx<(envelope.eaveAttachments||[]).length;attIdx++){
+      const attachment=envelope.eaveAttachments[attIdx];
       const p=attachment.positions;
       for(let t=0;t<p.length;t+=9){
         const tri=[0,3,6].map(i=>new THREE.Vector3(...p.slice(t+i,t+i+3)));
@@ -96,7 +101,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
           const s=sections[attachment.section];
           const pattern=eavePattern(plan,frame.b,s,null,kit),{pitch}=pattern;
           result.push({a:start,b:end,outward:[o[0]-start[0],0,o[2]-start[2]],building:frame.b.id,section:attachment.section,
-            side:null,edge:null,kind:'attachment',gridStart:pitch===null?0:-pitch*.5,...pattern});
+            attachmentIndex:attIdx,side:null,edge:null,kind:'attachment',gridStart:pitch===null?0:-pitch*.5,...pattern});
         }
       }
     }
@@ -228,16 +233,17 @@ function pointOnSegmentXZ(p, a, b) {
   return Math.hypot(p[0] - (a[0] + dx * t), p[2] - (a[2] + dz * t));
 }
 
-function eaveIsGuttered(plan, roofs, e, runSegsByBuilding) {
+function matchingGutterRun(plan, roofs, e, runSegsByBuilding) {
   const segs = runSegsByBuilding.get(e.building) || [];
   const mid = [(e.a[0] + e.b[0]) * .5, (e.a[1] + e.b[1]) * .5, (e.a[2] + e.b[2]) * .5];
-  for (const seg of segs) {
+  for (const entry of segs) {
+    const seg = entry.seg;
     if (Math.abs(mid[1] - (seg.a[1] + seg.b[1]) * .5) > .05) continue;
     if (pointOnSegmentXZ(mid, seg.a, seg.b) < .04 && pointOnSegmentXZ(e.a, seg.a, seg.b) < .05 && pointOnSegmentXZ(e.b, seg.a, seg.b) < .05)
-      return true;
+      return { guttered: true, runId: entry.runId };
   }
   const b = (plan.buildings || []).find(v => v.id === e.building);
-  if (!b) return false;
+  if (!b) return { guttered: false, runId: null };
   const sections = roofs?.get(b.id)?.sections || b.roof?.sections || [];
   const s = sections[e.section];
   if (e.kind !== 'attachment' && s && e.side) {
@@ -246,15 +252,304 @@ function eaveIsGuttered(plan, roofs, e, runSegsByBuilding) {
     const edgeIdx = s.plane_edges ? s.plane_edges[e.side] : ['y0', 'x1', 'y1', 'x0'].indexOf(e.side);
     const rec = Number.isInteger(edgeIdx) ? r?.edges?.[edgeIdx] : null;
     if (rec && typeof rec.gutter === 'boolean') {
-      if (rec.gutter === true && rec.setting === 'sloped') return true;
+      if (rec.gutter === true && rec.setting === 'sloped') return { guttered: true, runId: null };
     } else if (s.gutters?.[e.side] === true) {
-      return true;
+      return { guttered: true, runId: null };
     }
     const centre = [(s.rect[0] + s.rect[2]) * .5, (s.rect[1] + s.rect[3]) * .5];
     if (allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal' && p.polygon?.length >= 3 && inPolygon(p.polygon, ...centre)))
-      return true;
+      return { guttered: true, runId: null };
   }
-  return false;
+  return { guttered: false, runId: null };
+}
+
+function inTri2D(px, py, t, eps = 1e-4) {
+  if (px < t.x0 - 1e-3 || px > t.x1 + 1e-3 || py < t.y0 - 1e-3 || py > t.y1 + 1e-3) return false;
+  const v0x = t.c[0] - t.a[0], v0y = t.c[1] - t.a[1];
+  const v1x = t.b[0] - t.a[0], v1y = t.b[1] - t.a[1];
+  const v2x = px - t.a[0], v2y = py - t.a[1];
+  const den = v0x * v1y - v1x * v0y;
+  if (Math.abs(den) < 1e-10) return false;
+  const inv = 1 / den;
+  const u = (v2x * v1y - v1x * v2y) * inv;
+  const v = (v0x * v2y - v2x * v0y) * inv;
+  return u >= -eps && v >= -eps && u + v <= 1 + eps;
+}
+
+function rayExitTri2D(px, py, dx, dy, t) {
+  let maxS = 0;
+  const verts = [t.a, t.b, t.c];
+  for (let i = 0; i < 3; i++) {
+    const p0 = verts[i], p1 = verts[(i + 1) % 3];
+    const ex = p1[0] - p0[0], ey = p1[1] - p0[1];
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) > 1e-10) {
+      const qx = p0[0] - px, qy = p0[1] - py;
+      const s = (qx * ey - qy * ex) / den;
+      const u = (qx * dy - qy * dx) / den;
+      if (u >= -1e-4 && u <= 1 + 1e-4 && s >= -1e-4 && s > maxS) maxS = s;
+    } else if (Math.abs((p0[0] - px) * dy - (p0[1] - py) * dx) < 1e-4) {
+      const s0 = (p0[0] - px) * dx + (p0[1] - py) * dy;
+      const s1 = (p1[0] - px) * dx + (p1[1] - py) * dy;
+      if (s0 > maxS) maxS = s0;
+      if (s1 > maxS) maxS = s1;
+    }
+  }
+  return maxS;
+}
+
+const triZ = (t, x, y) => t.pl[0] * x + t.pl[1] * y + t.pl[2];
+
+function buildCatchmentContexts(plan, roofs) {
+  const contexts = new Map();
+  for (const b of plan.buildings || []) {
+    const frame = buildingFrame(plan, b);
+    const sections = roofs?.get(b.id)?.sections || b.roof?.sections || [];
+    const envelope = roofs?.get(b.id) || (sections.length ? { ...roofMesh(sections), sections } : null);
+    const tris = [];
+    let wx0 = Infinity, wx1 = -Infinity, wz0 = Infinity, wz1 = -Infinity, wy0 = Infinity, wy1 = -Infinity;
+    const addTri = (a, bPt, c, meta) => {
+      const wa = frame.world(a), wb = frame.world(bPt), wc = frame.world(c);
+      const tWx0 = Math.min(wa[0], wb[0], wc[0]), tWx1 = Math.max(wa[0], wb[0], wc[0]);
+      const tWz0 = Math.min(wa[2], wb[2], wc[2]), tWz1 = Math.max(wa[2], wb[2], wc[2]);
+      const tWy0 = Math.min(wa[1], wb[1], wc[1]), tWy1 = Math.max(wa[1], wb[1], wc[1]);
+      if (tWx0 < wx0) wx0 = tWx0; if (tWx1 > wx1) wx1 = tWx1;
+      if (tWz0 < wz0) wz0 = tWz0; if (tWz1 > wz1) wz1 = tWz1;
+      if (tWy0 < wy0) wy0 = tWy0; if (tWy1 > wy1) wy1 = tWy1;
+      tris.push({
+        a, b: bPt, c,
+        x0: Math.min(a[0], bPt[0], c[0]), x1: Math.max(a[0], bPt[0], c[0]),
+        y0: Math.min(a[1], bPt[1], c[1]), y1: Math.max(a[1], bPt[1], c[1]),
+        wx0: tWx0, wx1: tWx1, wz0: tWz0, wz1: tWz1, wy0: tWy0, wy1: tWy1,
+        ...meta,
+      });
+    };
+    if (envelope?.positions?.length) {
+      const planeCache = sections.map(s => (s && s.kind !== 'flat' ? planes(s) : []));
+      for (let t = 0; t < envelope.section.length; t++) {
+        const secIdx = envelope.section[t], s = sections[secIdx];
+        if (!s || s.kind === 'flat') continue;
+        const side = envelope.side[t];
+        const pl = planeCache[secIdx].find(p => p.side === side);
+        if (!pl) continue;
+        const gLen = Math.hypot(pl[0], pl[1]);
+        if (gLen < EPS) continue;
+        const a = [envelope.positions[t * 9], envelope.positions[t * 9 + 1], envelope.positions[t * 9 + 2]];
+        const bPt = [envelope.positions[t * 9 + 3], envelope.positions[t * 9 + 4], envelope.positions[t * 9 + 5]];
+        const c = [envelope.positions[t * 9 + 6], envelope.positions[t * 9 + 7], envelope.positions[t * 9 + 8]];
+        addTri(a, bPt, c, { section: secIdx, side, attIdx: -1, isAttachment: false, pl, ux: pl[0] / gLen, uy: pl[1] / gLen });
+      }
+    }
+    for (let attIdx = 0; attIdx < (envelope?.eaveAttachments || []).length; attIdx++) {
+      const att = envelope.eaveAttachments[attIdx], p = att.positions;
+      for (let t = 0; t < p.length; t += 9) {
+        const a = [p[t], p[t + 1], p[t + 2]], bPt = [p[t + 3], p[t + 4], p[t + 5]], c = [p[t + 6], p[t + 7], p[t + 8]];
+        const abx = bPt[0] - a[0], aby = bPt[1] - a[1], abz = bPt[2] - a[2];
+        const acx = c[0] - a[0], acy = c[1] - a[1], acz = c[2] - a[2];
+        const nx = aby * acz - abz * acy, ny = abz * acx - abx * acz, nz = abx * acy - aby * acx;
+        if (nz < EPS || Math.hypot(nx, ny) < EPS) continue;
+        const gx = -nx / nz, gy = -ny / nz, gLen = Math.hypot(gx, gy);
+        const pl = [gx, gy, a[2] - gx * a[0] - gy * a[1]];
+        addTri(a, bPt, c, { section: att.section, side: null, attIdx, isAttachment: true, pl, ux: gx / gLen, uy: gy / gLen });
+      }
+    }
+    contexts.set(b.id, { b, frame, sections, tris, wx0, wx1, wz0, wz1, wy0, wy1 });
+  }
+  return contexts;
+}
+
+// Horizontal upslope run in plan feet from a point on an eave along the roof
+// envelope's fall line, crossing continuous slope breaks (e.g. a steeper main
+// roof meeting a lower-pitch patio shed) and stopping at ridges, hip crests,
+// boundaries, or vertical walls/steps (which route separately from upper eaves).
+function upslopeRunAt(ctx, startX, startY, startZ, dirX, dirY, section, side, isAttachment, attIdx) {
+  if (!ctx?.tris?.length) return null;
+  let tri = null, cx = startX, cy = startY, initNudge = 0;
+  for (const nudge of [.02, .06, .15]) {
+    const px = startX + nudge * dirX, py = startY + nudge * dirY;
+    let best = null, bestErr = Infinity;
+    for (const t of ctx.tris) {
+      if (t.isAttachment !== isAttachment) continue;
+      if (isAttachment && attIdx >= 0 && t.attIdx !== attIdx) continue;
+      if (!inTri2D(px, py, t, 1e-3)) continue;
+      const err = Math.abs(triZ(t, px, py) - startZ);
+      const exact = !isAttachment && t.section === section && t.side === side;
+      const score = exact ? err * .1 : err + (err <= .3 ? .05 : 10);
+      if (score < bestErr && (exact || err <= .35)) { bestErr = score; best = t; }
+    }
+    if (best) { tri = best; cx = px; cy = py; initNudge = nudge; break; }
+  }
+  if (!tri) return null;
+  let dx = tri.ux, dy = tri.uy, total = initNudge;
+  for (let hop = 0; hop < 24; hop++) {
+    const dExit = rayExitTri2D(cx, cy, dx, dy, tri);
+    const ex = cx + dExit * dx, ey = cy + dExit * dy, ez = triZ(tri, ex, ey);
+    total += dExit;
+    const step = .01, nx = ex + step * dx, ny = ey + step * dy;
+    let nextTri = null, bestErr = Infinity;
+    for (const t of ctx.tris) {
+      if (t.isAttachment !== isAttachment) continue;
+      if (isAttachment && t.attIdx !== tri.attIdx) continue;
+      if (!inTri2D(nx, ny, t, 1e-3)) continue;
+      if (t.ux * dx + t.uy * dy <= .25) continue;
+      const sameFace = !isAttachment && t.section === tri.section && t.side === tri.side;
+      const nz = triZ(t, ex, ey);
+      // Unified step threshold (STEP_DROP_FT = STEP_DROP_M / FT) evaluated at the
+      // same 0.012 m outward probe offset used by routing & landing skip, so an
+      // upper eave is either continued as one slope or routed directly, never lost.
+      const lowZ = sameFace ? ez : triZ(tri, ex - dx * (.012 / FT), ey - dy * (.012 / FT));
+      const dz = nz - lowZ;
+      if (dz >= STEP_DROP_FT || dz < -.25) continue;
+      const err = Math.abs(dz) + (sameFace ? 0 : .05);
+      if (err < bestErr) { bestErr = err; nextTri = t; }
+    }
+    if (!nextTri) break;
+    total += step;
+    cx = nx; cy = ny; dx = nextTri.ux; dy = nextTri.uy; tri = nextTri;
+  }
+  return total;
+}
+
+function analyticEaveRunFt(ctx, e, dirX, dirY) {
+  if (e.kind !== 'attachment') {
+    const s = ctx?.sections?.[e.section];
+    if (s && s.kind !== 'flat' && s.rect?.length === 4) {
+      const ov = s.overhang || 0;
+      const axis = e.side === 'x0' || e.side === 'x1' ? 0 : 1;
+      const span = Math.abs(s.rect[axis + 2] - s.rect[axis]) + 2 * ov;
+      if (span > EPS) {
+        const half = s.kind === 'hip' || (s.kind === 'gable' && ((axis === 1 && s.ridge !== 'y') || (axis === 0 && s.ridge === 'y')));
+        return Math.max(1, half ? span * .5 : span);
+      }
+    }
+  } else if (ctx?.tris?.length && (e.attachmentIndex ?? -1) >= 0) {
+    let lo = Infinity, hi = -Infinity;
+    for (const t of ctx.tris) {
+      if (!t.isAttachment || t.attIdx !== e.attachmentIndex) continue;
+      for (const p of [t.a, t.b, t.c]) {
+        const proj = p[0] * dirX + p[1] * dirY;
+        if (proj < lo) lo = proj;
+        if (proj > hi) hi = proj;
+      }
+    }
+    if (hi > lo + EPS) return Math.max(1, hi - lo);
+  }
+  return CATCHMENT_REF_RUN_FT;
+}
+
+function traceDownhillToEave(contexts, hitWorld, eaveStatesByBuilding) {
+  let startCtx = null, startTri = null, startX = 0, startY = 0, bestErr = Infinity;
+  let fallback = null;
+  for (const ctx of contexts.values()) {
+    if (!ctx.tris.length) continue;
+    const [lx, ly] = ctx.frame.local(hitWorld), lz = hitWorld[1] / FT - ctx.frame.base;
+    for (const t of ctx.tris) {
+      if (!inTri2D(lx, ly, t, 5e-3)) continue;
+      const err = Math.abs(triZ(t, lx, ly) - lz);
+      if (err <= .35 && err < bestErr) { bestErr = err; startCtx = ctx; startTri = t; startX = lx; startY = ly; }
+    }
+    if (!startTri) {
+      // Analytical fallback when roofMesh clipped a lower roof under an upper overhang.
+      for (let si = 0; si < ctx.sections.length; si++) {
+        const s = ctx.sections[si];
+        if (!s || s.kind === 'flat') continue;
+        const z = sectionHeight(s, lx, ly);
+        if (z === null) continue;
+        const err = Math.abs(z - lz);
+        if (err > .35) continue;
+        let minP = null, minVal = Infinity;
+        for (const pl of planes(s)) {
+          const v = pl[0] * lx + pl[1] * ly + pl[2];
+          if (v < minVal) { minVal = v; minP = pl; }
+        }
+        if (!minP) continue;
+        const gLen = Math.hypot(minP[0], minP[1]);
+        if (gLen < EPS) continue;
+        if (!fallback || err < fallback.err) {
+          fallback = { err, ctx, si, side: minP.side, lx, ly, lz: z, dx: -minP[0] / gLen, dy: -minP[1] / gLen };
+        }
+      }
+    }
+  }
+  let fallRunFt = 0, ctx = startCtx, tri = startTri, cx = startX, cy = startY;
+  if (!tri && fallback) {
+    ctx = fallback.ctx;
+    const { dx, dy, si, side } = fallback;
+    let px = fallback.lx, py = fallback.ly;
+    for (let step = 1; step <= 40; step++) {
+      const distFt = step * .25;
+      const qx = px + distFt * dx, qy = py + distFt * dy;
+      const found = ctx.tris.find(t => !t.isAttachment && t.section === si && t.side === side && inTri2D(qx, qy, t, 5e-3));
+      if (found) { tri = found; cx = qx; cy = qy; fallRunFt = distFt; break; }
+    }
+  }
+  if (!tri || !ctx) return null;
+  let dx = -tri.ux, dy = -tri.uy, ex = cx, ey = cy, ez = triZ(tri, cx, cy);
+  for (let hop = 0; hop < 24; hop++) {
+    const dExit = rayExitTri2D(cx, cy, dx, dy, tri);
+    ex = cx + dExit * dx; ey = cy + dExit * dy; ez = triZ(tri, ex, ey);
+    fallRunFt += dExit;
+    const step = .01, nx = ex + step * dx, ny = ey + step * dy;
+    let nextTri = null, nextErr = Infinity;
+    for (const t of ctx.tris) {
+      if (t.isAttachment !== tri.isAttachment) continue;
+      if (tri.isAttachment && t.attIdx !== tri.attIdx) continue;
+      if (!inTri2D(nx, ny, t, 1e-3)) continue;
+      if ((-t.ux) * dx + (-t.uy) * dy <= .25) continue;
+      const nz = triZ(t, ex, ey), dz = nz - ez;
+      if (dz > .25 || dz <= -STEP_DROP_FT) continue;
+      const sameFace = !tri.isAttachment && t.section === tri.section && t.side === tri.side;
+      const err = Math.abs(dz) + (sameFace ? 0 : .05);
+      if (err < nextErr) { nextErr = err; nextTri = t; }
+    }
+    if (!nextTri) break;
+    fallRunFt += step;
+    cx = nx; cy = ny; dx = -nextTri.ux; dy = -nextTri.uy; tri = nextTri;
+  }
+  const exitWorld = ctx.frame.world([ex, ey, ez]);
+  const oW = ctx.frame.world([0, 0, 0]), dW = ctx.frame.world([dx, dy, 0]);
+  const dWx = dW[0] - oW[0], dWz = dW[2] - oW[2], dWLen = Math.hypot(dWx, dWz) || 1;
+  const downWorld = [dWx / dWLen, dWz / dWLen];
+  const candidates = eaveStatesByBuilding.get(ctx.b.id) || [];
+  let bestState = null, bestDist = Infinity, bestS = 0;
+  for (const st of candidates) {
+    const e = st.e;
+    if (Math.abs(e.a[1] - exitWorld[1]) > .25) continue;
+    const nLen = Math.hypot(e.outward[0], e.outward[2]) || 1;
+    if ((e.outward[0] / nLen) * downWorld[0] + (e.outward[2] / nLen) * downWorld[1] <= .25) continue;
+    const d = pointOnSegmentXZ(exitWorld, e.a, e.b);
+    if (d <= .25 && d < bestDist) {
+      bestDist = d; bestState = st;
+      const exW = e.b[0] - e.a[0], ezW = e.b[2] - e.a[2], l2 = exW * exW + ezW * ezW;
+      const t = l2 > 1e-8 ? clamp(((exitWorld[0] - e.a[0]) * exW + (exitWorld[2] - e.a[2]) * ezW) / l2) : .5;
+      bestS = t * st.lenFt;
+    }
+  }
+  return bestState ? { state: bestState, sFt: bestS, downWorld, fallRunFt } : null;
+}
+
+function depositCatchment(target, loFt, hiFt, areaSqFt, minSpreadFt = 2) {
+  if (!(areaSqFt > 0) || !target.bins.length) return;
+  let lo = Math.max(0, Math.min(target.lenFt, Math.min(loFt, hiFt)));
+  let hi = Math.max(0, Math.min(target.lenFt, Math.max(loFt, hiFt)));
+  const minW = Math.min(target.lenFt, minSpreadFt);
+  if (hi - lo < minW) {
+    const mid = (lo + hi) * .5;
+    lo = Math.max(0, mid - minW * .5);
+    hi = Math.min(target.lenFt, lo + minW);
+    lo = Math.max(0, hi - minW);
+  }
+  const span = hi - lo;
+  if (span < 1e-4) return;
+  const addedRun = areaSqFt / span;
+  const step = target.binStep;
+  const i0 = Math.max(0, Math.floor(lo / step));
+  const i1 = Math.min(target.bins.length - 1, Math.floor(Math.max(lo, hi - 1e-6) / step));
+  for (let i = i0; i <= i1; i++) {
+    const b0 = i * step, b1 = (i + 1) * step;
+    const ov = Math.min(hi, b1) - Math.max(lo, b0);
+    if (ov > 0) target.bins[i] += addedRun * (ov / step);
+  }
 }
 
 export const _eaveGutterStats = {
@@ -262,12 +557,18 @@ export const _eaveGutterStats = {
   reset() { this.fallbackCalls = 0; },
 };
 
+export const _eaveCatchmentStats = {
+  traceFallbacks: 0,
+  reset() { this.traceFallbacks = 0; },
+};
+
 export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
   const rawEaves=extractEaves(plan,roofs,kit),sample=createEaveLandingSampler(plan,roofs),instances=[],pours=[];
+  const contexts=buildCatchmentContexts(plan,roofs);
   const hasGutters=gutters?(gutters.runs?.length>0||gutters.spouts?.length>0):planHasGutters(plan);
-  let eaves=rawEaves;
+  let runs=[],spouts=[];
+  const runSegsByBuilding=new Map();
   if(hasGutters){
-    let runs,spouts;
     if(gutters){
       runs=gutters.runs||[];
       spouts=gutters.spouts||[];
@@ -276,23 +577,131 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
       runs=gutterRuns(plan,roofs);
       spouts=runs.length?downspouts(plan,runs):[];
     }
-    const runSegsByBuilding=new Map();
     for(const r of runs){
       if(!runSegsByBuilding.has(r.building))runSegsByBuilding.set(r.building,[]);
-      runSegsByBuilding.get(r.building).push(...r.segments);
+      for(const seg of r.segments)runSegsByBuilding.get(r.building).push({seg,runId:r.id});
     }
-    eaves=rawEaves.filter(e=>!eaveIsGuttered(plan,roofs,e,runSegsByBuilding));
-    for(let idx=0;idx<spouts.length;idx++){
-      const spout=spouts[idx];
+  }
+  const allBuildingCtx=[...contexts.values()];
+  const eaveStates=[],eaveStateMap=new Map(),eaveStatesByBuilding=new Map();
+  for(const e of rawEaves){
+    const dxW=e.b[0]-e.a[0],dzW=e.b[2]-e.a[2],lenM=Math.hypot(dxW,dzW),lenFt=lenM/FT;
+    const nBins=Math.max(2,Math.ceil(lenFt/.5)),binStep=lenFt/nBins,bins=new Float64Array(nBins);
+    const ctx=contexts.get(e.building);
+    if(ctx&&lenM>EPS){
+      const oW=ctx.frame.world([0,0,0]),nLen=Math.hypot(e.outward[0],e.outward[2])||1;
+      const inWorld=[-e.outward[0]/nLen,-e.outward[2]/nLen];
+      const dLocal=ctx.frame.local([oW[0]+inWorld[0]*FT,oW[1],oW[2]+inWorld[1]*FT]);
+      const dLen=Math.hypot(dLocal[0],dLocal[1])||1,dirX=dLocal[0]/dLen,dirY=dLocal[1]/dLen;
+      const eLocalZ=e.a[1]/FT-ctx.frame.base;
+      const isAtt=e.kind==='attachment',attIdx=e.attachmentIndex??-1;
+      for(let k=0;k<nBins;k++){
+        const u=(k+.5)/nBins,wPt=[e.a[0]+dxW*u,e.a[1],e.a[2]+dzW*u];
+        const [lx,ly]=ctx.frame.local(wPt);
+        const traced=upslopeRunAt(ctx,lx,ly,eLocalZ,dirX,dirY,e.section,e.side,isAtt,attIdx);
+        if(traced===null){
+          _eaveCatchmentStats.traceFallbacks++;
+          bins[k]=analyticEaveRunFt(ctx,e,dirX,dirY);
+        }else{
+          bins[k]=traced;
+        }
+      }
+    }else{
+      _eaveCatchmentStats.traceFallbacks+=nBins;
+      bins.fill(CATCHMENT_REF_RUN_FT);
+    }
+    const match=hasGutters?matchingGutterRun(plan,roofs,e,runSegsByBuilding):{guttered:false,runId:null};
+    const eMinX=Math.min(e.a[0],e.b[0])-.05,eMaxX=Math.max(e.a[0],e.b[0])+.05;
+    const eMinZ=Math.min(e.a[2],e.b[2])-.05,eMaxZ=Math.max(e.a[2],e.b[2])+.05;
+    const mayHitRoof=!match.guttered&&allBuildingCtx.some(c=>c.wy0<e.a[1]-(STEP_DROP_M-.005)
+      &&c.wx1>=eMinX&&c.wx0<=eMaxX&&c.wz1>=eMinZ&&c.wz0<=eMaxZ
+      &&c.tris.some(t=>t.wy0<e.a[1]-(STEP_DROP_M-.005)&&t.wx1>=eMinX&&t.wx0<=eMaxX&&t.wz1>=eMinZ&&t.wz0<=eMaxZ));
+    const st={e,lenM,lenFt,binStep,bins,guttered:match.guttered,runId:match.runId,mayHitRoof};
+    eaveStates.push(st);
+    eaveStateMap.set(e,st);
+    if(!eaveStatesByBuilding.has(e.building))eaveStatesByBuilding.set(e.building,[]);
+    eaveStatesByBuilding.get(e.building).push(st);
+  }
+  // Route water strictly high-to-low so multi-storey cascades (upper eave or
+  // roof-landing downspout -> lower roof -> lower eave or lower gutter) settle
+  // in one deterministic pass without double-counting.
+  const runArea=new Map(),runHasCapturedEave=new Set(),spoutsPerRun=new Map();
+  const orphanRunsBySpout=new Map();
+  for(const s of spouts)spoutsPerRun.set(s.run,(spoutsPerRun.get(s.run)||0)+1);
+  for(const r of runs){
+    if(r.drainsTo){
+      if(!orphanRunsBySpout.has(r.drainsTo))orphanRunsBySpout.set(r.drainsTo,[]);
+      orphanRunsBySpout.get(r.drainsTo).push(r);
+    }
+  }
+  const runById=new Map(runs.map(r=>[r.id,r]));
+  const queue=[
+    ...eaveStates.map(st=>({kind:'eave',y:st.e.a[1],st})),
+    ...spouts.map((spout,idx)=>({kind:'spout',y:spout?.outlet?.at?.[1]??-Infinity,spout,idx})),
+  ].sort((a,b)=>b.y-a.y||(a.kind===b.kind?0:a.kind==='eave'?-1:1));
+  const spoutComputed=new Array(spouts.length);
+  for(const item of queue){
+    if(item.kind==='eave'){
+      const st=item.st,{e,bins,binStep,lenM}=st;
+      if(st.guttered){
+        if(st.runId){
+          let area=0;
+          for(let k=0;k<bins.length;k++)area+=bins[k]*binStep;
+          runArea.set(st.runId,(runArea.get(st.runId)||0)+area);
+          runHasCapturedEave.add(st.runId);
+        }
+        continue;
+      }
+      if(!st.mayHitRoof)continue;
+      const dxW=e.b[0]-e.a[0],dzW=e.b[2]-e.a[2],nLen=Math.hypot(e.outward[0],e.outward[2])||1;
+      const ox=e.outward[0]/nLen*.012,oz=e.outward[2]/nLen*.012;
+      const tWx=dxW/(lenM||1),tWz=dzW/(lenM||1);
+      for(let k=0;k<bins.length;k++){
+        const runFt=bins[k];
+        if(!(runFt>0))continue;
+        const u=(k+.5)/bins.length;
+        const top=[e.a[0]+dxW*u+ox,e.a[1],e.a[2]+dzW*u+oz];
+        // Fast AABB pre-check against lower roof triangles avoids calling the
+        // full terrain/hardscape/cap landing sampler over open ground bins.
+        let underRoof=false;
+        for(const c of allBuildingCtx){
+          if(c.wy0>=top[1]-(STEP_DROP_M-.005)||top[0]<c.wx0-.02||top[0]>c.wx1+.02||top[2]<c.wz0-.02||top[2]>c.wz1+.02)continue;
+          for(const t of c.tris){
+            if(t.wy0<top[1]-(STEP_DROP_M-.005)&&top[0]>=t.wx0-.02&&top[0]<=t.wx1+.02&&top[2]>=t.wz0-.02&&top[2]<=t.wz1+.02){underRoof=true;break;}
+          }
+          if(underRoof)break;
+        }
+        if(!underRoof)continue;
+        const hit=sample(top);
+        if(hit.kind!=='roof'||top[1]-hit.height<STEP_DROP_M)continue;
+        const routed=traceDownhillToEave(contexts,[top[0],hit.height,top[2]],eaveStatesByBuilding);
+        if(!routed||routed.state===st)continue;
+        const target=routed.state,te=target.e;
+        const uTx=(te.b[0]-te.a[0])/(target.lenM||1),uTz=(te.b[2]-te.a[2])/(target.lenM||1);
+        const [dwX,dwZ]=routed.downWorld;
+        // Project this bin's width onto the lower eave along the lower roof's fall line.
+        const det=uTx*dwZ-uTz*dwX;
+        const projScale=Math.abs(det)>1e-4?Math.abs((tWx*dwZ-tWz*dwX)/det):0;
+        const halfProj=Math.min(target.lenFt,binStep*projScale)*.5;
+        depositCatchment(target,routed.sFt-halfProj,routed.sFt+halfProj,runFt*binStep,halfProj>=.125?0:2);
+      }
+    }else{
+      const {spout,idx}=item;
       if(!spout?.outlet?.at)continue;
+      const r=runById.get(spout.run);
+      const runTotalArea=r?(runHasCapturedEave.has(r.id)?(runArea.get(r.id)||0):r.length*10):0;
+      let spoutArea=runTotalArea/Math.max(1,spoutsPerRun.get(spout.run)||1);
+      for(const orphan of orphanRunsBySpout.get(spout.id)||[]){
+        spoutArea+=runHasCapturedEave.has(orphan.id)?(runArea.get(orphan.id)||0):orphan.length*10;
+      }
+      const share=r?normalizeCatchment(spoutArea/(CATCHMENT_REF_AREA_SQFT/CATCHMENT_REF_RUN_FT)):clamp(spout.share??1);
       const flags=spout.flags||[];
       const isBlocked=flags.includes('outlet-blocked');
       const isHang=spout.mount==='hang'||flags.includes('hang')||flags.includes('stub');
       const top=[...spout.outlet.at];
       const rawDir=spout.outlet.dir||[0,0,1],dirLen=Math.hypot(rawDir[0],rawDir[2])||1;
       const pourDir=[rawDir[0]/dirLen,0,rawDir[2]/dirLen];
-      const share=clamp(spout.share??1);
-      let bottom,pourForward;
+      let bottom,pourForward,roofHitY=null;
       if(isBlocked){
         // Blocked gutter outlet jammed against a lower roof: short forward spill onto the receiving roof.
         pourForward=.30*FT;
@@ -301,10 +710,12 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
         const surfaceY=Math.max(hitAt.height,hitFwd.height);
         const fall=Math.max(.08*FT,Math.min(.55*FT,top[1]-surfaceY));
         bottom=top[1]-fall;
+        if(hitAt.kind==='roof'||hitFwd.kind==='roof')roofHitY=surfaceY;
       }else if(isHang){
         const hit=sample(top);
         bottom=Math.min(top[1]-.12,hit.height);
         pourForward=.04*FT;
+        if(hit.kind==='roof')roofHitY=hit.height;
       }else{
         // Pour leaves the curved elbow mouth along outlet.dir and lands shortly beyond the mouth (~0.4-0.6 ft from wall).
         const isRoof=spout.outlet.lands==='roof';
@@ -314,18 +725,31 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
         const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
         const fall=isRoof&&hit.kind!=='roof'?4/12*FT:Math.max(.20*FT,top[1]-hit.height);
         bottom=top[1]-fall;
+        if(isRoof||hit.kind==='roof')roofHitY=hit.kind==='roof'?hit.height:bottom;
+      }
+      if((spout.outlet.lands==='roof'||roofHitY!==null)&&spoutArea>0){
+        const landPt=[top[0]+pourDir[0]*pourForward,roofHitY??bottom,top[2]+pourDir[2]*pourForward];
+        const routed=traceDownhillToEave(contexts,landPt,eaveStatesByBuilding);
+        if(routed){
+          const spread=Math.min(routed.state.lenFt,Math.max(3,Math.min(8,routed.fallRunFt*.5||4)));
+          depositCatchment(routed.state,routed.sFt-spread*.5,routed.sFt+spread*.5,spoutArea,spread);
+        }
       }
       if(top[1]-bottom<(isBlocked?.015:.05))continue;
       const pourWidth=.016+.028*share;
       const angle=Math.atan2(pourDir[2],pourDir[0]);
       const seed=hash(0x504f5552+idx*97+1);
-      pours.push({top,bottom,landing:spout.outlet.lands||'ground',seed,rank:-1,
+      spoutComputed[idx]={top,bottom,landing:spout.outlet.lands||'ground',seed,rank:-1,
         eaveS:pourForward,cellStep:pourWidth,sheetCap:-Math.max(.05,share),angle,eave:null,
-        pour:true,spout,share,mount:spout.mount,lands:spout.outlet.lands,pourDir,pourForward,pourWidth});
+        catchment:share,catchmentAreaSqFt:spoutArea,
+        pour:true,spout,share,mount:spout.mount,lands:spout.outlet.lands,pourDir,pourForward,pourWidth};
     }
   }
+  for(const p of spoutComputed)if(p)pours.push(p);
+  const eaves=eaveStates.filter(st=>!st.guttered).map(st=>st.e);
   let serial=1,eaveOffset=0;
   for(const e of eaves){
+    const st=eaveStateMap.get(e);
     const dx=e.b[0]-e.a[0],dz=e.b[2]-e.a[2],length=Math.hypot(dx,dz),n=Math.hypot(...e.outward);
     // A standing-seam pan sheds across its whole edge, not just at its seam.
     // Subdivide its actual pitch into ~9 cm cells, jittered within each pan.
@@ -341,10 +765,13 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
       if(distance<=.015||distance>=length-.015){serial++;continue;}
       const u=distance/length,top=[e.a[0]+dx*u+e.outward[0]/n*.012,e.a[1],e.a[2]+dz*u+e.outward[2]/n*.012];
       const landing=sample(top);
-      if(top[1]-landing.height<.08)continue;
+      if(top[1]-landing.height<STEP_DROP_M)continue;
       const seed=hash(++serial);
+      const binIdx=st?Math.min(st.bins.length-1,Math.max(0,Math.floor((distance/FT)/st.binStep))):0;
+      const catchmentFt=st?st.bins[binIdx]:CATCHMENT_REF_RUN_FT;
+      const catchment=normalizeCatchment(catchmentFt);
       instances.push({top,bottom:landing.height,landing:landing.kind,seed,rank:hash(serial+17389),
-        eaveS:eaveOffset+distance,cellStep,sheetCap,angle,eave:e});
+        eaveS:eaveOffset+distance,cellStep,sheetCap,angle,eave:e,catchment,catchmentFt});
     }
     eaveOffset+=length+17.3;
   }
@@ -478,28 +905,39 @@ float eaveStreamAlpha(float q,float fresnel,float ripSpec,float ripMod,float cor
 float eaveLodDensity(float d){
   return mix(1.,.35,smoothstep(22.,54.,d))*(1.-smoothstep(95.,120.,d));
 }
+float eaveCatchFlow(float flow,float catchC){
+  // Only small catchments (c < 0.5) cut out early along the drying curve;
+  // mid and large roofs (c >= 0.5) track main closely (>= 0.906 * flow, c = 1 identical).
+  float t=1.-catchC;
+  float cut=.92*max(0.,1.-catchC*2.);
+  float rem=min(1.,max(0.,(flow-cut)/max(1.-cut,.001)));
+  return rem*(1.-.75*t*t*t);
+}
 `;
 const vertexShader=waterShape+`
 attribute vec4 eaveTop,eaveMeta;attribute float eaveBottom,eaveRank;
 uniform float eaveTime,eaveFlow,eaveMist,eaveDensity,eaveViewportHeight;
-varying vec2 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
+varying vec3 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
 void main(){
-  waterUv=uv;
   float seed=eaveTop.w,len=eaveTop.y-eaveBottom;
-  float eaveS=eaveMeta.x,cellStep=eaveMeta.y,sheetCap=eaveMeta.z;
-  bool isPour=sheetCap<-.001;
-  float pourShare=isPour?-sheetCap:0.;
+  float eaveS=eaveMeta.x,cellStep=eaveMeta.y,rawZ=eaveMeta.z;
+  bool isPour=rawZ<-.001;
+  float pourShare=max(0.,-rawZ);
+  float sIdx=floor(max(0.,rawZ));
+  float sheetCap=sIdx>1.5?1.:sIdx*.75;
+  float catchC=isPour?pourShare:(rawZ-sIdx)*2.;
+  float instFlow=eaveCatchFlow(eaveFlow,catchC);
+  waterUv=vec3(uv,instFlow);
   vec3 pourDir=vec3(cos(eaveMeta.w),0.,sin(eaveMeta.w));
   float d=distance(cameraPosition,eaveTop.xyz);
   float lod=eaveMist>.5?1.-smoothstep(8.,25.,d):eaveLodDensity(d);
   float density=lod*eaveDensity;
-  if(!isPour&&eaveRank>density){gl_Position=vec4(2.,2.,2.,1.);return;}
-  if(isPour&&(eaveFlow<=.002||lod<=.001)){gl_Position=vec4(2.,2.,2.,1.);return;}
+  if(instFlow<=.002||(!isPour?eaveRank>density:lod<=.001)){gl_Position=vec4(2.,2.,2.,1.);return;}
   float tauEnd=eaveFallTime(len);
-  float sheet=isPour||eaveMist>.5?0.:eaveSheetAmount(eaveS,eaveTime,eaveFlow,sheetCap)*(1.-smoothstep(22.,42.,d));
-  float pourAct=smoothstep(.002,.12,eaveFlow)*clamp(.25+.75*pourShare,.2,1.);
-  float actTop=isPour?pourAct:eaveActivity(eaveS,eaveTime,seed,eaveFlow);
-  float actBot=isPour?pourAct:eaveActivity(eaveS,eaveTime-tauEnd,seed,eaveFlow);
+  float sheet=isPour||eaveMist>.5?0.:eaveSheetAmount(eaveS,eaveTime,instFlow,sheetCap)*(1.-smoothstep(22.,42.,d));
+  float pourAct=smoothstep(.002,.12,instFlow);
+  float actTop=isPour?pourAct:eaveActivity(eaveS,eaveTime,seed,instFlow);
+  float actBot=isPour?pourAct:eaveActivity(eaveS,eaveTime-tauEnd,seed,instFlow);
   float liveMax=max(max(actTop,actBot),sheet);
   if(liveMax<.008){gl_Position=vec4(2.,2.,2.,1.);return;}
   // Whole-instance GPU frustum rejection; no per-frame CPU instance visits.
@@ -516,8 +954,8 @@ void main(){
   float cov=1.,eaveU=eaveS,actV=actBot,sheetV=0.,acrossStream=uv.x*2.-1.;
   if(eaveMist>.5){
     float pulse=fract(eaveTime*(2.7+seed*3.)+seed*23.);
-    float pScale=isPour?(.7+.5*pourShare):1.;
-    float physW=eaveSprayWidth(seed,eaveFlow)*(.6+.4*actBot)*pScale,physH=eaveSprayHeight(seed,eaveFlow)*(.6+.4*actBot)*pScale;
+    float pScale=isPour?1.2:1.;
+    float physW=eaveSprayWidth(seed,instFlow)*(.6+.4*actBot)*pScale,physH=eaveSprayHeight(seed,instFlow)*(.6+.4*actBot)*pScale;
     if(isPour)world.xz+=pourDir.xz*eaveS;
     world.y=eaveBottom+.008;
     world+=right*((pulse-.5)*.035);
@@ -537,7 +975,7 @@ void main(){
     vec4 cEye=viewMatrix*vec4(world+right*wobble,1.);
     float minW=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
     float swell=.86+.26*eaveNoise1((eaveTime-eaveFallTime(fall))*11.3+seed*97.3);
-    float streamW=cellStep*(.52+.48*eaveFlow)*swell*mix(1.,.82,smoothstep(0.,.75,uv.y));
+    float streamW=cellStep*(.52+.48*instFlow)*swell*mix(1.,.82,smoothstep(0.,.75,uv.y));
     float drawnW=max(streamW,minW);
     cov=streamW/drawnW;
     float xOff=(uv.x-.5)*drawnW;
@@ -555,7 +993,7 @@ void main(){
     float wobble=eaveWobble(fall,eaveTime,seed)*smoothstep(0.,.15,fall);
     vec4 cEye=viewMatrix*vec4(world+right*(wobble*(1.-quadSheet)),1.);
     float minW=2.4*pxFloor*(projectionMatrix[3][3]>.5?1.:max(-cEye.z,.001))/vp;
-    float streamW=eaveWidth(fall,eaveTime,seed,eaveFlow)*(.65+.75*actV);
+    float streamW=eaveWidth(fall,eaveTime,seed,instFlow)*(.65+.75*actV)*mix(.66,1.,min(1.,catchC*2.));
     float drawnStreamW=max(streamW,minW);
     float sheetW=max(cellStep*1.16,drawnStreamW);
     float drawnW=mix(drawnStreamW,sheetW,quadSheet);
@@ -580,10 +1018,10 @@ void main(){
   gl_Position=projectionMatrix*eye;
 }`;
 const fragmentShader=waterShape+`
-uniform float eaveTime,eaveFlow,eaveWet,eaveMist,eaveFog;
+uniform float eaveTime,eaveWet,eaveMist,eaveFog;
 uniform vec3 eaveColour;
 uniform vec4 eaveLamps[4];uniform vec3 eaveLampColours[4];
-varying vec2 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
+varying vec3 waterUv;varying vec3 waterWorld;varying vec4 waterInfo,waterState;
 // Analytic 2D polynomial ripple gradient (same family as weatherRoofGrad, zero transcendentals).
 vec2 eaveFilmGrad(vec2 p){
   vec2 i=floor(p),f=fract(p);
@@ -596,11 +1034,12 @@ vec2 eaveFilmGrad(vec2 p){
 }
 void main(){
   float seed=waterInfo.x,len=waterInfo.y,depth=waterInfo.z,cov=clamp(waterInfo.w,0.,1.);
+  float instFlow=waterUv.z;
   float dist=distance(waterWorld,cameraPosition);
   float nearFade=eaveNearFade(dist,depth);
   if(nearFade<.001)discard;
   if(eaveMist>.5){
-    float alpha=eaveSpray(waterUv.x*2.-1.,waterUv.y,eaveTime,seed,eaveFlow)*cov;
+    float alpha=eaveSpray(waterUv.x*2.-1.,waterUv.y,eaveTime,seed,instFlow)*cov;
     alpha*=nearFade*min(1.,eaveWet*5.)*exp(-eaveFog*dist);
     if(alpha<.001)discard;
     vec3 col=eaveColour*1.05;
@@ -614,7 +1053,6 @@ void main(){
     return;
   }
   bool isPour=waterState.y<-.001;
-  float pourShare=isPour?-waterState.y:0.;
   float eaveU=waterState.x,sheetAmt=isPour?0.:waterState.y,act=waterState.z,acrossStream=waterState.w;
   float fall=waterUv.y*len,quadAcross=waterUv.x*2.-1.;
   float tEmit=eaveTime-eaveFallTime(fall);
@@ -634,7 +1072,7 @@ void main(){
   }
   float live=max(act,sheetFall);
   if(live<.01)discard;
-  float locFlow=clamp(eaveFlow*(.55+.65*live),0.,1.);
+  float locFlow=clamp(instFlow*(.55+.65*live),0.,1.);
   float rawPres=eavePresence(fall,len,eaveTime,seed,locFlow);
   float pres=isPour?mix(1.,rawPres,smoothstep(.25,1.2,fall)):mix(rawPres,1.,sheetFall);
   if(pres<.01)discard;
@@ -671,15 +1109,15 @@ void main(){
   float coreCA=(1.-smoothstep(0.,.32,q2))*(.30+.30*nearLip+.65*glint+.40*ripMag);
   float midStreamBoost=1.+.65*smoothstep(11.,22.,dist);
   float pourCore=(1.-smoothstep(0.,.22,q2))*(.35+.55*glint+.45*ripSpec);
-  float pourGain=isPour?mix(.30,.54,pourShare):1.;
-  float streamAlpha=(eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,eaveFlow)+(isPour?pourCore*.14:0.))*midStreamBoost*pourGain;
+  float pourGain=isPour?.54:1.;
+  float streamAlpha=(eaveStreamAlpha(qClamped,fresnel,ripSpec,ripMod,coreCA,instFlow)+(isPour?pourCore*.14:0.))*midStreamBoost*pourGain;
   float midSheetBoost=1.+.45*smoothstep(10.,22.,dist)*(1.-smoothstep(26.,42.,dist));
-  float sheetAlpha=eaveSheetAlpha(quadAcross,fresnel,ripSpec,ripMod,sheetRim,eaveFlow)*midSheetBoost;
+  float sheetAlpha=eaveSheetAlpha(quadAcross,fresnel,ripSpec,ripMod,sheetRim,instFlow)*midSheetBoost;
   float resolved=streamAlpha*(1.-sheetFall)*act+sheetAlpha*sheetFall;
   float thin=mix(1.,.35,smoothstep(22.,54.,dist));
   float effCov=min(1.,cov/(thin*.55));
   float farDamp=mix(1.,.46,smoothstep(28.,68.,dist));
-  float thread=(.50+.55*ripSpec)*(1.-smoothstep(.18,1.,min(abs(acrossStream),1.)))*mix(.65,1.,eaveFlow)*farDamp;
+  float thread=(.50+.55*ripSpec)*(1.-smoothstep(.18,1.,min(abs(acrossStream),1.)))*mix(.65,1.,instFlow)*farDamp;
   float alpha=pres*mix(thread*effCov*smoothstep(0.,.45,act)+sheetAlpha*sheetFall,resolved,cov);
   float endFade=isPour?(1.-smoothstep(.78,1.,waterUv.y)):(1.-smoothstep(.985,1.,waterUv.y));
   alpha*=smoothstep(0.,.035,waterUv.y)*endFade;
@@ -705,6 +1143,23 @@ void main(){
   #include <colorspace_fragment>
 }`;
 
+const IS_TEST_MODE = typeof process !== 'undefined'
+  || (typeof location !== 'undefined' && new URLSearchParams(location.search).get('test') === '1');
+
+// Encodes eaveSheetCapable() output ({0, 0.75, 1}) as integer sIdx in {0, 1, 2}
+// plus catchment c in [0, 1] as sIdx + c * 0.5. Throws in test mode on any other sheetCap.
+export function packMetaZ(i) {
+  if (i.pour) return i.sheetCap;
+  const sc = i.sheetCap ?? 0;
+  let sIdx;
+  if (Math.abs(sc) < 1e-6) sIdx = 0;
+  else if (Math.abs(sc - .75) < 1e-6) sIdx = 1;
+  else if (Math.abs(sc - 1) < 1e-6) sIdx = 2;
+  else if (IS_TEST_MODE) throw new RangeError(`packMetaZ cannot encode sheetCap=${sc}`);
+  else sIdx = sc > .9 ? 2 : sc > .1 ? 1 : 0;
+  return sIdx + clamp(i.catchment ?? 1) * .5;
+}
+
 function geometry(instances,segments) {
   const g=new THREE.InstancedBufferGeometry(),vertices=[],uv=[],indices=[];
   for(let j=0;j<=segments;j++)for(let i=0;i<2;i++){vertices.push(i-.5,j/segments,0);uv.push(i,j/segments);}
@@ -713,7 +1168,7 @@ function geometry(instances,segments) {
   const streamCount=instances.reduce((n,i)=>n+(i.pour?0:1),0);
   let streamIdx=0;
   g.setAttribute('eaveTop',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[...i.top,i.seed])),4));
-  g.setAttribute('eaveMeta',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[i.eaveS,i.cellStep,i.sheetCap,i.angle])),4));
+  g.setAttribute('eaveMeta',new THREE.InstancedBufferAttribute(new Float32Array(instances.flatMap(i=>[i.eaveS,i.cellStep,packMetaZ(i),i.angle])),4));
   g.setAttribute('eaveBottom',new THREE.InstancedBufferAttribute(new Float32Array(instances.map(i=>i.bottom)),1));
   g.setAttribute('eaveRank',new THREE.InstancedBufferAttribute(new Float32Array(instances.map(i=>i.pour?0:(streamIdx+++.5)/Math.max(1,streamCount))),1));
   const box=new THREE.Box3();
