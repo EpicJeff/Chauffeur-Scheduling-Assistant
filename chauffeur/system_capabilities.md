@@ -1,6 +1,26 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.998 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.999 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.999 (2026-11-24, NOT device-verified): automatic generation no longer damages a finished yard.**
+
+The owner ran the art director on a finished yard and it removed their plant beds and plants.
+
+**Art director.** A round never changes anything that already exists.
+- It may only add plants, beds, edge planting and furniture (at most 25 a round), checked like hand-placed pieces and stored with the same person mark, and change material roles as before.
+- Anything it wants changed or removed is reported as a suggestion in its notes. Applying those with approval is a later change (owner decision: ask first).
+- It publishes through `twin_store.update_model` by grafting the additions onto the raw stored house. Existing records are asserted equal before anything is saved, so a house that is not in its normal form is not rewritten. Undo restores the house exactly.
+- A refused material role keeps the household's stored choice, including `water` and the pool roles.
+
+**Builds.** "Plants and beds" lays out the yard only when no person has touched it: person marks, hand-placed pieces and stored overrides count as touched, and director history does not. An occupied yard keeps its planting, beds and edges, and the build says so. Lot-first and chained builds and single buildings behave as before on an untouched yard.
+
+**Re-running that step** (API and Argyle) needs an explicit confirmation on a touched yard; Argyle asks first. The approval belongs to one running attempt and is dropped at every exit.
+
+**Costs.** No rendering change.
+
+**Open.** Renaming a building, changing its kind, and refitting its footprint still use the older save route, which shifts about 25 records of the owner's house per use. Explicit confirmed re-laying has no hand control yet (API and Argyle only).
+
+Tests: `test_twin_director`, `test_twin_director_connected`, `test_twin_director_loop`, `test_twin_yard_protect` (and `_fix4`, `_fix5`), `test_twin_compose`, the `test_twin_build*` files, `test_twin_model_ops_more`, `test_twin_sheets`, `test_twin_history_retention`. `test_twin_store_model` keeps its one failure from main.
 
 **v2.499.998 (2026-11-24, Chromium, NOT device-verified): every quality tier shares one lighting bake, so Low panels show baked lighting.**
 
