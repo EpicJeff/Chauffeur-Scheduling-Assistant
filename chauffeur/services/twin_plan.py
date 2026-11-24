@@ -337,6 +337,9 @@ def _roof(building, notes):
             section['pitch_source'] = 'default'
         section.setdefault('pitch_source', 'default')
         section['rect'] = list(rect)
+        from services.twin_model_supports import normalize_support, normalize_host
+        normalize_support(section, notes)
+        normalize_host(section, building, notes)
         _section_gutters(section, notes)
         sections[section['id']] = section
     extensions = []

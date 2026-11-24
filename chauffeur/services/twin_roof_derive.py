@@ -8,6 +8,7 @@ two intersecting eave planes as twin_roof.js.
 from copy import deepcopy
 from math import isfinite
 from services.twin_plan import _roof_entries
+from services.twin_model_supports import CHOICE_FIELDS
 
 
 _SIDES = {'left': 'x0', 'right': 'x1', 'front': 'y0', 'rear': 'y1'}
@@ -356,7 +357,7 @@ def derive_roof(blocks, observations, evidence, choices):
             _, choice_index, choice = match
             used_choices.add(choice_index)
             fixed.add(len(sections))
-            for field in ('kind', 'ridge', 'pitch', 'plate', 'overhang', 'low_side'):
+            for field in ('kind', 'ridge', 'pitch', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS):
                 if field in choice:
                     section[field] = deepcopy(choice[field])
             # A changed kind must inherit its own ends, not the photo's form.

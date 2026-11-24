@@ -6,6 +6,7 @@ import re
 
 from services.twin_timing import timed as _edit_timed
 from services import twin_joints, twin_plan, twin_register
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields, edge_pairs
 
 
 EDITABLE = {
@@ -435,7 +436,7 @@ def _choose_roof(building, piece):
         return False
     roof = building['roof']
     choice = {k: deepcopy(piece[k]) for k in
-              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in piece}
+              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS) if k in piece}
     choice.update(rect=deepcopy(block), src={'person': True})
     def same_rect(rect):
         return bool(rect and len(rect) == 4
@@ -709,12 +710,17 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
                 replacement = next((p for p in fresh[name] if p['id'] == piece['id']), None)
                 if replacement is not None:
                     if name == 'roofs':
-                        for edge, old_edge, (a, b), (c, d) in zip(replacement['edges'], piece['edges'],
-                                roofs._segments(replacement['area']), roofs._segments(piece['area'])):
+                        carry_fields(piece, replacement)
+                        for target_index, source_index in edge_pairs(piece, replacement):
+                            edge, old_edge = replacement['edges'][target_index], piece['edges'][source_index]
+                            a, b = roofs._segments(replacement['area'])[target_index]
+                            c, d = roofs._segments(piece['area'])[source_index]
                             axis = 0 if abs(a[0] - b[0]) < 1e-9 else 1
                             if 'wall' in old_edge:
                                 edge.update(wall=old_edge['wall'],
                                             wall_offset=old_edge.get('wall_offset', 0) + a[axis] - c[axis])
+                                if 'wall_along_offset' in old_edge:
+                                    edge['wall_along_offset'] = old_edge['wall_along_offset'] + a[1-axis] - c[1-axis]
                     piece.clear()
                     piece.update(deepcopy(replacement))
                     _mark(piece)

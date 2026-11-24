@@ -427,8 +427,10 @@ def _host_error(host, building):
 
 
 def _pieces(building, notes):
+    from services.twin_model_supports import normalize_support, normalize_host
     roofs = _list(building, 'roofs', notes, 'roof')
     for roof in roofs:
+        normalize_support(roof, notes)
         edges = roof.get('edges')
         if (not twin_plan._polygon(roof.get('area')) or not isinstance(edges, list)
                 or len(edges) != len(roof['area'])
@@ -441,6 +443,8 @@ def _pieces(building, notes):
                            for e in edges)
                 or not all(twin_plan._number(roof.get(k)) for k in ('plate', 'overhang'))):
             _note(roof, 'Roof', 'invalid area, edges or dimensions', notes)
+        else:
+            normalize_host(roof, building, notes)
     for piece in [*building.get('porches_detail', []),
                   *(e for e in building.get('extensions', []) if e.get('kind') == 'awning')]:
         if isinstance(piece, dict):

@@ -22,6 +22,7 @@ from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_dra
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
                       twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
 from services.twin_site_shapes import pieces as site_pieces
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -910,6 +911,8 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
             if old.get('src', {}).get('person') and not old.get('read_geometry'):
                 old['read_geometry'] = deepcopy(piece['read_geometry'])
             if not protected(old):
+                if kind == 'roof':
+                    carry_fields(old, piece, overwrite=True)
                 merged[merged.index(old)] = deepcopy(piece)
                 if kind == 'wall':
                     # A wider read can cover several earlier fragments.
@@ -2225,7 +2228,7 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                                     for c in choices):
                 continue
             choices.append({**{k: deepcopy(section[k]) for k in
-                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in section},
+                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS) if k in section},
                             'rect': deepcopy(block['rect']), 'src': {'person': True}})
         derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
 

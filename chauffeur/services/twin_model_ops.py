@@ -5,6 +5,7 @@ import math
 
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs
+from services.twin_model_supports import carry_fields, edge_pairs, normalize_host, normalize_support
 
 
 _EPS = 1e-9
@@ -1219,9 +1220,12 @@ def _set_field(building, op, ha_catalogue=None, *, actor='person'):
                 piece[key] = updated[key]
             else:
                 piece.pop(key, None)
-        for old, new in zip(piece['edges'], updated['edges']):
-            # Form edits retain authored edge identities, as plane_materials do.
-            old.update({k: v for k, v in new.items() if k not in ('gutter', 'downspouts')})
+        for target_index, source_index in edge_pairs(piece, updated):
+            old, new = piece['edges'][source_index], updated['edges'][target_index]
+            # Form edits retain authored attachments and their start-point
+            # offsets; the section's offsets use canonical rectangle corners.
+            old.update({k: v for k, v in new.items() if k not in (
+                'gutter', 'downspouts', 'overhang_ft', 'wall', 'wall_offset', 'wall_along_offset')})
             if old.get('gutter') and old['setting'] != 'sloped':
                 raise Refused('Remove the gutter before changing that edge to a gable or clipped edge.')
         return
@@ -1317,6 +1321,8 @@ def _proposal(building, op):
         if collection is None:
             raise Refused('This proposal cannot be accepted.')
         piece = deepcopy(proposal['piece'])
+        if collection == 'roofs':
+            carry_fields(_find(building, collection, proposal['against']), piece, overwrite=True)
         # Retain the live identity so its hosted pieces keep their references.
         piece.update(id=proposal['against'], state='settled')
         _person(piece)
@@ -2370,12 +2376,16 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                                     'pitch': pitch, 'overhang': roof['overhang']}, ha_catalogue)
                     part = building['roofs'][-1]
                     part['edges'] = roofs.from_section(section)['edges']
+                    carry_fields(roof, part, overwrite=True)
                     building['roofs'][-1] = roofs.attach_edges(part, building['walls'], building['joints'])
     if kind == 'draw_room' and op.get('name'):
         old_ids = {r['id'] for r in previous['rooms']}
         candidates = [r for r in building['rooms'] if r['id'] not in old_ids]
         if candidates:
             max(candidates, key=lambda r: twin_model._overlap(r['polygon'], polygon))['name'] = op['name']
+    for roof in building['roofs']:
+        normalize_support(roof, notes)
+        normalize_host(roof, building, notes)
     building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'])
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))

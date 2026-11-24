@@ -6,6 +6,7 @@ import math
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_plan
 from services import twin_porches
+from services.twin_model_supports import ROOF_FIELDS, CHOICE_FIELDS, carry_fields, edge_pairs
 
 
 _EPS = 1e-6
@@ -377,7 +378,9 @@ def _bearing_level(building, plate):
 
 def _roof_form(roof):
     return [(s['rect'], s['kind'], s.get('ridge'), s.get('ends'), s.get('pitches'),
-             s['pitch'], s['plate'], s['overhang']) for s in roofs.to_sections(roof)]
+             s['pitch'], s['plate'], s['overhang'],
+             *[s.get(k) for k in ROOF_FIELDS],
+             [e.get('overhang_ft') for e in s.get('edges', [{} for _ in range(4)])]) for s in roofs.to_sections(roof)]
 
 
 def _dormer_sections(dormer, parent):
@@ -410,10 +413,21 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
         if choice is not None and not migration:
             # A person's block choice that arrives in the flat plan is applied
             # to its section. On migration the section already holds it (R14).
-            for key in ('kind', 'ridge', 'ends', 'pitch', 'pitches', 'plate', 'overhang', 'low_side'):
+            for key in ('kind', 'ridge', 'ends', 'pitch', 'pitches', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS):
                 if key in choice:
                     section[key] = deepcopy(choice[key])
         roof = roofs.from_section(section)
+        # Geometry may be re-read independently of person-set support fields.
+        old = old_roofs.get(roof['id'])
+        if old is not None:
+            carry_fields(old, roof, overwrite=True)
+            if choice is not None:
+                for key in ROOF_FIELDS:
+                    if key in choice:
+                        roof[key] = deepcopy(choice[key])
+                for edge, chosen in zip(roof['edges'], choice.get('edges', [])):
+                    if 'overhang_ft' in chosen:
+                        edge['overhang_ft'] = deepcopy(chosen['overhang_ft'])
         roof.setdefault('overhang', 1)
         if not roof.get('level'):
             roof['level'] = _bearing_level(building, roof['plate'])
@@ -433,10 +447,14 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
             roof = roofs.attach_edges(roof, building['walls'], building['joints'])
         else:
             # A detached edge stays detached through a flat build write (R23).
-            for edge, was in zip(roof['edges'], old['edges']):
-                for key in ('wall', 'wall_offset'):
+            for target_index, source_index in edge_pairs(old, roof):
+                edge, was = roof['edges'][target_index], old['edges'][source_index]
+                for key in ('wall', 'wall_offset', 'wall_along_offset'):
                     if key in was:
                         edge[key] = was[key]
+                if 'wall_along_offset' in was:
+                    axis = roofs._edge(*roofs._segments(roof['area'])[target_index])[0]
+                    edge['wall_along_offset'] += roof['area'][target_index][1-axis] - old['area'][source_index][1-axis]
         building['roofs'].append(roof)
     building['dormers'] = [deepcopy(d) for d in previous.get('dormers', []) if _person(d)]
     # A lost dormer has no drawable section, but its record still crosses the
@@ -920,7 +938,7 @@ def flatten(model: dict) -> dict:
                             'flags': [{k: deepcopy(v) for k, v in f.items() if k != 'at'}
                                       for f in building.get('flags', []) if 'block_rect' in f]}
         choices = [{**{k: deepcopy(s[k]) for k in ('kind', 'ridge', 'ends', 'pitch', 'plate',
-                                                    'overhang', 'low_side') if k in s},
+                                                    'overhang', 'low_side', *CHOICE_FIELDS) if k in s},
                     'rect': deepcopy(s['block']), 'src': {'person': True}}
                    for s in sections if s.get('src', {}).get('person') and s.get('block')
                    and not s.get('dormer_of')
