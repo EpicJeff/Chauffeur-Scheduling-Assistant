@@ -34,7 +34,7 @@ import { installPlantWind } from './sky/wind.js';
 import { installStageHaze, startEnvironmentFrame } from './sky/stage_haze.js';
 import { installCloudShadow } from './sky/cloud_shadow.js';
 import { installWeatherSurface } from './sky/weather_surface.js';
-import { createRoofWater } from './sky/roof_water.js';
+import { createRoofWater, eaveRunoff } from './sky/roof_water.js';
 import { seasonState, createSeasonPreview, installSeasons } from './sky/seasons.js';
 import { createPrecipitation } from './sky/precipitation.js';
 import { createEaveStreams } from './sky/eave_streams.js';
@@ -142,7 +142,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   post?.setWetGround({weatherSurface:weatherSurface.uniforms.weatherSurface,...precipitation.uniforms});
   const seasonTouches = createSeasonTouches(scene,{tier});
   let precipitationPlan=null,precipitationRoofs=null,precipitationCover=null;
-  let eavePlan=null,eaveRoofs=null;
+  let eavePlan=null,eaveRoofs=null,eaveGutters=null;
   let cloudCentre=[0,0];
   let stageOverride = stage?.radius_override === undefined ? stage?.radius ?? null : stage.radius_override;
   const stageForPlan = nextPlan => {
@@ -518,9 +518,39 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   // A room under its roof sees a fraction of the sky. At the yard's full share
   // it sits as bright as the lawn and a window reads as nothing. Lifting the
   // roof away (a floor view, the editor's level buttons) gives the sky back.
+  // Covered upward surfaces (porches, overhangs) share this roof fade via
+  // stageRing[5].w and swap blue sky hemisphere fill for bounced ground light
+  // (hemisphere ground + sunlit ground irradiance) via stageRing[6..8].w.
   const INDOOR_SKY = .3, INDOOR = new Set(['interior_wall', 'floor', 'ceiling']);
+  const COVER_GROUND_ALBEDO = .28, COVER_SUN_BOUNCE_FACTOR = COVER_GROUND_ALBEDO / (2 * Math.PI);
   let indoorSky = null;
   function applyIndoorSky() {
+    let roofFade = 1;
+    if (twin) {
+      if (viewing) {
+        const buildings = plan.buildings || [];
+        roofFade = buildings.length ? Math.min(...buildings.map(b => viewing.roofAlpha(b.id))) : 1;
+      } else {
+        roofFade = twin.groups.roof.visible ? 1 : 0;
+      }
+    }
+    const hInt = state.unlit ? 0 : Math.max(0, ambient.intensity);
+    const grR = ambient.groundColor.r * hInt, grG = ambient.groundColor.g * hInt, grB = ambient.groundColor.b * hInt;
+    const grLum = grR * .2126 + grG * .7152 + grB * .0722;
+    const sdx = sun.position.x - sun.target.position.x;
+    const sdy = sun.position.y - sun.target.position.y;
+    const sdz = sun.position.z - sun.target.position.z;
+    const sLen = Math.hypot(sdx, sdy, sdz);
+    const sunElev = sLen > 1e-6 ? Math.max(0, sdy / sLen) : 0;
+    const cloudSun = timeLook && timeLook.sunClear > 0 ? Math.max(0, timeLook.sun / timeLook.sunClear) : 1;
+    const sunBounce = state.unlit ? 0 : Math.max(0, sun.intensity) * cloudSun * sunElev * COVER_SUN_BOUNCE_FACTOR;
+    const sLum = sun.color.r * .2126 + sun.color.g * .7152 + sun.color.b * .0722;
+    const coverDelta = [
+      (grR + (grLum - grR) * .5) * .65 + (sun.color.r + (sLum - sun.color.r) * .5) * sunBounce - ambient.color.r * hInt,
+      (grG + (grLum - grG) * .5) * .65 + (sun.color.g + (sLum - sun.color.g) * .5) * sunBounce - ambient.color.g * hInt,
+      (grB + (grLum - grB) * .5) * .65 + (sun.color.b + (sLum - sun.color.b) * .5) * sunBounce - ambient.color.b * hInt,
+    ];
+    stageHaze.set({ roofFade, coverDelta });
     if (!twin || !settings.shadows) return;
     // The meshes are found once a build; their materials are read each frame,
     // because the bake and the level fades swap in copies of their own.
@@ -571,23 +601,29 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
     splashSunDirection.copy(sun.position).sub(sun.target.position).normalize();
     splashSunColour.copy(sun.color).multiplyScalar(sun.intensity);
+    // A focused yard room is outdoors with every roof in view (levels.js never
+    // cuts the house for it), so weather treats it like the whole-house view.
+    const levelSnap=view.levels?.snapshot();
+    const weatherLevel=levelSnap ? (levelSnap.level==='room'&&levelSnap.building==null ? 'house' : levelSnap.level)
+      : (state.view==='ext'?'house':'floor');
     precipitation.update(performance.now()/1000,view.weather,camera,{target:controls.target,bearing:site.front_bearing_deg ?? 180,
-      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,colour:timeLook?.skyColor,
+      level:weatherLevel,unlit:state.unlit,colour:timeLook?.skyColor,
       light:leafLight(),sunDirection:splashSunDirection,sunColour:splashSunColour,
       sunVisibility:timeLook?.sunClear>0?sunDiscVisibility(view.weather,timeLook.sun/timeLook.sunClear):0});
     // Eave runoff follows the roof's own drying ladder (roof_water.js), so the
     // streams thin to drips and stop as the roof drains after the rain.
-    runoff.flow=roofState.flow;runoff.wet=roofState.wet;
-    if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces){
+    runoff.flow=eaveRunoff(roofState);runoff.wet=roofState.wet;
+    if(eavePlan!==plan||eaveRoofs!==twin?.roofSurfaces||eaveGutters!==twin?.gutters){
       // Optional HA absence and a dry neutral editor allocate no water mesh.
       // Once rain needs it, build once for this immutable roof snapshot.
-      if(runoff.flow>.002&&runoff.wet>0){eaves.setPlan(plan,twin?.roofSurfaces,kit);eavePlan=plan;eaveRoofs=twin?.roofSurfaces;}
-      else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;}
+      if(runoff.flow>.002&&runoff.wet>0){eaves.setPlan(plan,twin?.roofSurfaces,kit,twin?.gutters);eavePlan=plan;eaveRoofs=twin?.roofSurfaces;eaveGutters=twin?.gutters;}
+      else if(eavePlan){eaves.setPlan({});eavePlan=null;eaveRoofs=null;eaveGutters=null;}
     }
     eaves.update(runoff,performance.now()/1000,{camera,target:controls.target,
-      level:view.levels?.snapshot().level ?? (state.view==='ext'?'house':'floor'),unlit:state.unlit,neutral:view.weather?.neutral,
-      fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps});
-    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||view.levels.snapshot().level==='house');
+      level:weatherLevel,unlit:state.unlit,neutral:view.weather?.neutral,
+      fog:weatherExtinction(view.weather),light:leafLight(),lamps:eaveLamps,
+      viewportHeight:renderer3.domElement.height||el.clientHeight||720});
+    const touchEnabled=(!editor||state.liveWeather)&&!state.unlit&&state.view==='ext'&&(!view.levels||weatherLevel==='house');
     const sunDir=sun.position.clone().sub(sun.target.position).normalize().toArray();
     const sunAltDeg=Math.asin(Math.max(-1,Math.min(1,sunDir[1])))*180/Math.PI;
     seasonTouches.update(performance.now()/1000,view.season,view.weather,camera,{target:controls.target,plants:yardGroup,
@@ -914,6 +950,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const b = frame.building, a = -(b.rotation || 0) * Math.PI / 180;
       const x = point.x / FT - (b.position?.[0] || 0), y = -point.z / FT - (b.position?.[1] || 0);
       return [Math.cos(a) * x - Math.sin(a) * y, Math.sin(a) * x + Math.cos(a) * y];
+    },
+    // Production camera placement (the editor's Check focus uses it); tests
+    // read it back through cameraState().
+    setCameraState({ position, target }) {
+      cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
     },
     // The Top camera in perspective, straight above the focused room or floor.
     setTopCamera(key) {
@@ -1837,7 +1878,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
-      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray(), nightBrightness });
+      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:cloudIrradiance.top, ground:sky.horizon([0,-1,0]).toArray(), nightBrightness });
     scene.background = sky.clearCube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;
@@ -2001,9 +2042,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     cameraState() { return { position: camera.position.toArray(), target: controls.target.toArray() }; },
     // Retain the late-sky/test hook; the atmosphere now owns the fixed environment.
     applySky(texture) { texture?.dispose(); updateTime(false, true); },
-    setCameraState({ position, target }) {
-      cameraMoved = true; camera.position.fromArray(position); controls.target.fromArray(target); controls.update(); render();
-    },
     roofStats(buildingId) {
       let triangles = 0, maxError = 0;
       for (const [id, roof] of twin?.roofSurfaces || []) {

@@ -93,6 +93,8 @@ await test('two instanced draws share one small sampler-free program; Low submit
   e.update({flow:0,wet:0});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{level:'floor'});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{level:'room'});assert.equal(e.group.visible,false);
+  // A focused building is still an exterior view with its roof: streams stay.
+  e.update({flow:1,wet:1},0,{camera,target,level:'building'});assert.equal(e.group.visible,true,'streams show with one building focused');
   const high=camera.clone();high.position.set(0,100,0);e.update({flow:1,wet:1},0,{camera:high,target});assert.equal(e.group.visible,false);
   e.update({flow:1,wet:1},0,{camera,target});assert.equal(e.group.visible,true);
   const far=camera.clone();far.position.copy(e.streams.geometry.boundingBox.max).addScalar(40);
@@ -101,6 +103,25 @@ await test('two instanced draws share one small sampler-free program; Low submit
   e.dispose();e.dispose();assert.equal(scene.children.length,0);
  }
  const e=E.createEaveStreams(new THREE.Scene());e.setPlan({});e.update({flow:1,wet:1});assert.equal(e.group.visible,false);e.dispose();
+});
+await test('overview distance (60 m) stays visible with thinned instances, 150 m hides, and viewport height updates the min-width uniform',()=>{
+ const scene=new THREE.Scene(),e=E.createEaveStreams(scene,{tier:'high'});e.setPlan(plan,twin.roofSurfaces,kit);
+ const count=e.data.instances.length,box=e.streams.geometry.boundingBox;
+ const nearCam=camera.clone();nearCam.position.set(box.max.x+4,box.max.y,box.max.z);
+ e.update({flow:1,wet:1},0,{camera:nearCam,viewportHeight:720});
+ assert.equal(e.group.visible,true);assert.equal(e.streams.geometry.instanceCount,count,'inside 8 m keeps full density');
+ assert.equal(e.mist.visible,true);assert.equal(e.uniforms.eaveViewportHeight.value,720);
+ const overviewCam=camera.clone();overviewCam.position.set(box.max.x+60,box.max.y,box.max.z);
+ e.update({flow:1,wet:1},0,{camera:overviewCam,viewportHeight:1080});
+ assert.equal(e.group.visible,true,'visible at 60 m overview distance');
+ assert.equal(e.uniforms.eaveFlow.value,1);
+ assert.ok(e.streams.geometry.instanceCount>0&&e.streams.geometry.instanceCount<count,`thinned at 60 m: ${e.streams.geometry.instanceCount}/${count}`);
+ assert.equal(e.mist.visible,false,'spray drops beyond 25 m');assert.equal(e.mist.geometry.instanceCount,0);
+ assert.equal(e.uniforms.eaveViewportHeight.value,1080,'min-width viewport height uniform tracks viewport');
+ const farCam=camera.clone();farCam.position.set(box.max.x+150,box.max.y,box.max.z);
+ e.update({flow:1,wet:1},0,{camera:farCam,viewportHeight:1080});
+ assert.equal(e.group.visible,false,'hidden at 150 m beyond LOD_FAR');assert.equal(e.streams.geometry.instanceCount,0);
+ e.dispose();
 });
 await test('sustained reservoir decay thins coherent columns quickly; a steady rate change and renewed rain do not keep draining',()=>{
  const e=E.createEaveStreams(new THREE.Scene());e.setPlan(plan,twin.roofSurfaces,kit);
@@ -121,11 +142,11 @@ await test('sustained reservoir decay thins coherent columns quickly; a steady r
 });
 await test('actual shader functions vary clear water, desynchronise drops, break thin lower streams and keep spray low and camera-safe',()=>{
  const e=E.createEaveStreams(new THREE.Scene());e.setPlan(plan,twin.roofSurfaces,kit);
- const shape=e.streams.material.vertexShader.split('attribute vec4 eaveTop;')[0]
+ const shape=e.streams.material.vertexShader.split('attribute vec4 eaveTop')[0]
   .replace(/\bfloat\s+(\w+)\s*\(/g,'function $1(').replace(/(\(|,)\s*float\s+/g,'$1').replace(/\bfloat\s+/g,'let ');
  const fract=x=>x-Math.floor(x),mix=(a,b,t)=>a+(b-a)*t,smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
- const S=new Function('fract','mix','smoothstep','sin','abs','max',shape+'return {eaveWidth,eaveWobble,eavePresence,eaveGlint,eaveOpacity,eaveSpray,eaveSprayHeight,eaveSprayWidth,eaveNearFade};')
-  (fract,mix,smoothstep,Math.sin,Math.abs,Math.max);
+ const S=new Function('fract','mix','smoothstep','sin','abs','max','min','floor','sqrt',shape+'return {eaveHash1,eaveNoise1,eaveFallTime,eaveActivity,eaveSheetAmount,eaveSheetLumGain,eaveSheetAlpha,eaveStreamAlpha,eaveWidth,eaveWobble,eavePresence,eaveGlint,eaveOpacity,eaveSpray,eaveSprayHeight,eaveSprayWidth,eaveNearFade,eaveLodDensity};')
+  (fract,mix,smoothstep,Math.sin,Math.abs,Math.max,Math.min,Math.floor,Math.sqrt);
  const widths=[],alpha=[],wobble=[],phases=[],spray=[];let upper=0,lower=0;
  for(let i=1;i<=300;i++){
   const seed=i/301; widths.push(S.eaveWidth(1,4,seed,1));alpha.push(S.eaveOpacity(0,S.eaveGlint(1,4,seed),1));
@@ -147,7 +168,93 @@ await test('actual shader functions vary clear water, desynchronise drops, break
  const roofLipDistance=3,landingDistance=.08,oldProjectedWidth=.44*1080/(2*Math.tan(19*Math.PI/180)*landingDistance);
  assert.ok(roofLipDistance>.15&&oldProjectedWidth>1000,'old lip-distance cull admits an oversized near-camera mist quad');
  assert.equal(S.eaveNearFade(landingDistance,landingDistance),0,'actual landing fragments now fade out');
- console.log('SHAPE_PROOF',JSON.stringify({widthMm:[Math.min(...widths)*1000,Math.max(...widths)*1000],faceMeanAlpha:alpha.reduce((a,b)=>a+b,0)/alpha.length,oldProjectedMistPx:oldProjectedWidth}));
+ assert.equal(S.eaveLodDensity(0),1);assert.equal(S.eaveLodDensity(8),1);assert.equal(S.eaveLodDensity(20),1,'building-focus ~20 m keeps full density');
+ assert.ok(S.eaveLodDensity(60)>.25&&S.eaveLodDensity(60)<.45,'overview floor near one third');
+ assert.equal(S.eaveLodDensity(120),0);assert.equal(S.eaveLodDensity(150),0);
+ // Round 2: per-stream activity varies across sites & over time (some on, some off, different set later).
+ const onAt=t=>Array.from({length:60},(_,i)=>S.eaveActivity(i*.12,t,(i+1)/61,1)>.05);
+ const set0=onAt(2),set1=onAt(18);
+ const count0=set0.filter(Boolean).length,count1=set1.filter(Boolean).length;
+ assert.ok(count0>10&&count0<55,`mix of active/dormant sites at t=2: ${count0}/60`);
+ assert.ok(count1>10&&count1<55,`mix of active/dormant sites at t=18: ${count1}/60`);
+ const flipped=set0.filter((v,i)=>v!==set1[i]).length;
+ assert.ok(flipped>=8,`different set active later: ${flipped} sites changed state`);
+ // Fall-speed advection rate within 10% of sqrt(2 g d) at d = 1 m (4.429 m/s).
+ const d0=1.0,eps=.001,advectV=(2*eps)/(S.eaveFallTime(d0+eps)-S.eaveFallTime(d0-eps)),exactV=Math.sqrt(2*9.81*d0);
+ assert.ok(Math.abs(advectV-exactV)/exactV<.10,`advection speed ${advectV.toFixed(3)} vs sqrt(2gd)=${exactV.toFixed(3)}`);
+ // Confirm the actual glint/wobble/presence wave translates by advectV*dt at d=1 m.
+ const dt=.005,g0=S.eaveGlint(d0,10,.37),gAdv=S.eaveGlint(d0+advectV*dt,10+dt,.37);
+ assert.ok(Math.abs(g0-gAdv)<1e-3,`glint advects at free-fall speed: ${g0} vs ${gAdv}`);
+ // Break-up increases with fall distance (higher gap fraction lower down across many streams).
+ let nearSolid=0,farSolid=0;
+ for(let i=1;i<=200;i++){const sd=i/201;nearSolid+=S.eavePresence(.15,3,10+i*.07,sd,.8);farSolid+=S.eavePresence(2.6,3,10+i*.07,sd,.8);}
+ assert.ok(farSolid<nearSolid*.75,`break-up increases with fall distance: near=${nearSolid.toFixed(1)} far=${farSolid.toFixed(1)}`);
+ // Sheet mode only on flat straight edges at high flow (never corrugated, rough/shingle, short stub, or low flow).
+ const flatAwning={a:[0,3,0],b:[4,3,0],pan:true,pitch:.4572,kind:'attachment'};
+ const corrugated={a:[0,3,0],b:[4,3,0],pan:false,pitch:.075,kind:'shed'};
+ const shingle={a:[0,3,0],b:[4,3,0],pan:false,pitch:null,kind:'gable'};
+ const shortStub={a:[0,3,0],b:[.4,3,0],pan:true,pitch:.4572,kind:'gable'};
+ assert.equal(E.eaveSheetCapable(flatAwning),1);
+ assert.equal(E.eaveSheetCapable(corrugated),0);
+ assert.equal(E.eaveSheetCapable(shingle),0);
+ assert.equal(E.eaveSheetCapable(shortStub),0);
+ let maxSheetHigh=0,maxSheetLow=0,maxSheetCorr=0;
+ for(let i=0;i<80;i++){
+  maxSheetHigh=Math.max(maxSheetHigh,S.eaveSheetAmount(i*.15,5,1,E.eaveSheetCapable(flatAwning)));
+  maxSheetLow=Math.max(maxSheetLow,S.eaveSheetAmount(i*.15,5,.45,E.eaveSheetCapable(flatAwning)));
+  maxSheetCorr=Math.max(maxSheetCorr,S.eaveSheetAmount(i*.15,5,1,E.eaveSheetCapable(corrugated)));
+ }
+ assert.ok(maxSheetHigh>.5,`flat straight awning enters sheet mode at high flow: ${maxSheetHigh}`);
+ assert.equal(maxSheetLow,0,'sheet splits back to streams at moderate/low flow');
+ assert.equal(maxSheetCorr,0,'corrugated eave never enters sheet mode');
+ // Round 3: falling sheet never lowers luminance behind it on average (premultiplied contribution >= 0
+ // across zero-mean ripple modulation) and stays mostly transparent with a brighter ragged lower lip.
+ // The shader outputs skyRad*gain. Realistic sky radiance (eaveColour luma) is
+ // ~.55 at dusk to 1.0 in bright day. The honest guarantee: the sheet never
+ // darkens a background that is no brighter than the sky it reflects.
+ const cases=[];for(const sky of [.55,.8,1.0])for(const bg of [.15,.5,.85,1.0])if(bg<=sky)cases.push([sky,bg]);
+ let sheetAlphaSum=0,sheetSamples=0,minSheetGain=Infinity,minDelta=Infinity;
+ for(const [sky,bg] of cases){
+  let deltaSum=0,n=0;
+  for(let r=-10;r<=10;r++){
+   const ripMod=(r/10)*.35,ripSpec=Math.max(0,ripMod)*.8;
+   for(let a=-4;a<=4;a++){
+    const across=a/5,fresnel=.02+.12*(across*across),skyMix=.45;
+    for(const rim of [0,.35,.9]){
+     const gain=S.eaveSheetLumGain(ripMod,skyMix,ripSpec,rim);
+     const al=S.eaveSheetAlpha(across,fresnel,ripSpec,ripMod,rim,1);
+     minSheetGain=Math.min(minSheetGain,gain);
+     deltaSum+=al*(sky*gain-bg);n++;
+     if(bg===.5&&sky===.8){sheetAlphaSum+=al;sheetSamples++;}
+    }
+   }
+  }
+  const meanDelta=deltaSum/n;minDelta=Math.min(minDelta,meanDelta);
+  assert.ok(meanDelta>=0,`sheet never lowers luminance behind bg=${bg} under sky=${sky}: meanDelta=${meanDelta.toFixed(5)}`);
+ }
+ const sheetMeanAlpha=sheetAlphaSum/sheetSamples;
+ assert.ok(minSheetGain>=1,'sheet colour stays at or above sky luminance (no dark smudge)');
+ assert.ok(sheetMeanAlpha<.25,`sheet stays mostly transparent: meanAlpha=${sheetMeanAlpha.toFixed(4)}`);
+ assert.ok(S.eaveSheetLumGain(0,.45,.2,1)>S.eaveSheetLumGain(0,.45,.2,0),'ragged lower edge is brighter than interior');
+ // Round 5: individual stream body stays clear like the sheet (mean alpha within 1.5x of sheet's,
+ // transparent centre, shape carried by thin bright edge glints + faint core + ripples).
+ let streamAlphaSum=0,streamSamples=0;
+ for(let r=-10;r<=10;r++){
+  const ripMod=(r/10)*.35,ripSpec=Math.max(0,ripMod)*.8;
+  for(let qi=0;qi<=20;qi++){
+   const q=qi/20,ndv=Math.sqrt(Math.max(.08,1-q*q)),f1=1-ndv,fresnel=.02+.98*f1*f1*f1*f1;
+   const coreCA=(1-smoothstep(0,.32,q*q))*(.45+.35*Math.abs(ripMod));
+   streamAlphaSum+=S.eaveStreamAlpha(q,fresnel,ripSpec,ripMod,coreCA,1);streamSamples++;
+  }
+ }
+ const streamMeanAlpha=streamAlphaSum/streamSamples;
+ const streamCenterAlpha=S.eaveStreamAlpha(0,.02,.08,0,.45,1);
+ const fEdge=1-Math.sqrt(Math.max(.08,1-.78*.78)),streamEdgeAlpha=S.eaveStreamAlpha(.78,.02+.98*fEdge**4,.08,0,0,1);
+ assert.ok(streamMeanAlpha<=sheetMeanAlpha*1.5,`stream body mean alpha (${streamMeanAlpha.toFixed(4)}) stays within 1.5x of sheet (${sheetMeanAlpha.toFixed(4)})`);
+ assert.ok(streamMeanAlpha>=sheetMeanAlpha*.45,`stream body stays readable (${streamMeanAlpha.toFixed(4)}) vs sheet (${sheetMeanAlpha.toFixed(4)})`);
+ assert.ok(streamCenterAlpha<.12,`stream centre stays mostly transparent, not solid white fill: ${streamCenterAlpha.toFixed(4)}`);
+ assert.ok(streamEdgeAlpha>streamCenterAlpha*1.4,`thin grazing edges carry the stream shape: edge=${streamEdgeAlpha.toFixed(4)} vs center=${streamCenterAlpha.toFixed(4)}`);
+ console.log('SHAPE_PROOF',JSON.stringify({widthMm:[Math.min(...widths)*1000,Math.max(...widths)*1000],faceMeanAlpha:alpha.reduce((a,b)=>a+b,0)/alpha.length,oldProjectedMistPx:oldProjectedWidth,advectV:+advectV.toFixed(3),activeSites:[count0,count1,flipped],maxSheetHigh:+maxSheetHigh.toFixed(3),sheetMeanAlpha:+sheetMeanAlpha.toFixed(4),streamMeanAlpha:+streamMeanAlpha.toFixed(4),streamToSheetRatio:+(streamMeanAlpha/sheetMeanAlpha).toFixed(3),sheetMinDelta:+minDelta.toFixed(5)}));
  e.dispose();
 });
 await test('real household viewer wires Rain stopping, cutaway hiding, rebuild and disposal',async()=>{
@@ -159,9 +266,17 @@ await test('real household viewer wires Rain stopping, cutaway hiding, rebuild a
   const edge=v.eaves.data.eaves[0],mid=edge.a.map((x,i)=>(x+edge.b[i])*.5),n=Math.hypot(...edge.outward);
   v.setCameraState({target:[mid[0],mid[1]-1,mid[2]],position:[mid[0]+edge.outward[0]/n*6,mid[1]-.5,mid[2]+edge.outward[2]/n*6]});v.render();
   assert.equal(v.weather.rate,1);assert.equal(v.eaves.group.visible,true);
+  assert.equal(v.eaves.uniforms.eaveViewportHeight.value,900,'viewer wires viewport height to min-width uniform');
   stamp+=25000;v.render();assert.equal(v.weather.rate,0);assert.equal(v.weather.rain_stopped_s,5);assert.ok(v.eaves.uniforms.eaveFlow.value>.9);
   stamp+=65000;v.render();assert.equal(v.weather.wetness,0);assert.equal(v.eaves.group.visible,false);
   const b=v.plan.buildings.find(b=>b.rooms.length),r=b.rooms[0];v.setWeatherPreview('rain-stopping');v.levels.go({building:b.id,floor:r.level},{immediate:true});v.render();assert.equal(v.eaves.group.visible,false);
+  // A focused yard room is outdoors with the roofs in view: streams stay.
+  v.plan.site=v.plan.site||{};const px=b.position?.[0]||0,py=b.position?.[1]||0;
+  v.plan.site.yard_rooms=[...(v.plan.site.yard_rooms||[]),{id:'yard-test',name:'Yard test',polygon:[[px+60,py],[px+80,py],[px+80,py+20],[px+60,py+20]]}];
+  assert.ok(v.levels.go({room:'yard-test'},{immediate:true})!==false,'yard room is reachable');
+  v.setCameraState({target:[mid[0],mid[1]-1,mid[2]],position:[mid[0]+edge.outward[0]/n*6,mid[1]-.5,mid[2]+edge.outward[2]/n*6]});v.render();
+  assert.equal(v.levels.snapshot().room,'yard-test');assert.equal(v.levels.snapshot().building??null,null);
+  assert.equal(v.eaves.group.visible,true,'eave streams stay visible with a yard room focused');
   const old=v.eaves.streams.geometry;let released=false;old.addEventListener('dispose',()=>released=true);
   const next=structuredClone(v.plan);next.buildings[0].roof.sections[0].plate+=1;
   await v.rebuild(next);v.render();assert.notEqual(v.eaves.streams.geometry,old);assert.ok(released,'rebuilding releases stale landing data');

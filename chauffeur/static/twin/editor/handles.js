@@ -14,6 +14,7 @@ import { roundPit, firePitOutline } from '../fire_pits.js';
 import { HANDLE_HIT_PX } from './picking.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
+import { gutterSnapshot, downspoutValues, downspoutIndex, edgeOperation } from './gutter_controls.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -141,6 +142,16 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       const { a, b } = roofEdge(roof, index);
       add('roof_edge', roof.id, [...a.map((v, i) => (v + b[i]) / 2), roof.plate], roof.level, { edge: index });
     });
+    if (roof && roof.state !== 'ghost' && roof.edges.some(e => e.gutter)) {
+      const snapshot = gutterSnapshot(gesture?.handle.kind === 'downspout' ? gesture.source : getPlan());
+      const runs = new Set(snapshot.runs.filter(r => r.building === building.id).map(r => r.id));
+      for (const spout of snapshot.spouts) {
+        if (!runs.has(spout.run) || spout.edge.roof !== roof.id || !Number.isInteger(spout.edge.edge)) continue;
+        const at = local(building, new THREE.Vector3(...spout.top)).toArray();
+        if (gesture?.handle.spout === spout.id && gesture.point) at.splice(0, 2, ...gesture.point);
+        add('downspout', roof.id, at, roof.level, { edge: spout.edge.edge, fraction: spout.authoredFraction ?? spout.edge.fraction, spout: spout.id, run: spout.run });
+      }
+    }
     const dormer = building.dormers?.find(d => selected.kind === 'dormer' && d.id === selected.id);
     const parent = dormer && building.roofs?.find(r => r.id === dormer.roof);
     if (parent && dormer.state !== 'ghost') {
@@ -208,9 +219,16 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   }
   function begin(event, handle = hit(event)) {
     if (gesture) return false;
-    if (!handle) return false;
+    if (!canEdit() || !handle) return false;
     lastFrameMs = null; drag.clearDragFrame?.();
     const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'downspout') {
+      const piece = building.roofs.find(r => r.id === handle.id), normal = [0, 0, 1];
+      const start = onPlane(event, building, handle.at, normal); if (!start) return false;
+      const values = downspoutValues(source, building.id, piece.id, handle.edge);
+      gesture = { handle, source, building, piece, normal, start, values,
+        index: downspoutIndex(values, handle.fraction), operation: null }; return true;
+    }
     if (handle.kind === 'stair_end') {
       const piece = building.stairs.find(s => s.id === handle.id), normal = [0, 0, 1];
       const start = onPlane(event, building, handle.at, normal); if (!start) return false;
@@ -289,6 +307,17 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       showValue('length', drag.value()); return;
     }
     let point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'downspout') {
+      const a = piece.area[handle.edge], b = piece.area[(handle.edge + 1) % piece.area.length], d = b.map((v, i) => v - a[i]);
+      const fraction = Math.max(0, Math.min(1, d.reduce((n, v, i) => n + (point[i] - a[i]) * v, 0) / (d[0] ** 2 + d[1] ** 2 || 1)));
+      const values = [...g.values];
+      if (g.index < 0) { if (values.length >= 8) return; values.push(fraction); } else values[g.index] = fraction;
+      g.operation = edgeOperation(building.id, piece.id, handle.edge, { downspouts: values });
+      g.point = a.map((v, i) => v + fraction * d[i]);
+      // Only move the screen handle during the gesture; placement/roof geometry
+      // rebuild once on release, through the normal editor operation path.
+      refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     if (handle.kind === 'hosted' && !piece.host.wall && !piece.host.roof)
       point = point.map((v, i) => g.start[i] + move(v - g.start[i]));
     if (Number.isFinite(exact) && handle.kind === 'site_move') {
@@ -427,6 +456,12 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     const g = gesture, released = preview; gesture = null; preview = null;
     typed.hide();
     if (!g) return;
+    if (g.handle.kind === 'downspout') {
+      if (clicked) onClick?.(g.handle);
+      try { if (!cancel && canEdit() && g.operation) await onCommit(g.operation); }
+      finally { refresh(); }
+      return;
+    }
     if (g.handle.kind === 'stair_end') {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       const saving = !cancel && canEdit() && g.operation;
@@ -473,7 +508,15 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   host.addEventListener('twinrebuilt', refresh, { signal });
   window.addEventListener('resize', refresh, { signal });
   signal.addEventListener('abort', () => { typed.hide(); view.controls.removeEventListener('change', refresh); layer.remove(); }, { once: true });
-  return { begin, update, finish, refresh, hit, active: () => !!gesture,
+  async function removeAt(event) {
+    if (!canEdit() || gesture) return false;
+    const handle = hit(event); if (handle?.kind !== 'downspout') return false;
+    const values = downspoutValues(getPlan(), handle.building, handle.id, handle.edge), index = downspoutIndex(values, handle.fraction);
+    if (index >= 0) values.splice(index, 1);
+    await onCommit(edgeOperation(handle.building, handle.id, handle.edge, { downspouts: values }));
+    refresh(); return true;
+  }
+  return { begin, update, finish, refresh, hit, removeAt, active: () => !!gesture,
     key: typed.key, typedValue: typed.value, commit: exact => finish(false, false, exact),
     show(value) { preview = value; refresh(); },
     handles() {
@@ -482,7 +525,8 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       // model points discoverable so looking at an edge reveals its handle.
       const all = descriptors(), roof = all.filter(h => h.kind === 'roof_edge' || h.kind.startsWith('dormer_'));
       return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
-        .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at] }));
+        .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at],
+          ...(handle.kind === 'downspout' ? { building: handle.building, edge: handle.edge, spout: handle.spout } : {}) }));
     },
     clearDragFrame() { lastFrameMs = null; drag.clearDragFrame?.(); },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };

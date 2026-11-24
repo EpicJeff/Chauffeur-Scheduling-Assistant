@@ -1,6 +1,190 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.986 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.994 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.994 (2026-11-23, Chromium, NOT device-verified): the editor's Check list can frame a gutter issue again.**
+
+The owner reported this from the live editor: `Uncaught TypeError: view.setCameraState is not a function at focusDownspout (scene_tools.js)`.
+
+**Cause.** `setCameraState` existed only in the `?test=1` hook block of `twin_view.js`. Every browser test ran with test hooks, so walking Check onto a gutter issue threw on real pages.
+
+**Fix.**
+- `setCameraState({position, target})` is now part of the view's production API.
+- `tests/test_house_editor_gutters_live.py` gains `scenario_check_focus_without_test_hooks`. It opens the editor without `?test=1` on a pool house whose guttered sections have every downspout removed, walks Check to the flagged gutter issue, and asserts:
+  - the camera target moves;
+  - no page error occurs.
+- The scenario fails on v2.499.993 with "view.setCameraState is missing without test hooks".
+
+Tests: `test_house_editor_gutters_live` 2/2, `test_twin_gutters_editor_js` and `test_twin_checks_js` green.
+
+**v2.499.993 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): gutters and downspouts.** The owner's request: "Roof sections should be able to have gutters and gutters should stop eave stream from occurring on that roof edge. I'll give you bonus points if you can have gutters flow into downspouts and have those downspouts placed at the correct locations." Their rule for placement: "downspouts are on the outside corners - there is never a downspout on an inner corner. They prefer to go down into grass or plant beds, though there are some that flow onto the driveway." Spec: `docs/superpowers/specs/2026-11-23-gutters-downspouts-design.md`; plan: `docs/superpowers/plans/2026-11-23-gutters-downspouts.md`.
+
+**Data** (off by default; existing houses build byte-identical geometry until a gutter is enabled):
+- `building.roofs[].edges[i].gutter` (bool) and `.downspouts` (fractions 0..1 along the authored edge from its first vertex, at most 8; `null` = automatic, `[]` = none). Mirrored onto flattened sections as `gutters{side}` / `downspouts{side}`.
+- Porches (`porch.gutter`) and awnings (`roof.extensions[].gutter`) have their own flag.
+- `gutter_ack: [flags]` on an edge, porch or awning records the person's "Looks fine" for that record's gutter issues. Changing that record's gutter or downspouts clears it. It is metadata: it does not change placement or the bake key.
+- `set_roof_edge` accepts `gutter`, `downspouts` and `gutter_ack` without `setting`. It refuses a gutter on an edge with no eave, judged after the op's own setting (rake edges, a shed's high edge), and refuses turning a guttered edge into a rake. Area vertex insert/delete remaps the fields like `plane_materials`.
+
+**Placement** (`static/twin/gutters.js`, pure and deterministic; `gutterPlacement(plan)` is the single content-keyed cache, bounded at 16 entries, shared by the generator, eave streams, bake and editor):
+- `gutterRuns` joins guttered eave segments into runs: 0.3 ft apart horizontally, and within 3 in vertically on the same roof or 2 in across different roofs.
+- `downspouts` places `ceil(length / 35 ft)` per run, on outside corners of the union footprint below the eave (quadrant test at ±0.3 ft). Never an inner corner, never mid-run.
+- Corners are ranked by landing: grass or a bed, then the driveway or a plain patio or deck. Never a walkway, path, step, stair or water.
+- Mounting is on a wall or a porch post within the overhang + 1 ft. Overhangs up to 4 ft get a horizontal leader under the soffit. Columns outside the porch floor are ignored.
+- No drop passes within 1 ft of an opening on any level; ends within 6 ft of a door lose ties.
+- Each downspout ends in a short curved elbow (owner: "Just a little bend at the bottom with water pouring out is fine"): mouth 0.5 ft from the wall and about 4 in above the surface. Beside a walkway the elbow swivels up to 90° along the wall toward grass or a bed. On a raised porch the pipe continues past the deck rim to the ground.
+- Fallbacks carry flags for the Check list: `no-outside-corner`, `hang`, `stub`, `inner-end`, `clipped-end`, `no-safe-landing`, `no-outlet`, `outlet-blocked` (a gutter jammed against a lower roof gets a flush outlet and a short spill), `merged-override`.
+- A run without its own outlet sets `drainsTo` to a neighbouring outlet. Shares are length-weighted and normalised per outlet set.
+- Speed: downspouts reuse gutterRuns' contexts. The landing sampler builds cap receivers lazily (`createCapSurfaceIndex` in `sky/wet_caps.js`; bit-identical to the eager sampler over 78k test queries).
+
+**Geometry and water:**
+- 5 in K-style gutters along the runs, with mitres and end caps; 2×3 in downspouts with 45° offsets, a leader, the wall drop and a 5-segment formed elbow.
+- Merged into the roof trim batches as surface kind `gutter` (Trim group, defaults to the trim finish). Section and level finish overrides apply.
+- Inner gutter faces share their outer face's lightmap chart.
+- Guttered edges shed no eave streams. Each downspout pours its share from the elbow mouth as an instance in the existing eave-stream draw. Pours follow `eaveRunoff`.
+- Generator version `gutters-1`.
+
+**Editor and Argyle:**
+- An eave-only Gutter toggle on the edge card.
+- Roof card: "Gutters on all eaves" and "Remove all gutters", each one batch (one undo) and disabled when there is nothing to do.
+- Choosing Gable or Clipped on a guttered edge asks first, then sends one batch (gutter off, downspouts automatic, the setting).
+- Porch and awning toggles; awnings are listed in the Scene tree.
+- Downspout handles on a selected guttered roof: drag along the run (writes the authored fraction on release), right-click to remove; Add downspout (picks a free safe corner; disabled at 8 or when none is free) and Reset to automatic on the card.
+- Gutter issues in the Check list: one row per physical issue, plain names, Looks fine / Fix it.
+- Argyle's edit tool documents the gutter fields and the acknowledgement flags.
+
+**Owner's house, gutters on every eave, porch and awning, against off:**
+- **Placement:** 22 runs and 22 downspouts. None on an inner corner and none within 1 ft of an opening; every run drains. 12 are clean, and 10 are flagged: mostly short eave pieces boxed in by a lower roof, window or garage door, plus two over the rear patio.
+- **Costs:**
+  - **Geometry and draws:** +2,460 triangles, +0 draws, +0 programs, +0 samplers.
+  - **Water:** 845 eave streams become 22 pours. The first rainy frame is 582 → 440 ms.
+  - **Placement time per rebuild:** about 240 ms cold and 90-150 ms warm inside `buildTwin`, after a roof, wall or site edit; 0 ms on a memo hit. This is above the 80 ms target.
+  - **Bake:** atlas +1.7% charts and +0.3% area, no new pages. A full editor bake (2 lights) takes 104 → 108 s.
+- **Found in the owner's data:** two columns on the back porch at x = 33.3 ft lie 2.3 ft outside its floor and render floating. This is pre-existing, and the owner will fix it in the editor.
+
+**Tests:**
+- New: `test_twin_gutters_model` 26, `test_twin_gutters_js` 80, `test_twin_gutter_geometry_js` 23, `test_twin_gutters_editor_js` 23, `test_twin_lazy_caps_js` 4, `test_twin_gutters_live` 1, `test_house_editor_gutters_live` 1.
+- Neighbours green: eave streams, bake fingerprint and atlas, surface kinds, wet receivers, checks, scene tree, house defaults, covered sky, precipitation.
+- `test_house_design_tool`'s 6,000-character schema gate was already failing on main (6,186). This change makes it 6,714; every other scenario in that file passes.
+
+**v2.499.992 (2026-11-23, Chromium captures of the owner's house, NOT device-verified): surfaces under a roof stop taking blue sky light; the sky fill is softer everywhere.** The owner: "Is it me or does the top surface of this patio look way too blue-ish?", about the covered front porch. The vertical faces of the same material looked neutral.
+
+**Diagnosis** (owner's house, June noon). The porch top in the roof's shade was lit only by two sky terms, and nothing knew the roof was there:
+- the HemisphereLight sky colour, which was the zenith colour normalised to a brightest channel of 1;
+- the scene environment IBL.
+
+Porch-top sRGB measured 32,49,70, a blue/red ratio of 2.2. Vertical faces get a 50/50 sky and ground mix, so they read neutral. Weather, wet reflections, the bake, the material and AO were ruled out.
+
+**Fix** (Gemini, two rounds; the first was too costly and too dark):
+1. **`sky/weather_surface.js`.** One branchless block in `lights_fragment_maps`, with three's hemisphere and light chunks left stock. It reuses the existing `vWeatherOpen` cover data that rain already uses (0 under roofs, clipped to the real drip line).
+   - Upward-facing covered surfaces have their sky irradiance swapped for a bounce, applied once.
+   - Their IBL (diffuse, specular, clearcoat) is scaled by `1 - 0.7*cover`.
+   - Vertical faces under roofs are unchanged.
+   - Water, sheet, submerged and effect shaders are byte-identical.
+2. **`sky/stage_haze.js`.** The cover controls ride in spare lanes of the existing `stageRing` uniform: `1 - roofFade`, and the bounce-minus-sky delta.
+3. **`twin_view.js`.**
+   - The bounce is computed on the CPU each frame: a neutralised hemisphere ground colour plus sunlit-ground irradiance (ground albedo 0.28, fading with sun elevation, cloud transmittance and sun-off).
+   - The roof fade gives the sky back when roofs are lifted or hidden.
+   - The hemisphere sky colour now comes from the cosine-weighted sky irradiance (`cloudIrradiance.top`), not the zenith, which calms the blue in all shade.
+
+**Results:**
+- Covered porch at June noon: 56,57,51 (b/r 0.91), about 2.3x round 1's luminance and still darker than open sunlit paving.
+- Sun off: neutral and dim.
+- Sunlit surfaces change by less than 1.5%; interiors with the roof lifted are unchanged.
+
+**Costs:**
+- +11 FXC slots per lit material (+30 in round 1);
+- +0 transcendentals; no new samplers, attributes, uniform vectors or program variants;
+- D3D11 link of a typical lit material +5.7 ms;
+- owner-house warm-up +0.22 s (round 1 was +16 s).
+
+Also: `live/mode_key.js` tolerates a missing window event target (node test rigs), and the shared fake DOM in `tests/test_twin_live_stream_js.py` gains `insertBefore`. `test_twin_live_stream_js` / `test_twin_weather_js` still have the pre-existing "no copy of the whole house: 1 copies" failure, which is also on v.986.
+
+**Tests:**
+- `test_twin_covered_sky_js.py` 2/2 and `test_twin_covered_sky_live.py` 1/1 (new);
+- weather_surface 14/14 + 2/2, sky 12/12, mode_key 7/7, texture units 1/1.
+
+**v2.499.991 (2026-11-23, NOT device-verified): eave streams stay with a yard room focused, and wait for the roof to wet through.** Two owner reports on v.990.
+
+(1) "The streams just disappear when you click a yard room." A focused yard room reports `level: 'room'` with no building, the same level as an indoor room cutaway. The stream, rain and seasonal-touch gates only looked at the level. A yard room is outdoors, with every roof in view, and `levels.js` never cuts the house for it. `twin_view.js` now derives one `weatherLevel`, which maps a focused yard room to `house`, and uses it for precipitation, eave streams and season touches.
+
+(2) "The streams show up too early... while the roof is just getting droplets and small rivulets." Streams followed the rain rate alone, while the roof's look waits on wetness. New `eaveRunoff({flow, wet})` in `sky/roof_water.js` returns `flow * smoothstep(0.25, 0.75, wet)`, the same wetness ramp as the roof film. Beads pour nothing, rivulets trickle, and a full film pours fully. `twin_view.js` feeds it to the streams. The drying ladder still drains them after the rain.
+
+Tests: `test_twin_roof_water_js.py` 9/9 (new runoff staging case); `test_twin_eave_streams_js.py` 9/9 + 1/1 (new: streams visible with a yard room focused); weather live, seasons live and controls live all pass.
+
+**v2.499.990 (2026-11-23, owner approved on Chromium clips of the owner's house, NOT device-verified): eave streams redone. They come and go, are clear water with ripples moving at falling speed, break into drops lower down, pour as a curtain off straight edges in heavy flow, and stay visible from the normal overview.**
+
+The owner's verdict on v.985/.988 streams: "There is no variability. It looks like a sheet is placed along the edge of each eave and lines are drawn down to the ground at specific spots... the same crawling black and white dashed lines... It's not waves. It is ripples and distortion traveling down the stream." Plus: "they should come and go", "sometimes... a sheer descent type of flow when the surface is flat and the flow is heavy", and "farther away from the eave... break up into drops or just have breaks". They were also invisible in practice: hidden with a building focused (fixed in .988) and hidden from the default overview by the 8-42 m fade.
+
+All in `sky/eave_streams.js` (Gemini, five rounds against the owner's tin-roof clip; rounds 2-4 were turned back by Claude's look review before the owner saw them):
+
+1. **Activity.** Each eave has a pool of candidate sites. Slowly drifting noise over eave length and time decides which sites run. A site forms, runs, thins, breaks into drips and stops, and the set changes over tens of seconds.
+2. **Clear water.** Streams and the sheet are mostly transparent. Shape comes from thin edge glints, a faint core and moving ripple/distortion modulation. Owner, round 4: "too white... should be more clear like the sheet descents". There is no black/white banding.
+3. **Motion.** Ripples and gaps advect at free-fall speed, v = sqrt(2 g d), about 4.45 m/s at 1 m. Break-up into strands and drops grows with fall distance, and heavy flow stays coherent longer.
+4. **Sheet descent.** On flat, straight edges (e.g. the metal awning) in heavy flow, neighbouring streams merge into a curtain with a ragged, tearing lower edge, which splits back into streams as flow drops. The sheet never lowers the luminance of a background no brighter than the sky it reflects.
+5. **Distance.** LOD fades from 8 m to a 35% instance floor held from 48 to 95 m, gone by 120 m. Streams have a 1.2 px minimum on-screen width with coverage-correct alpha, so far streams are faint threads; `twin_view.js` passes the viewport height each frame. Spray is dropped beyond 25 m.
+
+A review fix keeps sheet quads' along-eave coordinate in the eave's own direction when the camera-facing flip fires, so neighbouring quads stay continuous while orbiting.
+
+**Costs:** one program, 2 draws, 0 samplers, 20-21 vectors, O(1) CPU per frame. ANGLE D3D11 fresh link median ~347 ms against 152 ms before (once, one program). Owner house, High: near views 21,126 triangles (unchanged); default overview 7,104 (was 0, hidden).
+
+**Tests:** `test_twin_eave_streams_js.py` 9/9 + 1/1 (activity varies over time, advection within 10% of free fall, break-up with distance, sheet only on flat straight edges at high flow, stream alpha within 1.5x of the sheet's, no darkening under realistic sky radiance, 60 m visible / 120-150 m hidden), roof_water 8/8, roof_wet 11/11, weather_surface 14/14 + 2/2, weather live, texture units 1/1.
+
+**v2.499.989 (2026-11-23, browser-checked with screenshots at 1920x1080 and 390x844, NOT device-verified): the house viewer's mode legend is a key button with one compact card.** The owner's request: legends "get in the way, especially when you have multiple modes enabled". They wanted colour blocks instead of colour words, a short description each, and no long lists. The owner picked option A from three mockups.
+
+- **Button and card.**
+  - New `live/mode_key.js` is the one shared builder. It renders a round **?** button named "Legend" at the end of the mode strip. The button is hidden when no active mode has a key.
+  - The button opens a non-modal Legend card below the strip, with one section per active mode in strip order: the mode's icon and name, then rows of a 12 px swatch and a short label, plus at most one note.
+  - Closed by default. The button, Esc (focus returns to the button), a scene tap, or turning off the last keyed mode closes it. Open state is stored per device in `chauffeur.twin.legend.v1`.
+  - The card is 220 px wide and scrolls within 60dvh and the space above the glance bar.
+- **What each mode provides.** Modes now provide `key()` instead of legend strings.
+  - Climate: Heating, Cooling, Idle, from `climateColors`.
+  - Energy: Solar, Battery, Grid, Car charger, from `FLOW_COLORS`. The note is "Flows under 50 W are hidden", or the placement guidance when anchors are missing. The original energy check controls ("Why no ribbons?", the wall-panel read-only check) are kept inside the Energy section as the same DOM nodes.
+  - Security: "Open or unlocked" from the new exported `SECURITY_COLOR` (which also draws the markers), and a camera-view cone glyph. The alarm panels collapse to one status chip from `alarmSummary`, e.g. "Alarm · armed home (2 of 3)" or "Alarm · unavailable". The full named list sits behind a native disclosure only when the panels disagree.
+  - The Lights overflow note becomes a Lights section.
+- **Removed.** `#twin-mode-legend` and the joined strings are gone. The energy snapshot keeps its placement text for diagnostics.
+- **Tests.**
+  - New: `test_twin_mode_key_js.py` 7/7; `test_house_twin_mode_key_live.py` 6/6 (closed by default, three sections, Esc and focus, reload persistence, wall touch with the read-only energy check, clear of the glance bar at 1080p and phone).
+  - Neighbours: modes 4/4, security 9/9, energy 38/38, controls live 4/4, energy live 7/7.
+
+**v2.499.988 (2026-11-23, NOT device-verified): eave streams show with one building focused.** The owner saw rain but no water pouring off the roof eaves. Their console snapshot showed the mesh was built, with 845 streams, but `visible: false`. The breadcrumb read "House › Pool House". With one building focused, the viewer level is `building`. `sky/eave_streams.js` showed streams only at the whole-house level, a check meant to hide them in floor and room cutaways, where the roof is gone. The building view is still an exterior view with its roof, so streams now show at `house` and `building` and still hide at `floor`/`room`. Test: `test_twin_eave_streams_js.py` adds the building-level case and passes.
+
+**v2.499.987 (2026-11-23, browser-checked on the editor harness, NOT device-verified): placed pieces can be moved between levels, between buildings, and between a building and the site with "Move to".** The owner's request: placed models were tied to their building or the site, so a piece placed in the house could not be moved outside or vice versa. Live Home 3D has explicit actions for this, and the owner chose explicit actions only, no re-linking on drag.
+
+(1) **Ops.** New `editor/move_to.js` is pure:
+- `moveTargets(plan, refs)` lists Site and every level of every building, as `'<building> · <level>'`, leaving out the pieces' current place.
+- `moveOps(plan, refs, targetKey)` returns one batch of existing server ops, or the refusals.
+  - Same building, other level: `move_hosted`.
+  - Other building: `delete` + `add_item`.
+  - To the site: `delete` + `add_site_item` (`furniture`, `require_inside`).
+  - From the site: `delete_site_item` + `add_item`.
+- The piece keeps its id, delete first then add in one batch. That keeps its selection, its hidden/locked state, and every property: tint, scale, shadow, object kind, light link.
+- It keeps its lot point and world facing. Building rotation is folded in both directions.
+- It keeps its height above the new support. The hosted `offset` is folded into `elevation`: added for floor and ground hosts, subtracted for ceiling hosts.
+- A ceiling piece lands on the ceiling of the room under it.
+- Refusal is all-or-nothing, naming each blocked piece:
+  - no room under it on the target level;
+  - wall and roof pieces;
+  - plants;
+  - ceiling pieces sent to the site;
+  - outside the lot;
+  - devices, openings and lights.
+- New `editor/lot_frame.js` now holds the lot/local frame helpers and `hostedAt`, which clipboard.js used to keep private copies of.
+
+(2) **UI.** New `editor/move_to_action.js` is the one shared builder:
+- A **Move to** button in the single-piece and multi-selection Properties cards. The single card's Move to and Delete row now spans the card.
+- A **Move to ▸** submenu beside Duplicate in the right-click menu. `context_menu.js` gained child menus with Back, Right/Left keys and focus restoration.
+- Wall/roof pieces show the entry disabled, with the reason in `title` and `aria-description`. The menu arrow is decoration only, so the accessible name stays "Move to".
+- One choice runs one `applyBatch`, which is one undo step. The editor then switches to the destination level, or to the exterior view for the site, and re-selects the moved pieces.
+- A refusal shows `showGlobalAlert` and applies nothing.
+- Argyle's edit tool description gained one line: delete or delete_site_item first, then add_item or add_site_item, in one batch, keeping the id.
+
+No server changes.
+
+Tests:
+- `test_twin_move_to_js.py` 18/18;
+- `test_twin_move_to_action_js.py` 6/6 + 2/2, including TestClient batches and revert;
+- `test_house_editor_move_to_live.py` 4/4 in Chromium: right-click to Site and one Ctrl+Z undo, hidden survives, locked survives, wall entry disabled;
+- `test_twin_clipboard_js.py` green.
 
 **v2.499.986 (2026-11-23, owner approved from Chromium captures, NOT device-verified): house viewer modes are toggles; the glance bar fits its tiles and is centred; nights are brighter with a per-device Night brightness slider; camera cones stop at walls and are far lighter.** From the owner's four viewer requests. (1) Modes: `live/modes.js` keeps a set of active modes instead of one. Each mode button toggles its mode; All turns every mode on, or every mode off when all are already on. A 500 ms long press, a right-click, Shift-click or Shift+Enter solos a mode (only that one on), as the owner asked. The set is remembered per device in localStorage `chauffeur.twin.modes.v1` (`live/mode_state.js`, `modeShows(mode, id)`); APIs `setModes`, `toggleMode`, `modes`, plus the legacy `setMode` for one-mode callers. `live.js`, `energy.js` and `security.js` read the set. (2) Glance bar (`house_twin.html`): sized to its content and centred at the bottom, matching the centred mode strip at the top, instead of full width. (3) Night: `sky/look.js` raises the night floor and adds `NIGHT_BRIGHTNESS_DEFAULT = 0.5`, stored per device under `chauffeur_twin_night_brightness`. Floor ambient .09 / .24 / .42 and environment .015 / .18 / .35 at 0 / 50 / 100%. The slider `#twin-night-brightness` sits with the time scrub (`sky/time_scrub.js` `mountNightBrightness`, `view.setNightBrightness`). (4) Camera cones: new `live/cone_occluder.js` builds a BVH of static scene geometry inside each cone's bounds and casts 289 rays per cone, so a cone stops at walls, floors, ceilings and roofs instead of poking through the house. Fill opacity is .018 and the rim .18, with depth testing on. Cones rebuild on `twinrebuilt` / `twinyardrebuilt` or a camera view change. Test fix: `test_house_twin_energy_live.py` `scenario_no_programs_on_second_entry_to_either_mode` now waits for a stable program count before it starts. With the brighter night floor, reflection probes land later, and their glass/water `box-reflection` programs were being counted as re-entry compiles. Tests: `test_twin_modes_js.py` (new), `test_twin_security_js.py` 9/9, `test_twin_sky_js.py` 12/12, the live mode, energy, glance, climate and cars node tests, and Chromium controls 4/4, texture units 1/1, weather 5/5, seasons 7/7, energy 7/7. Known reds that fail on main too: glance `scenario_second_idle_cycle_adds_no_shader_programs`, live_rooms `scenario_wall_recovers_when_home_assistant_returns`, energy_equipment solar-zone click timeout, real_lights `scenario_a_sky_arriving_in_lights_is_the_sky_after_all`.
 

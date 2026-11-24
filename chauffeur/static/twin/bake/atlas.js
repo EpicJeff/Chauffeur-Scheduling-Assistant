@@ -164,6 +164,9 @@ function prepare(mesh, data) {
   for (const a of attrs) { offsets.push(stride); stride += a.itemSize; }
   let capacity=old.index?.count ?? old.attributes.position.count, written=0;
   const buffers = attrs.map(a => new Float32Array(capacity*a.itemSize)), owners = [];
+  const oldGutterRanges = (old.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter');
+  const gutterFlags = oldGutterRanges.length ? [] : null;
+  let currentIsGutter = false;
   const read = i => {
     const v=new Array(stride);
     for (let j=0;j<attrs.length;j++) for (let k=0;k<attrs[j].itemSize;k++) v[offsets[j]+k]=attrs[j].getComponent(i,k);
@@ -189,6 +192,7 @@ function prepare(mesh, data) {
         written++;
       }
       owners.push(room);
+      if (gutterFlags) gutterFlags.push(currentIsGutter ? 1 : 0);
     }
   };
   const emit = (poly, room) => {
@@ -210,6 +214,10 @@ function prepare(mesh, data) {
   };
   const count = (old.index?.count ?? old.attributes.position.count) / 3;
   for (let f = 0; f < count; f++) {
+    if (gutterFlags) {
+      const v0 = f * 3;
+      currentIsGutter = oldGutterRanges.some(r => v0 >= r.start && v0 < r.start + r.count);
+    }
     const tri = [0, 1, 2].map(k => read(old.index ? old.index.getX(f * 3 + k) : f * 3 + k));
     const n = faceNormal(...tri).normalize();
     const center = [0, 1, 2].map(k => (tri[0][k] + tri[1][k] + tri[2][k]) / 3);
@@ -264,10 +272,21 @@ function prepare(mesh, data) {
   names.forEach((name, i) => geometry.setAttribute(name, new THREE.BufferAttribute(buffers[i].slice(0,written*attrs[i].itemSize), attrs[i].itemSize)));
   geometry.name = old.name;
   geometry.userData = { ...old.userData };
+  if (gutterFlags) {
+    // Rebuild post-clip gutter ranges so chartsFor and diagnostics match the prepared triangle order.
+    const ranges = [];
+    for (let f = 0; f < gutterFlags.length;) {
+      if (!gutterFlags[f]) { f++; continue; }
+      const start = f * 3;
+      while (f < gutterFlags.length && gutterFlags[f]) f++;
+      ranges.push({ start, count: f * 3 - start, surfaceKind: 'gutter' });
+    }
+    geometry.userData.gutterFaceRanges = ranges;
+  }
   geometry.computeBoundingBox(); geometry.computeBoundingSphere();
   mesh.geometry = geometry;
   old.dispose();
-  const state = { owners, room: null };
+  const state = { owners, gutterFlags, room: null };
   prepared.set(geometry, state);
   return state;
 }
@@ -318,9 +337,16 @@ function heightfieldCharts(mesh) {
   });
 }
 
-function chartsFor(mesh, owners, tileFeet = 64) {
+function chartsFor(mesh, owners, tileFeet = 64, gutterFlags = null) {
   if (mesh.geometry.userData.bakeHeightfield) return heightfieldCharts(mesh);
   const pos = mesh.geometry.attributes.position, faces = [], atVertex = new Map();
+  const gutterRanges = !gutterFlags ? (mesh.geometry.userData.gutterFaceRanges || (mesh.geometry.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter')) : null;
+  const isGutterFace = gutterFlags
+    ? f => !!gutterFlags[f]
+    : gutterRanges.length
+      ? f => { const v = f * 3; return gutterRanges.some(r => v >= r.start && v < r.start + r.count); }
+      : null;
+  const gutterByTri = isGutterFace ? new Map() : null;
   const p = i => new THREE.Vector3().fromBufferAttribute(pos, i);
   for (let f = 0; f < pos.count / 3; f++) {
     const v = [p(3 * f), p(3 * f + 1), p(3 * f + 2)];
@@ -335,11 +361,45 @@ function chartsFor(mesh, owners, tileFeet = 64) {
       if (!atVertex.has(key)) atVertex.set(key, []);
       atVertex.get(key).push(f);
     }
+    if (gutterByTri && isGutterFace(f)) {
+      const tk = [...face.keys].sort().join('|');
+      if (!gutterByTri.has(tk)) gutterByTri.set(tk, []);
+      gutterByTri.get(tk).push(f);
+    }
+  }
+  // Thin open gutter shells emit outer and inner back-to-back faces on identical vertices.
+  // Pair each exact opposite-normal twin so inner and outer share one lightmap chart & UV.
+  const backTwin = gutterByTri ? new Int32Array(faces.length).fill(-1) : null;
+  if (gutterByTri) {
+    for (const group of gutterByTri.values()) {
+      if (group.length < 2) continue;
+      for (let i = 0; i < group.length; i++) {
+        const fi = group[i];
+        if (backTwin[fi] >= 0) continue;
+        const a = faces[fi];
+        for (let j = i + 1; j < group.length; j++) {
+          const fj = group[j];
+          if (backTwin[fj] >= 0 || owners[fi] !== owners[fj]) continue;
+          const b = faces[fj];
+          if (owners[fi] < 0 && a.tile !== b.tile) continue;
+          if (a.n.dot(b.n) < -0.999999) {
+            backTwin[fi] = fj;
+            backTwin[fj] = fi;
+            break;
+          }
+        }
+      }
+    }
   }
   const visited = new Uint8Array(faces.length), charts = [];
   for (const ref of faces) {
     if (!ref || visited[ref.f]) continue;
-    const queue = [ref.f]; visited[ref.f] = 1;
+    const queue = [ref.f], backFaces = [];
+    visited[ref.f] = 1;
+    if (backTwin && backTwin[ref.f] >= 0 && !visited[backTwin[ref.f]]) {
+      visited[backTwin[ref.f]] = 1;
+      backFaces.push(backTwin[ref.f]);
+    }
     for (let q = 0; q < queue.length; q++) {
       const face = faces[queue[q]];
       for (const key of face.keys) for (const f of atVertex.get(key)) {
@@ -349,6 +409,10 @@ function chartsFor(mesh, owners, tileFeet = 64) {
         // Tight planes avoid accumulating curvature in a flood-fill isometry.
         if (ref.n.dot(other.n) < 0.999999 || other.v.some(v => Math.abs(v.clone().sub(ref.v[0]).dot(ref.n)) > 1e-4)) continue;
         visited[f] = 1; queue.push(f);
+        if (backTwin && backTwin[f] >= 0 && !visited[backTwin[f]]) {
+          visited[backTwin[f]] = 1;
+          backFaces.push(backTwin[f]);
+        }
       }
     }
     const axis = Math.abs(ref.n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
@@ -358,8 +422,10 @@ function chartsFor(mesh, owners, tileFeet = 64) {
       const x = point.dot(u), y = point.dot(v);
       minU = Math.min(minU, x); maxU = Math.max(maxU, x); minV = Math.min(minV, y); maxV = Math.max(maxV, y);
     }
-    charts.push({ mesh, faces: queue.sort((a, b) => a - b), room: owners[ref.f], tile: ref.tile, u, v, minU, minV,
-      width: maxU - minU, height: maxV - minV });
+    const chart = { mesh, faces: queue.sort((a, b) => a - b), room: owners[ref.f], tile: ref.tile, u, v, minU, minV,
+      width: maxU - minU, height: maxV - minV };
+    if (backFaces.length) chart.proxies = [{ mesh, faces: backFaces.sort((a, b) => a - b), samePlane: true }];
+    charts.push(chart);
   }
   return charts;
 }
@@ -520,7 +586,7 @@ export function assignProxies(charts, o) {
       if (!best || rank[0] < best.rank[0] - 1e-6 || Math.abs(rank[0] - best.rank[0]) <= 1e-6 &&
         (rank[1] < best.rank[1] || rank[1] === best.rank[1] && rank[2] < best.rank[2])) best = { h, rank };
     }
-    if (best) { (best.h.proxies ||= []).push({ mesh: c.mesh, faces: c.faces }); proxies.push({ chart: c, host: best.h }); continue; }
+    if (best) { (best.h.proxies ||= []).push({ mesh: c.mesh, faces: c.faces }, ...(c.proxies || []).map(p => ({ mesh: p.mesh, faces: p.faces }))); proxies.push({ chart: c, host: best.h }); continue; }
     // No host: a seeded chart (see scaled).
     c.seeded = true; orphans.push(c);
   }
@@ -585,9 +651,15 @@ function writeUV(charts, o, name, pageName) {
       const into = p.mesh === c.mesh ? null : c.mesh.matrixWorld.clone().invert().multiply(p.mesh.matrixWorld);
       for (const f of p.faces) for (let k = 0; k < 3; k++) {
         const i = f * 3 + k; point.fromBufferAttribute(ppos, i); if (into) point.applyMatrix4(into);
-        const x = Math.min(c.w - .5, Math.max(.5, (point.dot(c.u) - c.minU) * c.density));
-        const y = Math.min(c.h - .5, Math.max(.5, (point.dot(c.v) - c.minV) * c.density));
-        pb.uv[i * 2] = (c.rect.x + x) / o.page; pb.uv[i * 2 + 1] = (c.rect.y + y) / o.page; pb.page[i] = c.page;
+        if (p.samePlane && p.mesh === c.mesh) {
+          pb.uv[i * 2] = (c.rect.x + (c.offU || 0) + (point.dot(c.u) - c.minU) * c.density) / o.page;
+          pb.uv[i * 2 + 1] = (c.rect.y + (c.offV || 0) + (point.dot(c.v) - c.minV) * c.density) / o.page;
+        } else {
+          const x = Math.min(c.w - .5, Math.max(.5, (point.dot(c.u) - c.minU) * c.density));
+          const y = Math.min(c.h - .5, Math.max(.5, (point.dot(c.v) - c.minV) * c.density));
+          pb.uv[i * 2] = (c.rect.x + x) / o.page; pb.uv[i * 2 + 1] = (c.rect.y + y) / o.page;
+        }
+        pb.page[i] = c.page;
       }
     }
   }
@@ -779,8 +851,8 @@ export function buildAtlas(group, plan, { room } = {}) {
     const building = data.buildings.has(buildingId);
     // A building's outside groups by 32 ft tiles: at 2 texels/ft that is the 64-texel span a
     // 64 ft yard tile has at 1/ft, so one region never outgrows a page.
-    if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64);
-    for (const c of state.room) raw.push({ ...c, outdoor: c.room < 0, building, order: raw.length });
+    if (!state.room) state.room = chartsFor(mesh, state.owners, building ? 64 / BUILDING_OUTDOOR_DENSITY : 64, state.gutterFlags);
+    for (const c of state.room) raw.push({ ...c, ...(c.proxies ? { proxies: c.proxies.map(p => ({ ...p })) } : {}), outdoor: c.room < 0, building, order: raw.length });
     owners.set(mesh, new Float32Array(g.attributes.position.count).fill(-1));
     g.deleteAttribute('uv3'); g.deleteAttribute('lmLightPage');
     hash.add(mesh.material.name || ''); hash.add(JSON.stringify(mesh.matrixWorld.elements));
@@ -809,6 +881,10 @@ export function buildAtlas(group, plan, { room } = {}) {
     roomCharts.push(c);
     const owner = owners.get(c.mesh);
     for (const f of c.faces) owner.fill(c.room, f * 3, f * 3 + 3);
+    for (const p of c.proxies || []) {
+      const pOwner = owners.get(p.mesh);
+      for (const f of p.faces) pOwner.fill(c.room, f * 3, f * 3 + 3);
+    }
   }
   for (const { chart, host } of proxies) {
     const owner = owners.get(chart.mesh);

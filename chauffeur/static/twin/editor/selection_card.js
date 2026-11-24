@@ -8,6 +8,7 @@ import { objectOperation } from '../objects.js';
 import { pieceMaterialSlots, sharedMaterialRows, materialsInSelection, replacementOperations, selectUsingMaterial } from './selection_materials.js';
 import { createContextMenu } from './context_menu.js';
 import { materialName } from './material_catalog.js';
+import { drawMoveToButton } from './move_to_action.js';
 
 const noun = {
   planting: ['plant', 'plants'], furniture: ['object', 'objects'], opening: ['opening', 'openings'],
@@ -252,6 +253,7 @@ export function drawSelectionCard(host, options) {
     }
   }
   const actions = document.createElement('div'); actions.className = 'editor-material-actions'; host.append(actions);
+  const moveTo = drawMoveToButton(actions, { ...options, getRefs: () => refs });
   const remove = button('Delete', () => Promise.resolve(removeSelection()).catch(report), actions);
   if (visibility) {
     button('Hide', () => visibility.setMembers(refs, { hidden: true }), actions);
@@ -259,6 +261,7 @@ export function drawSelectionCard(host, options) {
   }
   renderMaterials(); remove.disabled = !canEdit();
   function refresh() {
+    moveTo?.refresh();
     for (const field of data.fields) refreshField(fieldStates.get(field.key), field);
     remove.disabled = !canEdit();
   }

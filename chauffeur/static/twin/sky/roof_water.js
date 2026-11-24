@@ -14,6 +14,14 @@ function filmCurve(flow, wet) {
   return smooth(0.16, 0.76, flow) * smooth(0.25, 0.75, wet);
 }
 
+// Water leaving the eaves follows the roof's own wetting stage, not the rain
+// rate alone: beads on a drying-to-wet roof give no pours, rivulets give thin
+// trickles, a full film gives full pours (owner 2026-11-23: streams appeared
+// "while the roof is just getting droplets and small rivulets").
+export function eaveRunoff({ flow = 0, wet = 0 } = {}) {
+  return unit(flow) * smooth(0.25, 0.75, unit(wet));
+}
+
 export function createRoofWater() {
   let lastRate = 0.5;
   let lastWet = 1;

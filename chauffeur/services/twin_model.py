@@ -433,9 +433,18 @@ def _pieces(building, notes):
         if (not twin_plan._polygon(roof.get('area')) or not isinstance(edges, list)
                 or len(edges) != len(roof['area'])
                 or not all(isinstance(e, dict) and e.get('setting') in ('sloped', 'gable', 'clip')
-                           and twin_plan._numeric_fields(e, ('pitch', 'clip')) for e in edges)
+                           and twin_plan._numeric_fields(e, ('pitch', 'clip'))
+                           and ('gutter' not in e or type(e['gutter']) is bool)
+                           and (not e.get('gutter') or e['setting'] == 'sloped')
+                           and ('downspouts' not in e or twin_plan._downspout_fractions(e['downspouts']))
+                           and ('gutter_ack' not in e or twin_plan._gutter_ack(e['gutter_ack']))
+                           for e in edges)
                 or not all(twin_plan._number(roof.get(k)) for k in ('plate', 'overhang'))):
             _note(roof, 'Roof', 'invalid area, edges or dimensions', notes)
+    for piece in [*building.get('porches_detail', []),
+                  *(e for e in building.get('extensions', []) if e.get('kind') == 'awning')]:
+        if isinstance(piece, dict):
+            twin_plan._gutter_flag(piece, notes)
     walls = {w['id']: w for w in building['walls']}
     roof_ids = {r['id']: r for r in roofs}
     for opening in _list(building, 'openings', notes, 'opening'):

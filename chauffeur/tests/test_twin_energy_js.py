@@ -582,7 +582,7 @@ check('mapping refresh and keeper remount keep one of each mode overlay and disp
  const api=async path=>({ok:true,json:async()=>structuredClone(path==='api/house/live'?layout:{states:t.states})});
  const keeper=liveModule.keepLive(t.view,{api});
  const unique=()=>{
-  for(const selector of ['.twin-climate-labels','.twin-energy-labels','#twin-modes','#twin-mode-legend','.twin-live-labels','#twin-room-panel','.twin-device-sheet:not(#twin-room-panel)'])assert.equal(document.querySelectorAll(selector).length,1,selector);
+  for(const selector of ['.twin-climate-labels','.twin-energy-labels','#twin-modes','#twin-mode-key','.twin-live-labels','#twin-room-panel','.twin-device-sheet:not(#twin-room-panel)'])assert.equal(document.querySelectorAll(selector).length,1,selector);
   const owners=[];t.view.scene.traverse(o=>{if(o.userData.twinMode)owners.push(o.userData.twinMode);});
   assert.deepEqual(owners.sort(),['energy','modes','security']);
  };
@@ -596,7 +596,7 @@ check('mapping refresh and keeper remount keep one of each mode overlay and disp
   assert.equal(oldLabels.isConnected,false);assert.equal(oldEnergy.isConnected,false);
   for(const mode of ['energy','security','all','climate']){t.view.live.setMode(mode);unique();}
  }finally{keeper.stop();t.view.live?.stop();t.host.remove();}
- for(const selector of ['.twin-climate-labels','.twin-energy-labels','#twin-modes','#twin-mode-legend','.twin-live-labels','.twin-device-sheet'])assert.equal(document.querySelectorAll(selector).length,0,selector);
+ for(const selector of ['.twin-climate-labels','.twin-energy-labels','#twin-modes','#twin-mode-key','.twin-live-labels','.twin-device-sheet'])assert.equal(document.querySelectorAll(selector).length,0,selector);
  const owners=[];t.view.scene.traverse(o=>{if(o.userData.twinMode)owners.push(o);});assert.equal(owners.length,0);
 });
 let failed=0; for(const [n,f] of checks)try{await f();console.log('  ok '+n);}catch(e){failed++;console.log('  FAIL '+n+' '+e.stack);}

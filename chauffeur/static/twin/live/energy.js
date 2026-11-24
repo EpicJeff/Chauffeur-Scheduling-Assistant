@@ -10,6 +10,11 @@ import { inPolygon, buildingFootprint } from '../twin_ground.js';
 import { createConduitRouter } from './solar_conduit.js';
 
 export const FLOW_COLORS = {solar: '#efbd24', battery: '#31ae62', grid: '#338bd9', house: '#57a8da', car: '#9957d2'};
+export const energyKey = (note, content = []) => ({
+  items: [['solar', 'Solar'], ['battery', 'Battery'], ['grid', 'Grid'], ['car', 'Car charger']]
+    .map(([source, label]) => ({swatch: FLOW_COLORS[source], label})),
+  note: note || 'Flows under 50 W are hidden', content,
+});
 // Conduit is electric blue (user, 2026-11-13), clear of grid blue and the panels.
 export const CONDUIT_COLOR = '#4df0ff';
 
@@ -280,8 +285,7 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
     warm?.();
   }
   const effects = {
-    legend:()=>energyPlacementLegend(anchors || energyAnchors(view,layout,mapping),mapping) || 'Yellow: Solar | Green: Battery | Blue: Grid | Purple: Charger | Flow below 50 W hidden',
-    legendContent:()=>checkControls,
+    key: () => energyKey(energyPlacementLegend(anchors || energyAnchors(view,layout,mapping),mapping), [checkControls]),
     warmObjects: () => {const objects = []; root.traverse(o => {objects.push(o);}); return objects;},
     ready: () => conduitTask,
     update(mode) {
@@ -406,5 +410,5 @@ export function mountEnergy({view, live, warm, overlays = view.scene}) {
 export function registerEnergy(registerMode) {
   registerMode({id: 'energy', label: 'Energy', foreground: (row, state) => ['car', 'power', 'energy', 'battery'].includes(row.kind) ||
     /^(w|kw|mw|wh|kwh|mwh)$/i.test(state?.attributes?.unit_of_measurement || '') || isEnergyEntity(row.entity_id || '', state),
-    legend: 'Yellow · Solar   |   Green · Battery   |   Blue · Grid / house   |   Purple · Car   |   Flow below 50 W hidden', mount: mountEnergy});
+    mount: mountEnergy});
 }

@@ -1,7 +1,7 @@
 // Streaming geometry identity, shared by atlas and local reach keys.
 // Authored receiving geometry invalidates the atlas. Device and placed-model
 // placement belong to each light's key, never the atlas.
-const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges']);
+const renderMetadata = new Set(['tier', 'lod', 'lods', 'src', 'name', 'label', 'notes', 'plane_edges', 'gutter_ack']);
 const finishes = new Set(['materials', 'material', 'plane_materials', 'floor_material', 'ceiling_material', 'wall_material', 'tint']);
 // Keep geometry records intact; only authored finish slots leave the bake domain.
 // In particular an opening's model/asset and a pad's edge kind remain geometry.

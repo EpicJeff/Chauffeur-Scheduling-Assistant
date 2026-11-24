@@ -42,6 +42,8 @@ export function sceneRows(plan) {
     for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[b.porches,'porch']])
       // A porch is also a room of the same id (its floor, walls and openings hang there); list it once.
       for (const p of collection || []) if (!(kind === 'porch' && rooms.has(p.id))) add(p, kind, levels.get(p.level) || building, b.id);
+    for (const p of (b.roof?.extensions || []).filter(p => p.kind === 'awning'))
+      add(p, 'awning', levels.get(p.level) || building, b.id);
     for (const p of fixtures.filter(p => p.building === b.id)) {
       assignedFixtures.add(p.id); add(p, p.sceneKind, parentFor(p), b.id, label(p, p.sceneKind === 'effect_fixture' ? 'effect' : 'light'), { piece: p });
     }
@@ -77,7 +79,7 @@ export function createSceneRow({ name, select, hidden, locked, toggleHidden, tog
       button.setAttribute('aria-label', `${value ? off : on} ${name}`); button.title = `${value ? off : on} ${name}`;
       button.replaceChildren(icon(value ? other : glyph)); };
   }
-  const eye = control('rowEye', hidden, toggleHidden, 'Hide', 'Show', 'eye', 'eye-off');
+  const eye = toggleHidden ? control('rowEye', hidden, toggleHidden, 'Hide', 'Show', 'eye', 'eye-off') : () => {};
   const lock = control('rowLock', locked, toggleLocked, 'Lock', 'Unlock', 'unlock', 'lock');
   row.update = () => { row.style.opacity = hidden() ? '0.5' : '1'; eye(); lock(); };
   row.update(); return row;
@@ -205,7 +207,9 @@ export function createSceneTree({ host, getPlan, getSelection, selection = null,
         else selection?.set([rowToRef(r)]);
       };
       const row = createSceneRow({ name: r.name, select: choose, hidden: () => hidden(r), locked: () => locked(r),
-        toggleHidden: () => {
+        // Awning triangles are merged into their roof section, so an awning
+        // cannot independently hide. Keep selection/locking, omit the eye.
+        toggleHidden: r.kind === 'awning' ? null : () => {
           const members = selection?.members?.() || [];
           if (members.length > 1 && members.some(ref => ref.pieceId === r.id && (ref.buildingId ?? null) === (r.building ?? null))) {
             visibility?.setMembers(members, { hidden: !hidden(r) }); return;

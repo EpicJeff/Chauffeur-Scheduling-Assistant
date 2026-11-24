@@ -137,7 +137,7 @@ check('mounted_shapes_state_overflow_and_cleanup',async()=>{
     live.setMode('lights');const pools=typed(view.scene);assert.equal(pools.spot.filter(l=>l.intensity>0).length,1);assert.equal(pools.area.filter(l=>l.intensity>0).length,2);
     const glows=()=>view.scene.children.filter(o=>o.userData.fixtureGlow);assert.equal(glows().length,1);assert.ok(glows()[0].visible);
     assert.ok(!washShown(view,'A'),'authored overflow is glow only, without the legacy room wash');
-    assert.ok(document.getElementById('twin-mode-legend').textContent.includes('Some lights are shown as glow only on this tier'));
+    assert.ok(document.getElementById('twin-mode-key').textContent.includes('Some lights are shown as glow only on this tier'));
     states['light.a1'].state='off';await live.refresh();assert.ok(!glows()[0].visible);assert.ok(pools.spot.every(l=>l.intensity===0));
     states['light.a1'].state='on';await live.refresh();assert.ok(glows()[0].visible);
     reachable=false;await live.refresh();assert.ok(!glows()[0].visible);

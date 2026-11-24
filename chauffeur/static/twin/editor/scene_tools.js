@@ -16,6 +16,7 @@ import { contains } from '../twin_generator.js';
 import { createPicker, DRAG_THRESHOLD_PX } from './picking.js';
 import { createMeasure } from './measure.js';
 import { createContextMenu } from './context_menu.js';
+import { moveToAction } from './move_to_action.js';
 import { icon } from './icons.js';
 import { drawMaterialsList, materialSelectionActions } from './selection_card.js';
 import { pieceMaterialSlots, materialIdForSurface } from './selection_materials.js';
@@ -301,7 +302,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   let linkReadAt = 0;
   const cards = createCards({ getPlan, getModel, getKit, getLabel, getSelection: roomSelection.current, getFieldLabels: () => getSheets().field_labels || {}, edit: change => change.op === 'set' && change.field === 'rotation'
     ? rotate(change.building, change.value - (getPlan().buildings.find(b => b.id === change.building)?.rotation || 0)) : edit(change),
-    dock, op, applyBatch, selectionStore, visibility, view, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
+    dock, op, applyBatch, selectionStore, visibility, view, chooseDestination, addDormer, canEdit, select, library, haLink, onDrawFeature, openHouseMaterials, removeSelection: () => selectionStore.members().length > 1 ? removeSelected() : null, splitWall: armSplit, loadMaterialNames: readMaterialNames, preview: plan => view.rebuild(plan, { preserveYard: true }), ask: item => panel.focusSelection(item, getLabel(item)) });
   signal?.addEventListener('abort', () => cards.dispose(), { once: true });
   const handleSelection = () => isPickable(roomSelection.current()) ? roomSelection.current() : {};
   handles = createHandles({ view, getPlan, getSelection: () => selectionStore.members().length > 1 ? {} : handleSelection(), getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
@@ -507,6 +508,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         ? { mode: 1, target: { kind: 'ground' }, point: groundPoint?.(target) }
         : { mode: target.clientX === undefined ? 2 : 1, target: landing, point: target.materialSurface?.point }) },
       { label: 'Duplicate', disabled: !eligible.ok || !canEdit(), reason: eligible.reason, run: () => clipboard.duplicate(refs) },
+      ...(!target.empty ? [moveToAction({ refs, getPlan, getLabel, applyBatch, selectionStore, canEdit, chooseDestination, queue: cards.queue })].filter(Boolean) : []),
       ...(slot ? [{ label: 'Copy material', run: () => clipboard.copyMaterial(surface) },
         { label: 'Paste material', disabled: !clipboard.hasMaterial() || !canEdit(), reason: 'Copy a material first.', run: () => clipboard.pasteMaterial(surface) }] : [])];
   }
@@ -533,9 +535,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       selectionStore.clear();
     });
   }
-  listen(canvas, 'contextmenu', event => {
+  listen(canvas, 'contextmenu', async event => {
     event.preventDefault();
     if (ownsGesture) return;
+    try { if (await handles.removeAt(event)) return; } catch (error) { report(error); return; }
     contextPicking = true;
     let target; try { target = picker.at(event.clientX, event.clientY)[0]; } finally { contextPicking = false; }
     let materialSurface = null;
@@ -589,6 +592,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (target) select({ pieceId: target.level.id, buildingId: target.building.id });
     if (sheetOn) sheet(key, true).catch(report);
     delegate?.floorChanged?.(); drawFloors();
+  }
+  async function chooseDestination(key) {
+    delegate?.cancel?.(); setTool('select');
+    if (key !== 'site') { chooseFloor(key); return; }
+    measure.disarm(); onInteract?.(); roomSelection.clear();
+    view.setView('ext'); view.showLevels(null);
+    await view.setEditableLevel(null); drawFloors();
   }
   function drawFloorList(host, actionsOnly = false) {
     const focused = document.activeElement?.dataset.floor;
@@ -1097,6 +1107,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (button.dataset.editorCamera === 'top' && floor()) view.setTopCamera(floor().key);
     else view.setCamera(button.dataset.editorCamera);
   }));
+  function focusDownspout(item) {
+    if (view.ready === false) {
+      canvas.parentElement.addEventListener('twinrebuilt', () => {
+        if (selection?.pieceId === (item.roof || item.porch)) focusDownspout(item);
+      }, { once: true, signal });
+      return;
+    }
+    view.setView('ext'); view.showLevels(null); drawFloors();
+    if (item.roof && Number.isInteger(item.edge)) cards.showRoofEdge({ id: item.roof, building: item.building, edge: item.edge });
+    if (!item.top || !view.camera || !view.controls) return;
+    // Keep the viewing direction while framing the outlet closely enough to
+    // see its handle and mounting; top is already in world metres.
+    const target = view.controls.target.clone().set(...item.top), direction = view.camera.position.clone().sub(view.controls.target);
+    direction.setLength(Math.min(14, Math.max(5, direction.length())));
+    view.setCameraState({ position: target.clone().add(direction).toArray(), target: target.toArray() });
+  }
   return {
     clipboard,
     visibility,
@@ -1109,6 +1135,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     applyBatch,
     drawMaterialsList(host, options) { return drawMaterialsList(host, { getPlan, getKit, selectionStore, applyBatch, canEdit, library, queue: cards.queue, loadNames: cards.loadNames, report, view, visibility, ...options }); },
     select, pick, selected: () => selection, selection: roomSelection.current,
+    focusDownspout,
     selectionStore, selectedMembers: () => selectionStore.members(),
     dragPiece, rotateBuilding: rotate, floor, chooseFloor, drawFloors, sheet, setTool,
     gizmo, handles: () => [...handles.handles(), ...gizmo.handles()],

@@ -74,6 +74,61 @@ def _numeric_fields(item, names):
     return all(name not in item or _number(item[name]) for name in names)
 
 
+def _downspout_fractions(value):
+    return (isinstance(value, list) and len(value) <= 8
+            and all(_number(v) and 0 <= v <= 1 for v in value))
+
+
+GUTTER_FLAGS = frozenset(('no-outside-corner', 'hang', 'stub', 'inner-end', 'clipped-end',
+                          'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override'))
+
+
+def _gutter_ack(value):
+    return (isinstance(value, list) and len(value) <= len(GUTTER_FLAGS)
+            and all(isinstance(flag, str) and flag in GUTTER_FLAGS for flag in value)
+            and len(set(value)) == len(value))
+
+
+def _gutter_flag(piece, notes):
+    if 'gutter' in piece and type(piece['gutter']) is not bool:
+        piece.pop('gutter')
+        notes.append(f'Dropped invalid gutter flag on {piece.get("id", "attachment")}; expected a boolean.')
+    if 'gutter_ack' in piece and not _gutter_ack(piece['gutter_ack']):
+        piece.pop('gutter_ack')
+        notes.append(f'Dropped invalid gutter acknowledgement on {piece.get("id", "attachment")}.')
+
+
+def _section_gutters(section, notes):
+    """Keep side-keyed authored drainage; never add defaults to old plans."""
+    sides = ('x0', 'x1', 'y0', 'y1')
+    for field in ('gutters', 'downspouts'):
+        if field not in section:
+            continue
+        values = section.pop(field)
+        kept = {}
+        if isinstance(values, dict):
+            for side, value in values.items():
+                boundary = ('plane_edges' not in section
+                            or isinstance(section['plane_edges'], dict)
+                            and type(section['plane_edges'].get(side)) is int
+                            and section['plane_edges'][side] >= 0)
+                eave = side in sides and (section['kind'] == 'flat'
+                        or section['kind'] == 'shed' and side == section['low_side']
+                        or section['kind'] in ('hip', 'gable')
+                        and (side[0:1] != section['ridge']
+                             or section.get('ends', {}).get(side, section['kind']) == 'hip'))
+                valid = (value is True and eave if field == 'gutters'
+                         else _downspout_fractions(value))
+                if side in sides and boundary and valid:
+                    kept[side] = deepcopy(value)
+                elif field != 'gutters' or value is not False:
+                    notes.append(f'Roof section {section["id"]}: dropped invalid {field} on {side}.')
+        else:
+            notes.append(f'Roof section {section["id"]}: dropped invalid {field}; expected an object.')
+        if kept:
+            section[field] = kept
+
+
 def _items(owner, name, notes, cap_name=None):
     items = owner.get(name, [])
     if not isinstance(items, list):
@@ -282,9 +337,12 @@ def _roof(building, notes):
             section['pitch_source'] = 'default'
         section.setdefault('pitch_source', 'default')
         section['rect'] = list(rect)
+        _section_gutters(section, notes)
         sections[section['id']] = section
     extensions = []
     for index, extension in enumerate(_items(roof, 'extensions', notes)):
+        if isinstance(extension, dict) and extension.get('kind') == 'awning':
+            _gutter_flag(extension, notes)
         if migrating and isinstance(extension, dict):
             extension['section'] = 'roof-main'
         section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
@@ -475,6 +533,7 @@ def _details(building, levels, notes):
             return None
         else:
             porch.setdefault('floor', 0)
+            _gutter_flag(porch, notes)
             from services import twin_porches
             # Legacy flat porches keep their exact shape; absence means posts.
             if 'foundation' in porch:
