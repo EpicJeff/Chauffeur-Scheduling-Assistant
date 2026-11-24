@@ -39,6 +39,7 @@ Stored fields on a `roofs` record, all optional:
 
 - `support: {kind, count, inset_ft, spacing_ft, size_ft, style, at: {<index>: [x, y]}}`
 - `host: {wall, edge}`, `thickness_ft`, `fascia: bool`
+- `edges[i].overhang_ft`, optional on every roof: overrides the roof's `overhang` for that edge, so the edge against a wall can be 0. Absent means today's uniform overhang.
 
 Automatic placement, the same as today's brackets: along the outer edge of width `w`, with `inset = min(inset_ft ?? 0.6, w / 2)` and index `i` of `count`, the position is `inset + i * (w - 2 * inset) / max(1, count - 1)` from its start. `at[i]` overrides a position. Defaults: bracket, corbel, brace `count 2`; cable `count 2`; post `count 2`.
 
@@ -94,6 +95,7 @@ assert result['draws'] == baseline['draws'] and result['triangles'] == baseline[
 def test_support_fields_round_trip():            # support, host, thickness_ft, fascia survive normalize, flatten, from_section, save and reload
 def test_invalid_support_is_coerced_with_a_note():  # bad kind -> removed; out-of-range size -> default
 def test_walled_roof_has_no_new_fields():        # a house without support re-saves byte-identical
+def test_edge_overhang_overrides_roof_overhang(): # and survives save and flatten; absent edges keep the uniform overhang
 def test_dormers_inherit_support_flag():
 def test_deleted_host_wall_keeps_roof_and_flags(): # roof stays, host cleared, a flag names the roof
 def test_parity_with_js():                       # support_points(roof) == node supportPoints(roof), 12 cases
@@ -101,12 +103,12 @@ def test_parity_with_js():                       # support_points(roof) == node 
 
 - [ ] **Step 2: Run** `python tests/test_twin_awning_model.py`. Expected: FAIL (module missing).
 - [ ] **Step 3: Implement** the Python module and the validation and persistence changes named above. The edge-field drop in `from_section` is fixed by keeping every edge field except `gutters`, `downspouts`, `setting`, `pitch` keys already handled. `attach_edges` on a supported roof records `host` and moves the whole area.
-- [ ] **Step 4: Run** the test and the neighbours `test_twin_model.py`, `test_twin_model_roofs.py`, `test_twin_model_bridge.py`, `test_twin_model_ops_more.py`, `test_twin_plan.py` if present, `test_twin_build_replay.py`, `test_twin_joints.py` if present. Expected: PASS.
+- [ ] **Step 4: Run** the test and the neighbours `test_twin_model.py`, `test_twin_model_roofs.py`, `test_twin_model_bridge.py`, `test_twin_model_ops_more.py`, `test_twin_plan.py`, `test_twin_plan_v2.py`, `test_twin_build_replay.py`, `test_twin_joints.py`. Expected: PASS.
 - [ ] **Step 5: Report.**
 
 ### Task 3: Walls and ceilings ignore supported roofs
 
-**Implementer:** Codex. **Files:** Modify `static/twin/twin_generator.js` (1108-1130, 1474-1484, 1654-1667, 1699-1749, 1714, 1845, 1952, 1983, 2098, 1119), `static/twin/twin_roof.js` (187, 244), `static/twin/gutters.js` (537, 254, 261), `static/twin/twin_ground.js` (75), `services/twin_roof_issues.py` (140-172), `services/twin_build.py` (1358-1369, 2178-2243), `services/twin_solar.py` (272, 390), `services/twin_joints.py` (221-262, 552-584). Test: `chauffeur/tests/test_twin_awning_independence_js.py` and `chauffeur/tests/test_twin_awning_model.py`.
+**Implementer:** Codex. **Files:** Modify `static/twin/twin_generator.js` (1108-1130, 1474-1484, 1654-1667, 1699-1749, 1714, 1845, 1952, 1983, 2098, 1119), `static/twin/twin_roof.js` (26-30 per-edge overhang, 187, 244), `static/twin/gutters.js` (537, 254, 261), `static/twin/twin_ground.js` (75), `services/twin_roof_issues.py` (140-172), `services/twin_build.py` (1358-1369, 2178-2243), `services/twin_solar.py` (272, 390), `services/twin_joints.py` (221-262, 552-584). Test: `chauffeur/tests/test_twin_awning_independence_js.py` and `chauffeur/tests/test_twin_awning_model.py`.
 
 **Interfaces:** Consumes `isSupported`, `roofEnvelope`.
 
@@ -121,7 +123,7 @@ assert.ok(awningMesh(withAwning));                                   // and it d
 
 - [ ] **Step 2: Run.** Expected: FAIL (walls rise to the awning).
 - [ ] **Step 3: Implement** by filtering `isSupported` sections at each listed line. `Math.max` heights take the lowest roof above the floor. A supported roof is cut by every floor outline, not only outlines above it.
-- [ ] **Step 4: Run** the tests, Task 1's golden test and its owner export, `test_twin_gutters_js.py`, `test_twin_gutter_geometry_js.py`, `test_twin_eave_streams_js.py`, `test_twin_solar*` tests. Expected: PASS, golden hash unchanged.
+- [ ] **Step 4: Run** the tests, Task 1's golden test and its owner export, `test_twin_gutters_js.py`, `test_twin_gutter_geometry_js.py`, `test_twin_eave_streams_js.py`, `test_twin_solar_conduit_js.py`. Expected: PASS, golden hash unchanged.
 - [ ] **Step 5: Report.**
 
 ### Task 4: Migration
