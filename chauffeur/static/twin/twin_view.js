@@ -511,9 +511,39 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   // A room under its roof sees a fraction of the sky. At the yard's full share
   // it sits as bright as the lawn and a window reads as nothing. Lifting the
   // roof away (a floor view, the editor's level buttons) gives the sky back.
+  // Covered upward surfaces (porches, overhangs) share this roof fade via
+  // stageRing[5].w and swap blue sky hemisphere fill for bounced ground light
+  // (hemisphere ground + sunlit ground irradiance) via stageRing[6..8].w.
   const INDOOR_SKY = .3, INDOOR = new Set(['interior_wall', 'floor', 'ceiling']);
+  const COVER_GROUND_ALBEDO = .28, COVER_SUN_BOUNCE_FACTOR = COVER_GROUND_ALBEDO / (2 * Math.PI);
   let indoorSky = null;
   function applyIndoorSky() {
+    let roofFade = 1;
+    if (twin) {
+      if (viewing) {
+        const buildings = plan.buildings || [];
+        roofFade = buildings.length ? Math.min(...buildings.map(b => viewing.roofAlpha(b.id))) : 1;
+      } else {
+        roofFade = twin.groups.roof.visible ? 1 : 0;
+      }
+    }
+    const hInt = state.unlit ? 0 : Math.max(0, ambient.intensity);
+    const grR = ambient.groundColor.r * hInt, grG = ambient.groundColor.g * hInt, grB = ambient.groundColor.b * hInt;
+    const grLum = grR * .2126 + grG * .7152 + grB * .0722;
+    const sdx = sun.position.x - sun.target.position.x;
+    const sdy = sun.position.y - sun.target.position.y;
+    const sdz = sun.position.z - sun.target.position.z;
+    const sLen = Math.hypot(sdx, sdy, sdz);
+    const sunElev = sLen > 1e-6 ? Math.max(0, sdy / sLen) : 0;
+    const cloudSun = timeLook && timeLook.sunClear > 0 ? Math.max(0, timeLook.sun / timeLook.sunClear) : 1;
+    const sunBounce = state.unlit ? 0 : Math.max(0, sun.intensity) * cloudSun * sunElev * COVER_SUN_BOUNCE_FACTOR;
+    const sLum = sun.color.r * .2126 + sun.color.g * .7152 + sun.color.b * .0722;
+    const coverDelta = [
+      (grR + (grLum - grR) * .5) * .65 + (sun.color.r + (sLum - sun.color.r) * .5) * sunBounce - ambient.color.r * hInt,
+      (grG + (grLum - grG) * .5) * .65 + (sun.color.g + (sLum - sun.color.g) * .5) * sunBounce - ambient.color.g * hInt,
+      (grB + (grLum - grB) * .5) * .65 + (sun.color.b + (sLum - sun.color.b) * .5) * sunBounce - ambient.color.b * hInt,
+    ];
+    stageHaze.set({ roofFade, coverDelta });
     if (!twin || !settings.shadows) return;
     // The meshes are found once a build; their materials are read each frame,
     // because the bake and the level fades swap in copies of their own.
@@ -1808,7 +1838,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       frontBearingDeg:located.front_bearing_deg, overcast, fog, extinction, latitude:located.lat, force:moved || forceSky});
     if (skyChanged) stageHaze.refresh();
     timeLook = lookAt(solar.altitude * 180 / Math.PI, { altitude: lunar.altitude, fraction: illumination.fraction },
-      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:sky.horizon([0,1,0]).toArray(), ground:sky.horizon([0,-1,0]).toArray(), nightBrightness });
+      { shadows: settings.shadows, overcast, sunTransmittance:cloudShadow.centre(), zenith:cloudIrradiance.top, ground:sky.horizon([0,-1,0]).toArray(), nightBrightness });
     scene.background = sky.clearCube; scene.backgroundIntensity = 1;
     scene.environment = environment;
     scene.environmentIntensity = timeLook.environment;

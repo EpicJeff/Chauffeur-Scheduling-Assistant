@@ -46,7 +46,8 @@ export function mountModeKey(strip, {getSections, storage} = {}) {
   document.addEventListener('click', event => {
     if (open && !strip.contains(event.target) && !card.contains(event.target)) close();
   }, {...options, capture: true});
-  window.addEventListener('resize', position, options);
+  // Node test rigs mount live modes without a window event target.
+  globalThis.window?.addEventListener?.('resize', position, options);
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(position) : null;
   observer?.observe(strip);
   const glance = document.getElementById('twin-glance-home');
