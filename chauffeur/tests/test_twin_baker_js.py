@@ -464,10 +464,43 @@ check('test_grid_only_reused_receipt_does_not_render',async()=>{
  assert.ok(!server.writes(since).some(c=>c.method==='POST'),'only the manifest is updated');
 });
 check('test_low_baker_settle_with_placed_copies_is_safe',async()=>{
+ const seedCtx=await setup('high'),server=fakeServer();
+ await bakeAll(makeBaker(seedCtx,server,[k1],{round:10}));
+ assert.ok(server.manifests.get(seedCtx.atlas.key),'non-null manifest seeded on server');
  const ctx=await setup('low');ctx.view.plan=structuredClone(ctx.view.plan);
- ctx.view.plan.site={...ctx.view.plan.site,furniture:[{id:'copy',kind:'chair',at:[0,0]}]};
- const server=fakeServer(),baker=makeBaker(ctx,server,[k1]);
- assert.equal(await baker.settle(),false);assert.equal(baker.progress().grid.foldedOrDropped,0);assert.equal(server.calls.length,0);
+ let furnitureReads=0,gridCallbacks=0;
+ ctx.view.plan.site={...ctx.view.plan.site};
+ Object.defineProperty(ctx.view.plan.site,'furniture',{
+  get(){furnitureReads++;return [{id:'copy',kind:'chair',at:[0,0]}];},
+  enumerable:true,configurable:true,
+ });
+ const since=server.calls.length;
+ const baker=makeBaker(ctx,server,[k1],{onGrid:()=>{gridCallbacks++;}});
+ assert.equal(await baker.settle(),false);
+ assert.equal(furnitureReads,0,'Low quality guard prevents placedCopies/stats from running');
+ assert.equal(gridCallbacks,0,'Low quality never emits stats');
+ assert.equal(baker.progress().grid.foldedOrDropped,0);
+ assert.equal(server.calls.length,since,'Low quality never contacts the bake server even with a manifest present');
+});
+check('test_settle_catches_placed_copies_throw_after_publish',async()=>{
+ const ctx=await setup('high'),server=fakeServer();
+ await bakeAll(makeBaker(ctx,server,[k1],{round:42}));
+ ctx.view.plan=structuredClone(ctx.view.plan);
+ ctx.view.plan.site={...ctx.view.plan.site,furniture:[]};
+ const baker=makeBaker(ctx,server,[k1],{round:43});
+ await baker.staleLights(); // complete ready/bakeLayout before injecting settle-time failure
+ Object.defineProperty(ctx.view.plan.site,'furniture',{
+  get(){throw new Error('corrupt furniture list');},
+  enumerable:true,configurable:true,
+ });
+ let warnings=0;const warn=console.warn;console.warn=()=>{warnings++;};
+ try {
+  assert.equal(await baker.settle(),true,'settle preserves published manifest when placedCopies throws');
+  assert.equal(server.manifests.get(ctx.atlas.key).round,43);
+  assert.equal(server.manifests.get(ctx.atlas.key).complete,true);
+  assert.equal(warnings,1,'stats failure warns once');
+  assert.equal(baker.progress().grid.foldedOrDropped,0);
+ } finally { console.warn=warn; }
 });
 
 check('test_grid_mask_cancellation_stops_before_any_upload', async () => {

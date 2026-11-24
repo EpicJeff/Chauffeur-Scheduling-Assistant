@@ -936,9 +936,51 @@ def test_conditional_page_reads_stat_without_opening_and_detects_damage():
         check(r.headers['etag'] != previous, r.headers)
 
 
+def test_grid_wildcard_if_none_match_uses_stat_without_opening_or_locking():
+    import builtins
+    from pathlib import Path
+    from services import twin_bakes
+    key, name = key_of(0x30B), 'f' * 32
+    body = GRID_SIG + b'wildcard-stat-payload'
+    with Ctx() as c:
+        saved = c.upload_grid(key, name, body)
+        check(saved.status_code == 200, saved.text)
+        etag = saved.json()['etag']
+        grid_path = Path(bakes_dir()) / key / f'grid-{name}.bin'
+        real_open = builtins.open
+
+        def no_grid_open(file, *args, **kwargs):
+            if os.path.abspath(os.fspath(file)) == os.path.abspath(os.fspath(grid_path)):
+                raise AssertionError('If-None-Match: * must not open the grid file')
+            return real_open(file, *args, **kwargs)
+
+        class ForbiddenLock:
+            def __enter__(self):
+                raise AssertionError('If-None-Match: * must not acquire the publish _LOCK')
+            def __exit__(self, *exc):
+                return False
+
+        with patch.object(builtins, 'open', side_effect=no_grid_open), \
+             patch.object(Path, 'read_bytes', side_effect=AssertionError('must not read grid bytes')), \
+             patch.object(twin_bakes, '_LOCK', ForbiddenLock()):
+            for header in ('*', 'W/*', '"other", *'):
+                r = c.client.get(grid_url(key, name), headers={**c.panel, 'If-None-Match': header})
+                check(r.status_code == 304 and not r.content, (header, r.status_code))
+                check(r.headers['etag'] == etag and int(r.headers['X-Bake-Size']) == len(body), r.headers)
+            # Cold cache (e.g. after restart) still answers 304 from stat alone.
+            twin_bakes._GRID_VERSIONS.clear()
+            r = c.client.get(grid_url(key, name), headers={**c.panel, 'If-None-Match': '*'})
+            check(r.status_code == 304 and not r.content, ('cold cache *', r.status_code))
+            check(r.headers['etag'] and int(r.headers['X-Bake-Size']) == len(body), r.headers)
+            # Missing grid still answers 404 without locking or opening.
+            missing = c.client.get(grid_url(key, 'e' * 32), headers={**c.panel, 'If-None-Match': '*'})
+            check(missing.status_code == 404, ('missing grid *', missing.status_code))
+
+
 TESTS = (
     test_grid_routes_have_their_tiers,
     test_grid_roundtrip,
+    test_grid_wildcard_if_none_match_uses_stat_without_opening_or_locking,
     test_grid_rejects_bad_signature,
     test_grid_rejects_oversize,
     test_grid_accepts_gzipped_mvg1_and_validates_it,

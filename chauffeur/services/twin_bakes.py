@@ -31,6 +31,7 @@ _LOCK = threading.RLock()
 _LEASES = {}                        # key -> (owner, until); the add-on runs one worker
 _OWNER = re.compile(r'[A-Za-z0-9_.:-]{1,64}')
 _PAGE_VERSIONS = {}
+_GRID_VERSIONS = {}
 
 
 def _now():
@@ -156,18 +157,34 @@ def save_grid(key, name, data, owner):
         _write_lease(key, owner)
         _write(path, data)
         stat = path.stat()
-        return {'etag': _etag(data),
-                'version': [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)]}
+        version = {'stat': [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)], 'etag': _etag(data)}
+        if len(_GRID_VERSIONS) >= 256:
+            _GRID_VERSIONS.clear()
+        _GRID_VERSIONS[path] = version
+        return {'etag': version['etag'], 'version': version['stat']}
+
+
+def _grid_stat_etag(path):
+    stat = path.stat()
+    stamp = [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)]
+    version = _GRID_VERSIONS.get(path)
+    etag = version.get('etag') if version and version.get('stat') == stamp else None
+    return etag or f'"{stat.st_size:x}-{stat.st_mtime_ns:x}-{stat.st_ctime_ns:x}"', stat.st_size
 
 
 def grid_response(key, name, matches=()):
     path = _directory(key) / f'grid-{check_grid_name(name)}.bin'
+    # Existence probes (If-None-Match: *) answer from stat without opening the
+    # file or contending on the global publish lock.
+    if any(tag.strip().removeprefix('W/') == '*' for tag in matches):
+        etag, size = _grid_stat_etag(path)
+        return None, etag, size
     # Read and hash under the same publication lock as writes. No file handle
     # survives the lock (Windows), and the content ETag survives server restarts.
     with _LOCK:
         data = path.read_bytes()
         etag = _etag(data)
-        hit = any(tag.strip().removeprefix('W/') in (etag, '*') for tag in matches)
+        hit = any(tag.strip().removeprefix('W/') == etag for tag in matches)
         return None if hit else data, etag, len(data)
 
 

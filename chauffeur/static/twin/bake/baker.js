@@ -498,38 +498,40 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   async function settle() {
     try {
       const result = await settleManifest();
-      const copies = placedCopies(plan);
-      if (enabled && manifest && packed && valid() && (runGrids.size || copies.length)) {
+      if (enabled && manifest && packed && valid()) {
         try {
-          runGridLayout ||= gridLayout(plan);
-          const totals = {points:0, bytes:0, ms:0, maskMs:0, foldedOrDropped:0};
-          for (const g of runGrids.values()) for (const k of ['points', 'bytes', 'ms', 'maskMs']) totals[k] += g[k] || 0;
-          // Stats use plan placement centres (metres); loaded viewer mesh bounds
-          // are unavailable in the editor's display:false bake.
-          // A partial rebake can still fold against lamps reused from storage.
-          for (const l of copies.length ? lights : []) {
-            const e = manifest.lights[l.device];
-            if (runChunks.has(l.device) || !e?.grid || isStale(l.device)) continue;
-            const r = await api(`${path}/grid/${e.grid}.bin`);
-            if (!r.ok) throw new Error('Could not read the light-visibility grid for model stats.');
-            const bytes = new Uint8Array(await r.arrayBuffer());
-            const chunk = await decodeGridChunk(bytes);
-            if (!valid()) return result;
-            if (chunk.device !== l.device || chunk.layoutHash !== runGridLayout.hash) throw new Error('Grid stats layout mismatch.');
-            runChunks.set(l.device, chunk);
-            if (!runGrids.size) { totals.points += chunk.indices.length; totals.bytes += bytes.length; }
+          const copies = placedCopies(plan);
+          if (runGrids.size || copies.length) {
+            runGridLayout ||= gridLayout(plan);
+            const totals = {points:0, bytes:0, ms:0, maskMs:0, foldedOrDropped:0};
+            for (const g of runGrids.values()) for (const k of ['points', 'bytes', 'ms', 'maskMs']) totals[k] += g[k] || 0;
+            // Stats use plan placement centres (metres); loaded viewer mesh bounds
+            // are unavailable in the editor's display:false bake.
+            // A partial rebake can still fold against lamps reused from storage.
+            for (const l of copies.length ? lights : []) {
+              const e = manifest.lights[l.device];
+              if (runChunks.has(l.device) || !e?.grid || isStale(l.device)) continue;
+              const r = await api(`${path}/grid/${e.grid}.bin`);
+              if (!r.ok) throw new Error('Could not read the light-visibility grid for model stats.');
+              const bytes = new Uint8Array(await r.arrayBuffer());
+              const chunk = await decodeGridChunk(bytes);
+              if (!valid()) return result;
+              if (chunk.device !== l.device || chunk.layoutHash !== runGridLayout.hash) throw new Error('Grid stats layout mismatch.');
+              runChunks.set(l.device, chunk);
+              if (!runGrids.size) { totals.points += chunk.indices.length; totals.bytes += bytes.length; }
+            }
+            const table = emitterTable(lights, new Set(runChunks.keys()), manifest, {plan});
+            for (const copy of copies) {
+              const centre = new THREE.Vector3(...copy.at);
+              const half = new THREE.Vector3(...copy.scale.map(v => Math.max(.01, Math.abs(v) * .1524)));
+              centre.y += half.y;
+              const box = new THREE.Box3(centre.clone().sub(half), centre.clone().add(half));
+              const chosen = chooseEmitters(box, table, {layout:runGridLayout, chunks:runChunks});
+              if (chosen.folded || chosen.dropped) totals.foldedOrDropped++;
+            }
+            grid = {...grid, ...totals};
+            onGrid({...grid});
           }
-          const table = emitterTable(lights, new Set(runChunks.keys()), manifest, {plan});
-          for (const copy of copies) {
-            const centre = new THREE.Vector3(...copy.at);
-            const half = new THREE.Vector3(...copy.scale.map(v => Math.max(.01, Math.abs(v) * .1524)));
-            centre.y += half.y;
-            const box = new THREE.Box3(centre.clone().sub(half), centre.clone().add(half));
-            const chosen = chooseEmitters(box, table, {layout:runGridLayout, chunks:runChunks});
-            if (chosen.folded || chosen.dropped) totals.foldedOrDropped++;
-          }
-          grid = {...grid, ...totals};
-          onGrid({...grid});
         } catch (error) {
           if (!statsWarned) { statsWarned = true; console.warn('Model lighting stats unavailable:', error); }
           if (valid()) { grid = {...grid, foldedOrDropped:0}; onGrid({...grid}); }
