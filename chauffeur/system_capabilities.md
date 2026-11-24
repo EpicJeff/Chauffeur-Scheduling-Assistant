@@ -1,6 +1,75 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.994 (2026-11-23).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.995 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.995 (2026-11-24, Chromium, NOT device-verified): placed models take part in the lighting bake.**
+
+Placed models cast baked lamp shadows on walls and floors. They also receive baked lamp light, shadowed by the built house and tinted live. Moving a model no longer forces a full rebake.
+
+**Baked shadows from models.**
+- The editor baker renders placed models (mid LOD, one per copy) into each lamp's shadow cubes.
+- A lamp's key includes a plan-only occluder hash. It covers the asset id, placement point, rotation, pitch, roll, scale and `casts_shadow`, and leaves out the LOD file.
+- A copy counts for a lamp when its placement point is within the lamp's range plus 5 m.
+- `casts_shadow: false` keeps a copy out of the bake.
+- A lamp inside a lamp-shade model still lights its room.
+
+**Light-visibility grid.**
+- On each lamp's first page, the baker accumulates per-emitter visibility for a grid of points:
+  - 1 ft inside rooms;
+  - 2 ft across the whole lot, from the ground to 10 ft above it.
+- Geometry alone defines the layout (`grid-layout-2`), so adding or moving lamps keeps point addresses stable.
+- A point inside solid is invalid (byte 255). It counts as solid only when at least 3 of 6 tilted rays first hit a back face and at least 2 of those hits are within 0.5 m (`grid-mask-2`).
+- Grid chunks are gzip-wrapped MVG1, at most 8 MiB on the wire. They are stored beside the pages at `/api/house/bakes/{key}/grid/{name}.bin`.
+- The server answers `If-None-Match: *` from a file stat.
+- A grid baked under an old rule or for an old layout rebakes the grid only. Lighting pages are left alone.
+
+**How models are lit.**
+- The viewer resamples the grid into a 5x5x5 brick per placed copy.
+- Bricks pack into one RGBA8 3D texture (`mvBricks`); emitter and brick rows go into one float data texture (`mvLamps`).
+- A patch on placed-model materials runs up to 8 emitters through three's `RE_Direct`. Merged meshes and LOD copies carry the brick index as an `mvBrick` vertex attribute (index + 1; 0 means no brick).
+- The grid lights a model only for lamps whose pages are fresh. A lamp made stale by a move lights models through the live pool, as it does walls, so nothing is lit twice.
+- Live dimming, recolouring and switching a lamp off change models and walls in lockstep.
+
+**Shader warm-up (`bake/model_warmup.js`).**
+- Patched clones compile detached through `compileAsync`. The originals keep drawing until every program a variant needs is ready, including both sides of transparent double-sided materials.
+- Nothing compiles inside a frame or a click.
+- Ready clones stay installed across orbits, clock ticks, time-look changes and level-view rebuilds. Only bindings whose light state or material actually changed recompile.
+- A round always settles, even when a polled program is disposed mid-link.
+- Faint-level copies keep shader hooks only for model clones.
+
+**Editor.**
+- The lighting chip says "Lighting grid out of date" when only grids need rebaking.
+- Bake rebuilds them, and only on a press.
+- The grid debug view shows cells, budget and how many copies had emitters folded or dropped.
+
+**Fix on the way.** A press checks grid files under its exact key. Another desk's newer publication under a different key no longer makes every light rebake. Untouched lamps keep their published grid rule.
+
+**Costs on the owner's house** (High tier, Chromium ANGLE D3D11, RTX 4070 Ti SUPER).
+- **Shader.** +262-286 FXC slots, +13-16 transcendentals and +290-500 ms link per patched material, measured in isolation. 12 unique patched programs. +0 draws.
+- **Samplers.** At most 12 per material, within the 16-unit budget.
+- **Grid.** 265 KB on the wire; the grid pass adds 0.7 s to a bake.
+- **Fragment cost** (full-screen): +0.17 ms with 1 emitter, +0.47 ms with 8.
+- **Warm-up, medians of 3 cold contexts.**
+  - Longest model-attributable link stall: 55 ms, down from 6.5 s.
+  - The swap frame takes about 120 ms, from three's first-use `getProgramInfoLog` readbacks.
+  - First night Lights switch: 0 model compiles, down from +20.9 s.
+  - Orbiting during the warm-up: all 21 visible copies end up patched with no further input.
+  - 10 clock ticks: 0 new model programs and 0 frames reverting to originals.
+- **Look.** The sofa under the ceiling lamp reads 0.977 against 0.024 unlit, with an 18x baked shadow contrast. Faint levels look the same as main.
+
+**Pre-existing, not changed here.** A cold context takes about 125 s to settle on the owner's house, and the first night Lights switch about 149 s. Both come from serial lightmapped-surface compiles, measured on main without instrumentation.
+
+**Known follow-ups.**
+- Stale grid files are pruned only with their bake folder (about 33 KB per relight).
+- Baked light on models stops past about 409 placed copies (3D texture depth).
+- Browsers without `CompressionStream` cannot bake.
+- Unlit model materials get a needless cache-key suffix.
+- The editor's grid check does not compare the layout hash.
+
+Tests:
+- node: `test_twin_model_warmup_js`, `test_twin_model_lighting_js`, `test_twin_model_light_material_js`, `test_twin_model_bricks_js`, `test_twin_grid_layout_js`, `test_twin_grid_debug_js`, `test_twin_baker_js`, `test_twin_bake_runtime_js`, `test_twin_bake_editor*_js`, `test_twin_bake_model_*_js`, `test_twin_viewing_js`, `test_twin_modes_js`;
+- server: `test_twin_bakes`;
+- Chromium: `test_twin_model_light_live`, `test_house_twin_model_light_live`, `test_twin_bake_model_occluders_live`, `test_twin_grid_pass_live`, `test_house_twin_grid_debug_live`, `test_twin_texture_units_live`, `test_house_twin_bake_live`.
 
 **v2.499.994 (2026-11-23, Chromium, NOT device-verified): the editor's Check list can frame a gutter issue again.**
 
