@@ -12,7 +12,7 @@ import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
-import { roofMesh, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
+import { roofEnvelope, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
@@ -1072,7 +1072,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const identity = JSON.stringify([mat('roof', roofLevel(section), ref).uuid, ref.uv || null]);
       roofIdentities.set(key, identity); return identity;
     };
-    const envelope = roofMesh(sections, { materialKey: roofIdentity });
+    const envelope = roofEnvelope(sections, { materialKey: roofIdentity }).walled;
     const outlines = new Map(ordered.map(l => [l.id, l.outline?.length >= 3 ? [l.outline] : footprints(b.walls.filter(w => w.level === l.id))]));
     const uvParts = [];
     // This belongs to the lowest floor domain, including its viewing fade and
@@ -1120,12 +1120,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       .flatMap(l => floorCutters.get(l.id)));
     // Retained lower roofs serve walls under overhangs, never upper rooms;
     // the visible envelope remains above occupied attic outlines.
-    const roofLayers = roofMesh(sections, { retainLower: true, exclude, materialKey: roofIdentity });
+    const roofLayers = roofEnvelope(sections, { retainLower: true, exclude, materialKey: roofIdentity }).walled;
     const visibleRoof = envelope;
     const storeyRoofs = new Map(ordered.map(l => {
       const own = sections.filter(s => l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2);
       return [l.id, { sections: own,
-        positions: new Float32Array([...roofMesh(own).positions, ...envelope.positions]) }];
+        positions: new Float32Array([...roofEnvelope(own).walled.positions, ...envelope.positions]) }];
     }));
     let activePiece = null, activeSurface = null;
     const records = new Map(), wallProfiles = new Map();
@@ -1949,7 +1949,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (!slot || !level || !(room.polygon?.length >= 3)) continue;
       const supports = ceilingSlabs.filter(s => s.level.elevation > level.elevation && s.elevation > roomFloor(level, room))
         .sort((a, c) => a.elevation - c.elevation);
-      const roof = roofMesh(sections.filter(s => s.plate > level.elevation + .5));
+      const roof = roofEnvelope(sections.filter(s => s.plate > level.elevation + .5)).walled;
       const positions = Array.from(roof.positions, (v, i) => i % 3 === 2 ? v - ROOF_THICKNESS : v);
       supports.push({ group: local.roof, positions });
       use(room, 'room', room.id);

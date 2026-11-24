@@ -1,4 +1,6 @@
 // Roof geometry in plan feet, with z up. No renderer or browser dependencies.
+import { isSupported } from './roof_supports.js';
+
 const EPS = 1e-9;
 const AREA_EPS = 1e-10;
 const valueAt = (plane, x, y) => plane[0] * x + plane[1] * y + plane[2];
@@ -402,4 +404,12 @@ export function roofMesh(sections, { retainLower = false, exclude = [], material
   });
   return { positions: new Float32Array(positions), section: new Int32Array(labels),
     side: sides, edge: new Int32Array(edges), gables };
+}
+
+/** Independent envelopes; section labels are local to each group's input. */
+export function roofEnvelope(sections, options) {
+  return {
+    walled: roofMesh(sections.filter(section => !isSupported(section)), options),
+    supported: roofMesh(sections.filter(isSupported), options),
+  };
 }
