@@ -312,7 +312,7 @@ export function eaveInstances(plan={},roofs=new Map(),kit={},gutters=null) {
         const dropFt=isRoof&&probeHit.kind!=='roof'?4/12:Math.max(.20,Math.min(1.5,(top[1]-probeHit.height)/FT));
         pourForward=Math.max(.16,Math.min(.28,dropFt*.45))*FT;
         const hit=sample([top[0]+pourDir[0]*pourForward,top[1]+.05,top[2]+pourDir[2]*pourForward]);
-        const fall=isRoof&&hit.kind!=='roof'?4/12*FT:Math.max(.20*FT,Math.min(1.5*FT,top[1]-hit.height));
+        const fall=isRoof&&hit.kind!=='roof'?4/12*FT:Math.max(.20*FT,top[1]-hit.height);
         bottom=top[1]-fall;
       }
       if(top[1]-bottom<(isBlocked?.015:.05))continue;

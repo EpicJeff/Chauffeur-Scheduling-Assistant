@@ -502,10 +502,36 @@ function landing(ctx,at){
   if(ctx.levels.some(l=>l.polys.some(poly=>inPolygon(poly,...p))))return {...hit,lands:'hard',allowed:false};
   return {...hit,lands:'grass',allowed:true};
 }
+function pointNearPoly(poly,pt,tol=.25){
+  if(!poly||poly.length<3)return false;
+  if(inPolygon(poly,pt[0],pt[1]))return true;
+  for(let i=0;i<poly.length;i++)if(edgeDistance(pt,poly[i],poly[(i+1)%poly.length])<=tol+EPS)return true;
+  return false;
+}
+function porchDeckHeight(ctx,po){
+  const room=ctx.b.rooms?.find(r=>r.kind==='porch'&&r.level===(po.level||ctx.b.levels?.[0]?.id)&&inPolygon(r.polygon,...po.polygon[0]));
+  return (ctx.f.base+(po.floor||0)+(room?.floor_offset_ft||0))*FT;
+}
+function rimExitDistance(poly,origin,dir,maxDist,backDist){
+  let maxT=-Infinity;
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i],b=poly[(i+1)%poly.length],e=sub(b,a),den=cross(dir,e);
+    if(Math.abs(den)<EPS){
+      if(Math.abs(cross(dir,sub(a,origin)))<1e-4)for(const pt of [a,b]){
+        const t=dot(sub(pt,origin),dir);if(t>=-backDist-EPS&&t<=maxDist+EPS)maxT=Math.max(maxT,t);
+      }
+      continue;
+    }
+    const q=sub(a,origin),t=cross(q,e)/den,u=cross(q,dir)/den;
+    if(u>=-EPS&&u<=1+EPS&&t>=-backDist-EPS&&t<=maxDist+EPS)maxT=Math.max(maxT,t);
+  }
+  return maxT;
+}
 function mountAt(ctx,segment,top,corner){
-  const p=ctx.f.local(top),oh=segmentInfo(ctx,segment).overhang;
-  const posts=ctx.porches.flatMap(p=>(p.columns||[]).map(c=>({at:c.at,floor:p.floor||0,size:c.size||.5})))
-    .filter(c=>c.at&&Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
+  const p=ctx.f.local(top),oh=segmentInfo(ctx,segment).overhang,postClear=GUTTER.spoutIn[0]/24+.02;
+  const posts=ctx.porches.flatMap(po=>(po.columns||[]).filter(c=>c.at&&pointNearPoly(po.polygon,c.at,.25))
+      .map(c=>({at:c.at,floor:po.floor||0,size:c.size||.5,porch:po})))
+    .filter(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
       &&(heightAt(ctx.b.roof?.sections||[],...c.at)??ctx.b.levels?.[0]?.ceiling??0)>=p[2]-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
   const candidates=ctx.mountWalls.filter(w=>w.floor<p[2]&&w.top>=p[2]-.75&&oh<=GUTTER.maxOverhangFt
@@ -517,7 +543,7 @@ function mountAt(ctx,segment,top,corner){
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||b.floor-a.floor
       ||dot(b.normal,segment.outward)-dot(a.normal,segment.outward)||compare(a.w.id,b.w.id));
   if(posts.length&&(segment.porch!==null||!candidates.length||dist(posts[0].at,p.slice(0,2))<=dist(candidates[0].at,p.slice(0,2))+.1))
-    return {kind:'post',at:add(posts[0].at,mul(segment.outward,posts[0].size/2+.08)),normal:segment.outward};
+    return {kind:'post',at:add(posts[0].at,mul(segment.outward,posts[0].size/2+postClear)),normal:segment.outward,porch:posts[0].porch};
   if(candidates.length){const w=candidates[0],at=corner?.at||w.at;
     return {kind:'wall',at:add(at,mul(w.normal,(w.w.thickness||.5)/2+.08)),normal:w.normal};}
   return {kind:'hang',at:p.slice(0,2),normal:segment.outward};
@@ -540,43 +566,68 @@ function openingCheck(ctx,mount,top,bottom){
 function candidate(ctx,segment,top,corner,flags=[]){
   const p=ctx.f.local(top),mount=mountAt(ctx,segment,top,corner),n=mount.normal;
   if(mount.kind==='hang')return null;
-  const start=ctx.f.world([...mount.at,p[2]-.15]),support=sampleAt(ctx,start);
-  const end=add(mount.at,mul(n,GUTTER.elbowFt)),probe=ctx.f.world([...end,p[2]-.16]);
+  let dropShift=0,deckH=null;
+  if(mount.kind==='post'&&mount.porch?.polygon?.length>=3){
+    deckH=porchDeckHeight(ctx,mount.porch);
+    const mouth0=add(mount.at,mul(n,GUTTER.elbowFt)),sample0=sampleAt(ctx,ctx.f.world([...mouth0,p[2]-.16]));
+    if(!inPolygon(mount.porch.polygon,mouth0[0],mouth0[1])&&sample0.height<deckH-.01*FT){
+      const rimClear=GUTTER.spoutIn[0]/24+.02;
+      const tExit=rimExitDistance(mount.porch.polygon,mount.at,n,GUTTER.elbowFt,rimClear);
+      if(Number.isFinite(tExit))dropShift=Math.max(0,tExit+rimClear);
+    }
+  }
+  const dropAt=dropShift>EPS?add(mount.at,mul(n,dropShift)):mount.at;
+  const start=ctx.f.world([...dropAt,p[2]-.15]),support=sampleAt(ctx,start);
+  const end=add(dropAt,mul(n,GUTTER.elbowFt)),probe=ctx.f.world([...end,p[2]-.16]);
   const choices=[{end,dir:n,swiveled:false}];
   // Preserve the vertical corner position. If the straight elbow mouth lands on
   // a walkway/path/step/stair, swivel the elbow up to 90 degrees along the wall.
   const initial=landing(ctx,probe),tangent=[-n[1],n[0]];
   if(!initial.allowed)for(const deg of [15,30,45,60,75,90])for(const sign of [1,-1]){
     const rad=deg*Math.PI/180,dir=add(mul(n,Math.cos(rad)),mul(tangent,Math.sin(rad)*sign));
-    choices.push({end:add(mount.at,mul(dir,GUTTER.elbowFt)),dir,swiveled:true});
+    choices.push({end:add(dropAt,mul(dir,GUTTER.elbowFt)),dir,swiveled:true});
   }
   let chosen=null,paved=null;
   for(const option of choices){const sample=landing(ctx,ctx.f.world([...option.end,p[2]-.16]));
     if(!sample.allowed)continue;
-    if(['driveway','hard'].includes(sample.lands)){paved??={...option,sample};continue;}
+    if(['driveway','hard','deck'].includes(sample.lands)){paved??={...option,sample};continue;}
     if(option.swiveled&&!['grass','bed'].includes(sample.lands))continue;
     chosen={...option,sample};break;}
   chosen??=paved;
   // Landing is independent of mounting and opening clearance. Preserve a real
   // outside-corner drop even when every receiving surface needs attention.
   if(!chosen){if(!corner?.convex)return null;chosen={...choices[0],sample:initial};}
-  const surface=Math.max(support.height,chosen.sample.height),bottom=surface+.5*FT,opening=openingCheck(ctx,mount,top,bottom);
+  const surface=Math.max(support.height,chosen.sample.height),bottom=surface+.5*FT;
+  const openMount=openingCheck(ctx,mount,top,bottom);
+  const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom):openMount;
+  const opening={blocked:openMount.blocked||openDrop.blocked,door:openMount.door||openDrop.door};
   if(opening.blocked)return null;
   if(top[1]-.04*FT<=bottom+.1*FT)return null;
   const outletTop=gutterBottom(ctx,segment,top),under=[...outletTop];
   under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
   if(under[1]<=bottom+.1*FT)return null;
-  const wallXY=ctx.f.world([...mount.at,p[2]]),horizontal=Math.hypot(wallXY[0]-under[0],wallXY[2]-under[2]);
+  const rimBotY=deckH!==null?Math.max(deckH+.06*FT,bottom+.35*FT):null;
+  const rimTopY=rimBotY!==null?rimBotY+dropShift*FT:null;
+  let upperAt=dropAt,useJog=false;
+  if(dropShift>.06&&rimTopY!==null){
+    const postXY=ctx.f.world([...mount.at,p[2]]),postH=Math.hypot(postXY[0]-under[0],postXY[2]-under[2]);
+    const postElb=Math.max(0,Math.min(.5*FT,postH/2,(under[1]-bottom)/4));
+    if(under[1]-2*postElb>rimTopY+.05*FT){upperAt=mount.at;useJog=true;}
+  }
+  const wallXY=ctx.f.world([...upperAt,p[2]]),horizontal=Math.hypot(wallXY[0]-under[0],wallXY[2]-under[2]);
   const elbow=Math.max(0,Math.min(.5*FT,horizontal/2,(under[1]-bottom)/4)),toward=unit([wallXY[0]-under[0],0,wallXY[2]-under[2]]);
   const first=add(under,mul(toward,elbow));first[1]-=elbow;
   const leader=[wallXY[0]-toward[0]*elbow,first[1],wallXY[2]-toward[2]*elbow];
-  const wallTop=[wallXY[0],under[1]-2*elbow,wallXY[2]],wallBottom=ctx.f.world([...mount.at,bottom/FT-ctx.f.base]);
+  const wallTop=[wallXY[0],under[1]-2*elbow,wallXY[2]],wallBottom=ctx.f.world([...dropAt,bottom/FT-ctx.f.base]);
   const outlet=ctx.f.world([...chosen.end,(surface+4/12*FT)/FT-ctx.f.base]);
-  const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);path.push(wallTop,wallBottom,outlet);
+  const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);
+  path.push(wallTop);
+  if(useJog)path.push(ctx.f.world([...mount.at,rimTopY/FT-ctx.f.base]),ctx.f.world([...dropAt,rimBotY/FT-ctx.f.base]));
+  path.push(wallBottom,outlet);
   const dirLocal=chosen.dir,origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...dirLocal,0]);
   return {top:outletTop,mount:mount.kind,path,outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:chosen.sample.lands},
     flags:[...flags,...(!chosen.sample.allowed?['no-safe-landing']:[])],door:opening.door,
-    rank:!chosen.sample.allowed?2:['driveway','hard'].includes(chosen.sample.lands)?1:0};
+    rank:!chosen.sample.allowed?2:['driveway','hard','deck'].includes(chosen.sample.lands)?1:0};
 }
 function gutterBottom(ctx,segment,at){
   const p=ctx.f.local(at),offset=GUTTER.fasciaProudFt+GUTTER.profileIn/24;

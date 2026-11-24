@@ -1082,6 +1082,63 @@ await test('test_gutter_inner_and_outer_share_lightmap_chart', async () => {
   }
 });
 
+await test('test_raised_porch_post_geometry_clears_rim_and_pour_uncapped', async () => {
+  _gutterPlacementStats.clearCache();
+  const p = house(30, 'gable', rect(0, 0, 30, 20), 1);
+  const b = p.buildings[0];
+  b.base = 7;
+  b.roof.sections = [];
+  b.roofs = [];
+  const ps = addRoof(p, 'porchroof', [0, -8, 30, 0], 'shed', { low_side: 'y0', plate: 8, pitch: 3, overhang: 1 });
+  ps.gutters = {};
+  b.roofs[0].edges.forEach(e => e.gutter = false);
+  // Flush rim column on a 7 ft raised porch above a mulch bed at world ~0.12 ft.
+  b.porches = [{ id: 'p', gutter: true, polygon: rect(0, -8, 30, 0), floor: 0, columns: [{ at: [0.25, -7.75], size: 0.5 }, { at: [29.75, -7.75], size: 0.5 }] }];
+  p.site.beds = [{ id: 'bed', polygon: rect(-5, -14, 35, -7.5), elevation: 0 }];
+  const twin = buildTwin(p, input.kit, 'high');
+  await twin.ready;
+  try {
+    assert.equal(twin.gutters.spouts.length, 1);
+    const sp = twin.gutters.spouts[0];
+    assert.equal(sp.mount, 'post');
+    assert.equal(sp.outlet.lands, 'bed');
+    const bedFt = 0.12;
+    const { tris } = gutterTriangles(twin.root);
+    const pts = tris.flat();
+    // Every pipe vertex passing below deck level (y < 7 ft) must stay strictly outside the flush deck rim (planY = -z/FT < -8.015).
+    const lowerPts = pts.filter(pt => pt[1] / FT < 7.0 - 0.05);
+    assert.ok(lowerPts.length > 20, 'rendered pipe continues below the 7 ft deck rim');
+    const maxPlanYBelowDeck = Math.max(...lowerPts.map(pt => -pt[2] / FT));
+    assert.ok(maxPlanYBelowDeck <= -8.0 - 0.015, `pipe below deck must clear flush rim y=-8 (maxPlanY=${maxPlanYBelowDeck.toFixed(4)})`);
+    // Rendered elbow mouth bottom lip sits 3-4 in above the bed (~0.12 ft).
+    const wb = sp.path.at(-2);
+    const elbowPts = pts.filter(pt => pt[1] / FT < bedFt + 1.2 && Math.hypot(pt[0] - wb[0], pt[2] - wb[2]) < 0.6);
+    const outDists = elbowPts.map(pt => ((pt[0] - wb[0]) * sp.outlet.dir[0] + (pt[2] - wb[2]) * sp.outlet.dir[2]) / FT);
+    const maxOut = Math.max(...outDists);
+    const mouthPts = elbowPts.filter((_, i) => outDists[i] > maxOut - 0.08);
+    const mouthBottomIn = (Math.min(...mouthPts.map(pt => pt[1])) / FT - bedFt) * 12;
+    assert.ok(mouthBottomIn >= 2.8 && mouthBottomIn <= 4.1, `mouth bottom must be 3-4 in above bed (got ${mouthBottomIn.toFixed(2)} in)`);
+
+    // Pour lands directly on the bed.
+    const res = E.eaveInstances(p, twin.roofSurfaces, input.kit, twin.gutters);
+    assert.equal(res.pours.length, 1);
+    assert.equal(res.pours[0].lands, 'bed');
+    near(res.pours[0].bottom / FT, bedFt, 0.03);
+
+    // Mounted spout whose sampled ground is > 2 ft below its mouth is NOT capped at 1.5 ft by eave_streams.js.
+    const highOutletSpout = {
+      ...clone(sp),
+      id: `${sp.run}:uncapped`,
+      outlet: { ...sp.outlet, at: [sp.outlet.at[0], (bedFt + 3.0) * FT, sp.outlet.at[2]] },
+    };
+    const resTall = E.eaveInstances(p, twin.roofSurfaces, input.kit, { runs: twin.gutters.runs, spouts: [highOutletSpout] });
+    const tallPour = resTall.pours.find(pr => pr.spout.id === highOutletSpout.id);
+    assert.ok(tallPour, 'tall mounted pour emitted');
+    assert.ok((tallPour.top[1] - tallPour.bottom) / FT > 2.5, `mounted pour fall must not clamp at 1.5 ft (got ${((tallPour.top[1] - tallPour.bottom) / FT).toFixed(3)} ft)`);
+    near(tallPour.bottom / FT, bedFt, 0.03);
+  } finally { disposeTwin(twin); }
+});
+
 finish();
 """
 
