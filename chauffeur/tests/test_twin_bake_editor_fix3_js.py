@@ -123,6 +123,24 @@ await check('committed_wall_finish_press_rebakes_only_real_changes_and_preserves
   for(const p of untouched){assert.deepEqual(d.server.pages.get(key+'/'+p),bytes.get(key+'/'+p));assert.ok(!d.server.writes(since).some(c=>c.path===`api/house/bakes/${key}/${p}.png`));}
  }finally{next?.controller.stop();d.controller.stop();}
 });
+await check('pressed_grid_existence_uses_exact_key_even_when_latest_key_has_every_chunk',async()=>{
+ const d=await seeded();let next;
+ try{
+  const key=d.controller.state().key,m=structuredClone(d.server.manifests.get(key)),other='a'.repeat(32);
+  m.round=41;d.server.manifests.set(other,m);
+  for(const e of Object.values(m.lights))d.server.grids.set(`${other}/${e.grid}`,d.server.grids.get(`${key}/${e.grid}`).slice());
+  d.server.grids.delete(`${key}/${m.lights.k1.grid}`);
+  next=await context('high',d.server,null,opts());await ready(next);
+  assert.equal(output(next).textContent,'Lighting out of date since your edits');
+  const since=d.server.calls.length,pages=new Map(d.server.pages);
+  await next.controller.start();
+  assert.equal(next.controller.state().key,key);assert.deepEqual(next.controller.state().baked,['k1']);
+  const writes=d.server.writes(since);
+  assert.deepEqual(writes.filter(c=>c.method==='POST'&&c.path.includes('/grid/')).map(c=>c.path),[`api/house/bakes/${key}/grid/${m.lights.k1.grid}.bin`]);
+  assert.ok(!writes.some(c=>c.path.endsWith('.png')));assert.deepEqual(d.server.pages,pages);
+  assert.equal(next.controller.state().stale.length,0);assert.match(output(next).textContent,/^Lighting is up to date/);
+ }finally{next?.controller.stop();d.controller.stop();}
+});
 console.log(`${passed}/${ran} passed`);process.exit(passed===ran?0:1);
 """
 if __name__ == '__main__':

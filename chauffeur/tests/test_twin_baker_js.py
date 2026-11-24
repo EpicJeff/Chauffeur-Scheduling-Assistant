@@ -463,6 +463,24 @@ check('test_grid_only_reused_receipt_does_not_render',async()=>{
  assert.equal(ctx.renderer.log.renders,renders,'reusable grid needs no page-0/cube work');
  assert.ok(!server.writes(since).some(c=>c.method==='POST'),'only the manifest is updated');
 });
+check('test_old_grid_rule_or_layout_alone_rebakes_only_grid',async()=>{
+ const ctx=await setup(),server=fakeServer();await bakeAll(makeBaker(ctx,server,[k1,h1]));
+ for(const field of ['gridRule','gridLayout']){
+  const m=server.manifests.get(ctx.atlas.key),good=structuredClone(m.lights);
+  for(const e of Object.values(m.lights))e[field]='old';
+  const since=server.calls.length,pages=new Map(server.pages),baker=makeBaker(ctx,server,[k1,h1]);
+  assert.deepEqual(await baker.staleLights(),['k1','h1'],field+' alone stales the grids');
+  assert.equal(await baker.bakeNext(),'k1');
+  assert.deepEqual(await baker.staleLights(),['h1'],'untouched grid keeps its old '+field);
+  assert.equal(server.manifests.get(ctx.atlas.key).lights.h1[field],'old');
+  assert.deepEqual(await bakeAll(baker),['h1']);await baker.settle();
+  const writes=server.writes(since);
+  assert.deepEqual(writes.filter(c=>c.method==='POST'&&c.path.includes('/grid/')).map(c=>c.path),
+   [good.k1,good.h1].map(e=>`api/house/bakes/${ctx.atlas.key}/grid/${e.grid}.bin`));
+  assert.ok(!writes.some(c=>c.path.endsWith('.png')),field+' preserves lighting pages');
+  assert.deepEqual(server.pages,pages);assert.deepEqual(server.manifests.get(ctx.atlas.key).lights,good);
+ }
+});
 check('test_low_baker_settle_with_placed_copies_is_safe',async()=>{
  const seedCtx=await setup('high'),server=fakeServer();
  await bakeAll(makeBaker(seedCtx,server,[k1],{round:10}));

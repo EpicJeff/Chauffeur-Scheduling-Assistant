@@ -402,8 +402,9 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
+      // Untouched grids keep their published layout and rule until repaired.
       next.lights[device] = { ...expected,
-        ...(expected.grid && expected.grid === entry.grid && entry.gridLayout ? {gridLayout: entry.gridLayout} : {}),
+        ...(expected.grid && expected.grid === entry.grid && entry.gridLayout ? {gridLayout: entry.gridLayout, gridRule: entry.gridRule} : {}),
         ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });

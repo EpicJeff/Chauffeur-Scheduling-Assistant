@@ -144,6 +144,16 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}`,
     if (gpu[i] === 254) fullLit++;
     if (gpu[i] === 0) fullDark++;
   }
+  // The layout covers the room and the whole lot (geometry owns it since
+  // grid-layout-2), so the expected counts come from an independent distance
+  // scan and the CPU reference, never from GPU output.
+  let expectedCount = 0;
+  for (let i = 0; i < layout.count; i++) {
+    const dx = points[i * 3] - lampPos.x, dy = points[i * 3 + 1] - lampPos.y, dz = points[i * 3 + 2] - lampPos.z;
+    if (dx * dx + dy * dy + dz * dz < range * range) expectedCount++;
+  }
+  const expectedFullLit = Array.from(cpu).filter(v => v === 254).length;
+  const expectedFullDark = Array.from(cpu).filter(v => v === 0).length;
 
   // --- 2. Partial visibility & unnormalized uneven weights (16 samples split across the wall) ---
   const weightedSamples = Array.from({ length: 16 }, (_, i) => ({
@@ -218,6 +228,9 @@ void main(){gl_FragColor = vec4(vec3(length(wp-source)/farPlane),1.0);}`,
     maxDiff,
     fullLit,
     fullDark,
+    expectedCount,
+    expectedFullLit,
+    expectedFullDark,
     westSingle: gpu[westI],
     eastSingle: gpu[eastI],
     maxDiffW,
@@ -258,8 +271,10 @@ def run():
     def test_accumulator_matches_cpu():
         assert not errors, f'console errors: {errors[:3]}'
         assert result['glErr'] == 0, f'GL error: {result["glErr"]}'
-        assert result['gpuLength'] == result['count'] and result['count'] == 960, result
-        assert result['fullLit'] == 480 and result['fullDark'] == 480, f'half visible (480) and half behind wall (480): {result}'
+        assert result['gpuLength'] == result['count'] == result['expectedCount'], result
+        assert result['count'] > 960, f'room (960) plus the whole-lot yard block: {result}'
+        assert (result['fullLit'], result['fullDark']) == (result['expectedFullLit'], result['expectedFullDark']), result
+        assert result['fullLit'] > 0 and result['fullDark'] > 0, f'the wall splits lit from dark points: {result}'
         assert result['westSingle'] == 254, f'fully visible point gives 254: {result}'
         assert result['eastSingle'] == 0, f'point fully behind wall gives 0: {result}'
         assert result['maxDiff'] <= 2, f'GPU accumulator differs from CPU reference by > 2/254: {result}'

@@ -824,7 +824,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (!valid() || !requested || blockReason || mine !== generation) return;
         atlas = pending.apply(); pending = null;
       }
-      let damaged = [];
+      let damaged = [], damagedGrids = [];
       if (inspectOnly) {
         if (materialDirty) {
           controller.refreshMaterials(Object.keys(view.materialManifest || {}));
@@ -838,12 +838,22 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         // it. Only carry damage forward for the same published page version.
         if (editorKey === atlas.key) damaged = [...pageErrors.keys()].filter(p =>
           JSON.stringify(editorManifest?.pageIntegrity?.[p]) === JSON.stringify(manifest?.pageIntegrity?.[p]));
+        // Grid files belong to an atlas key. The idle chip may have inspected
+        // another desk's key, or a missing chunk may have been repaired since.
+        // Check the pressed key rather than carrying its cached 404s forward.
+        for (const grid of new Set(Object.values(manifest?.lights || {}).map(e => e.grid).filter(Boolean))) {
+          const r = await api(`api/house/bakes/${atlas.key}/grid/${grid}.bin`, {headers: {'If-None-Match': '*'}});
+          await idle();
+          if (!valid() || !requested || blockReason || mine !== generation) return;
+          if (r.status === 404) damagedGrids.push(grid);
+          else if (r.status !== 304 && !r.ok) throw bakeHTTPError('Could not check the lighting grid', r.status);
+        }
         prepare(lights, manifest?.ownership, manifest);
         if (layerOverflow) return;
         codec ||= workerCodec();
       }
       baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly,
-        damagedGrids: inspectOnly ? Object.values(editorManifest?.lights || {}).filter(e => e.grid && !presentGrids.has(e.grid)).map(e => e.grid) : [],
+        damagedGrids,
         onGrid(grid) {
           if (grid.points) progress = {...progress, grid};
           else progress = {...progress, grid:{...progress.grid, foldedOrDropped:grid.foldedOrDropped || 0}};
