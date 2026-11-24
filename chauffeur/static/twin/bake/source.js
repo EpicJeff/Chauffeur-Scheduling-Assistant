@@ -3,6 +3,9 @@
 // never join the drawn scene or add a draw call/material program.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { filterAlphaSource } from './alpha_source.js';
+// The building's neutral material build uses the desk's existing defaults.
+// Yard terrain keeps its viewer tier; only pool receiving batches are canonical.
+export const BAKE_SOURCE_TIER = 'high';
 const providers = new WeakMap(), sources = new WeakMap(), madeRoots = new WeakSet();
 // A drawn provider root and the neutral root it made are the same place. Receiver
 // matching names meshes relative to it (bindings.js domain), never by the drawn

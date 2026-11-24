@@ -835,7 +835,7 @@ export function buildAtlas(group, plan, { room } = {}) {
     const atlas = buildAtlas(source, plan, {room});
     const meshes=bakeReceiverRoots(group).flatMap(root=>prepareReceivers(root,plan));
     atlas.sourceRoot=source;
-    return bindReceivers(atlas,meshes);
+    return bindReceivers(atlas,meshes,options(room,'room').page);
   }
   const ro = options(room, 'room'), data = roomData(plan);
   const roomCharts = [], hash = fingerprint();

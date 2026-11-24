@@ -53,7 +53,9 @@ export function atlasJob(root, plan, layout) {
   if(!neutral)hash.add('uv:' + uvs.key());
   // The layout key ignores base uv, but the cached result carries clipped geometry with
   // it: uvKey says which base uv that geometry holds (see loadAtlas).
-  return { meshes, plan, layout, cacheKey: hash.key(), uvKey: neutral?'neutral-surface-topology':uvs.key() };
+  const terrainStep=Math.max(1,...meshes.filter(m=>m.geometry.userData?.bakeHeightfield)
+    .map(m=>m.geometry.userData.bakeTerrainStep || 1));
+  return { meshes, plan, layout, terrainStep, cacheKey: hash.key(), uvKey: neutral?'neutral-surface-topology':uvs.key() };
 }
 export function packAtlas(atlas, meshes) {
   if (atlas.sourceRoot) meshes=atlas.transportMeshes || covered(atlas.sourceRoot);
@@ -71,7 +73,7 @@ export function applyAtlas(data, root, layout) {
   const room = { ...data.room, charts: charts(data.room.charts) };
   room.packBanks = (lights, slots) => packBanks(room, lights, layout.room, slots);
   const atlas={key:data.key,room};
-  if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,bakeReceiverRoots(root).flatMap(node=>prepareReceivers(node,room.plan)));}
+  if(source!==root){atlas.sourceRoot=source;bindReceivers(atlas,bakeReceiverRoots(root).flatMap(node=>prepareReceivers(node,room.plan)),layout.room?.page ?? 2048);}
   return atlas;
 }
 

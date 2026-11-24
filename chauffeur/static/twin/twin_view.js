@@ -22,7 +22,7 @@ import { mountGlanceSettings } from './live/glance_settings.js';
 import { mountEnergySettings } from './live/energy_settings.js';
 import { mountBake } from './bake/runtime.js';
 import { isModelLightMaterial } from './bake/model_light_material.js';
-import { registerBakeSource, bakeAuthoredMaterial } from './bake/source.js';
+import { registerBakeSource, bakeAuthoredMaterial, BAKE_SOURCE_TIER } from './bake/source.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { atlasMesh } from './bake/atlas.js';
 import { sunPosition, moonPosition, moonIllumination, localSiderealTime } from './sky/ephemeris.js';
@@ -1954,7 +1954,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (children.length) copy.add(...children);
         return copy;
       };
-      registerBakeSource(twin.root, () => buildTwin(withoutSurfaceMaterials(bakePlan), { ...kit, manifest: {} }, tier,
+      registerBakeSource(twin.root, () => buildTwin(withoutSurfaceMaterials(bakePlan), { ...kit, manifest: {} }, BAKE_SOURCE_TIER,
         { viewing: true, bakeSource: true }).root, { extras: false,
           // Authored viewer-shaped materials classify alpha and supply physical
           // reach inputs. Drawn editor fades, focus and selection never enter.

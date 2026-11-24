@@ -9,7 +9,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
-import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry } from './bake/source.js';
+import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofMesh, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
@@ -491,7 +491,7 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   if (!opts.bakeSource) {
     const owned=[...root.children,...[...next.buildings.values()].map(entry=>entry.model.root),...Object.values(groups.levels)];
     registerBakeSource(root, () => !opts.editableLevel && defaultBuildingFinishes(plan,kit) ? cloneBakeGeometry(root,owned)
-      : buildTwin(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier,
+      : buildTwin(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, BAKE_SOURCE_TIER,
         {viewing: !!opts.viewing, bakeSource: true, gutters: placement}).root, {children:owned});
   }
   return next;

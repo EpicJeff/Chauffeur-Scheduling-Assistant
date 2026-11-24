@@ -525,6 +525,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         mesh.geometry.userData.bakeExcluded = true;
         // Yard lights bake onto the ground (user, 2026-11-13): the atlas charts it top-down.
         mesh.geometry.userData.bakeHeightfield = true;
+        mesh.geometry.userData.bakeTerrainStep = tier === 'low' ? 2 : 1;
         tintGrade(mesh.geometry, false);
       }
       stopTerrain();
@@ -900,7 +901,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       // Library map loads mutate their material. Clone only after all pool
       // finishes have resolved, so a first build keeps every late-loaded map.
       await Promise.all([...mats.values()].map(material => material.userData.ready));
-      for (const body of receiving.values()) if (tier === 'high' || tier === 'max') {
+      // Only receiving-material partitioning is canonical. Keep the caller's
+      // terrain grid, texture budget and nonreceiving content at its own tier.
+      for (const body of receiving.values()) if (bakeSource || tier === 'high' || tier === 'max') {
         const holes = body.id === poolBody?.id ? bodies.filter(b => b !== poolBody).map(b => b.polygon) : [];
         simulations.set(body.id, createWaterSimulation({...body, holes}));
       }
@@ -949,7 +952,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const moving = peers.filter(b => sourced.has(b.id));
         const regions = moving.length && peers.length > 1 ? peers.map(b => ({polygon:b.polygon,
           motion:sourced.get(b.id)?.uniforms.waterMotion || {value:new THREE.Vector3()}})) : [];
-        const key = 'underwater:' + source.uuid + ':' + tier + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height)
+        const key = 'underwater:' + source.uuid + ':' + (bakeSource ? 'bake' : tier) + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height)
           + (moving.length ? ':chop:' + moving.map(b => sourced.get(b.id).material.uuid).join(':') : '');
         let material = mats.get(key);
         if (!material) {

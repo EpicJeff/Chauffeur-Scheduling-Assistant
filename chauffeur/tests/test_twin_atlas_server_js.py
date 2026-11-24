@@ -78,6 +78,33 @@ await test('server_miss_worker_upload_and_quiet_failures', async () => {
   }finally{console.warn=warn;}
 });
 
+await test('coarse_source_never_publishes_and_cannot_poison_a_fine_local_cache', async () => {
+  const field=step=>{const root=small(),g=root.children[0].geometry;
+    g.userData.bakeHeightfield=true;g.userData.bakeTerrainStep=step;return root;};
+  const coarse=field(2),fine=field(1),idb=fakeIndexedDB(),calls=[];let workers=0;
+  assert.equal(A.atlasJob(coarse,job.plan,job.layout).cacheKey,A.atlasJob(fine,job.plan,job.layout).cacheKey,
+    'terrain step must not change the shared cache or bake namespace');
+  class Worker {postMessage(input){workers++;const data=dataFor(input.terrainStep===2?field(2):field(1));
+    setImmediate(()=>this.onmessage({data}));}terminate(){}}
+  const fetch=async(url,init={})=>{calls.push(init.method||'GET');return new Response('',{status:init.method==='PUT'?200:404});};
+  const run=root=>M.loadAtlas(root,job.plan,job.layout,options({indexedDB:idb,Worker,fetch}));
+  const low=await run(coarse);await tick();assert.equal(workers,1);assert.ok(!calls.includes('PUT'));
+  await run(field(2));await tick();assert.equal(workers,1,'Low reuses its own local copy');
+  assert.ok(!calls.includes('PUT'),'a Low local hit must not publish either');
+  const high=await run(fine);assert.equal(high.key,low.key,'local partition leaves the bake key alone');
+  await until(()=>calls.includes('PUT'));assert.equal(workers,2,'High cannot read the Low copy');
+  await run(field(2));await tick();assert.equal(workers,2,'High cannot overwrite Low local geometry');
+});
+
+await test('coarse_source_can_read_a_shared_fine_atlas_without_publishing_it', async () => {
+  const root=small();Object.assign(root.children[0].geometry.userData,{bakeHeightfield:true,bakeTerrainStep:2});
+  const data=dataFor(root),bytes=await A.encodeAtlas(data),idb=fakeIndexedDB(),calls=[];
+  class NeverWorker {constructor(){throw new Error('shared hit must not start a worker');}}
+  const fetch=async(url,init={})=>{calls.push(init.method||'GET');return new Response(bytes);};
+  for(let i=0;i<2;i++)await M.loadAtlas(root,job.plan,job.layout,options({fetch,indexedDB:idb,Worker:NeverWorker}));
+  await tick();assert.deepEqual(calls,['GET'],'Low may read shared geometry, but never publish');
+});
+
 await test('incompatible_or_corrupt_server_copy_falls_back_to_worker', async () => {
   const data=dataFor(small());let jobs=0;
   class Worker {postMessage(){jobs++;setImmediate(()=>this.onmessage({data:structuredClone(data)}));}terminate(){}}
