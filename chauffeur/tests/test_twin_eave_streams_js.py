@@ -282,6 +282,228 @@ await test('real household viewer wires Rain stopping, cutaway hiding, rebuild a
   await v.rebuild(next);v.render();assert.notEqual(v.eaves.streams.geometry,old);assert.ok(released,'rebuilding releases stale landing data');
  }finally{v?.dispose();Date.now=original;}
 });
+await test('catchment sizes eave streams by upslope run, routes upper roofs over projected width only, dries small overhangs first, and drives downspout pour share',()=>{
+ // 0. Owner household plan has zero catchment trace fallbacks and no zero/NaN catchments.
+ E._eaveCatchmentStats.reset();
+ const ownerRes=E.eaveInstances(plan,twin.roofSurfaces,kit);
+ assert.equal(E._eaveCatchmentStats.traceFallbacks,0,'real household roofs trace cleanly with zero fallbacks');
+ assert.ok(ownerRes.instances.every(i=>Number.isFinite(i.catchment)&&i.catchment>0),'no zero/NaN catchment on owner house');
+
+ // 1. Small overhang vs large main roof (including continuous slope-break patio like the pool house).
+ const smallOverhang=fixture([section('shed',{low_side:'y0',rect:[0,0,16,2],overhang:1,plate:9,pitch:3})]);
+ const largeMain=fixture([section('gable',{rect:[0,0,24,38],ridge:'x',overhang:1,plate:10,pitch:8})]);
+ const smallInst=E.eaveInstances(smallOverhang).instances;
+ const largeInst=E.eaveInstances(largeMain).instances;
+ assert.ok(smallInst.length>10&&largeInst.length>20);
+ const mean=arr=>arr.reduce((a,b)=>a+b,0)/arr.length;
+ const smallC=mean(smallInst.map(i=>i.catchment)),largeC=mean(largeInst.map(i=>i.catchment));
+ assert.ok(smallC<.25,`small overhang c=${smallC.toFixed(3)} should be well below main roof`);
+ assert.ok(largeC>.95,`large main roof c=${largeC.toFixed(3)} should saturate near 1`);
+ assert.ok(smallC<largeC*.3,`small overhang (${smallC.toFixed(3)}) well below large roof (${largeC.toFixed(3)})`);
+
+ // I1. Unified step threshold: patio-style lower eave keeps upstream catchment across 0.10, 0.233, and 0.40 ft steps (never lost or double-counted).
+ // Main gable eave at x=32 sits at z = 10 - 1*(11/12) = 9.0833 ft; patio roof at x=32 has height = plate + (38-32)*(3/12) = plate + 1.5 ft.
+ for(const stepFt of [.10,.233,.40]){
+  const patioPlate=10-11/12-1.5-stepFt;
+  const stepFix=fixture([
+   section('shed',{id:'patio',low_side:'x1',rect:[29.5,0,38,22],plate:patioPlate,pitch:3,overhang:1}),
+   section('gable',{id:'main',rect:[0,0,31,22],plate:10,pitch:11,ridge:'y',overhang:1}),
+  ]);
+  const res=E.eaveInstances(stepFix);
+  const patioInst=res.instances.filter(i=>i.eave.section===0);
+  assert.ok(patioInst.length>20,`step=${stepFt}: patio has streams`);
+  const minRun=Math.min(...patioInst.map(i=>i.catchmentFt)),maxRun=Math.max(...patioInst.map(i=>i.catchmentFt));
+  assert.ok(minRun>22&&maxRun<27,
+   `step=${stepFt} ft must keep upstream main gable without loss or double-count (expected ~23.5 ft): [${minRun.toFixed(2)}..${maxRun.toFixed(2)}] ft`);
+  assert.ok(patioInst.every(i=>i.catchment>.99),`step=${stepFt} ft patio saturates at c=1`);
+ }
+
+ // 2. Stepped upper roof draining onto a lower roof raises lower eave's c over projected width ONLY and conserves area.
+ const stepped=fixture([
+  section('shed',{id:'lower',low_side:'y0',rect:[0,0,30,8],plate:10,pitch:3,overhang:0}),
+  section('shed',{id:'upper',low_side:'y0',rect:[10,7,20,27],plate:20,pitch:6,overhang:0}),
+ ]);
+ const stRes=E.eaveInstances(stepped);
+ const lowerInst=stRes.instances.filter(i=>i.eave.section===0);
+ const under=lowerInst.filter(i=>i.top[0]>10.5*.3048&&i.top[0]<19.5*.3048);
+ const leftSide=lowerInst.filter(i=>i.top[0]<9.0*.3048);
+ const rightSide=lowerInst.filter(i=>i.top[0]>21.0*.3048);
+ assert.ok(under.length>10&&leftSide.length>10&&rightSide.length>10);
+ const underC=mean(under.map(i=>i.catchment));
+ const leftC=mean(leftSide.map(i=>i.catchment));
+ const rightC=mean(rightSide.map(i=>i.catchment));
+ assert.ok(Math.abs(leftC-.4)<.05&&Math.abs(rightC-.4)<.05,`unrouted flanks keep own 8 ft run (c~0.40): left=${leftC.toFixed(3)} right=${rightC.toFixed(3)}`);
+ assert.ok(underC>.95,`projected span under upper roof jumps to ~28 ft (c=1): ${underC.toFixed(3)}`);
+ // Area conservation: extra catchment integrated across the 30 ft lower eave equals the upper roof's 10 ft x 20 ft = 200 sq ft area.
+ const sortedLower=[...lowerInst].sort((a,b)=>a.top[0]-b.top[0]);
+ const lowerStepFt=30/sortedLower.length;
+ const extraAreaSqFt=sortedLower.reduce((s,i)=>s+Math.max(0,i.catchmentFt-8)*lowerStepFt,0);
+ assert.ok(Math.abs(extraAreaSqFt-200)<20,`stepped routed area conserved (~200 sq ft): ${extraAreaSqFt.toFixed(1)} sq ft`);
+
+ // 3. I2 drying curve constraints, F1 pouring visibility, M1 pour visibility & drying, and M4/M5 shader-formula packing round-trip.
+ const scene=new THREE.Scene(),es=E.createEaveStreams(scene,{tier:'high'});
+ es.setPlan(stepped);
+ const shape=es.streams.material.vertexShader.split('attribute vec4 eaveTop')[0]
+  .replace(/\bfloat\s+(\w+)\s*\(/g,'function $1(').replace(/(\(|,)\s*float\s+/g,'$1').replace(/\bfloat\s+/g,'let ');
+ const fract=x=>x-Math.floor(x),mix=(a,b,t)=>a+(b-a)*t,smoothstep=(a,b,x)=>{const t=Math.max(0,Math.min(1,(x-a)/(b-a)));return t*t*(3-2*t);};
+ const S=new Function('fract','mix','smoothstep','sin','abs','max','min','floor','sqrt',shape+'return {eaveCatchFlow,eaveActivity,eaveWidth,eaveSheetAmount};')
+  (fract,mix,smoothstep,Math.sin,Math.abs,Math.max,Math.min,Math.floor,Math.sqrt);
+ // I2: c = 1 identical to main; c >= 0.5 gives instFlow >= 0.85 * eaveFlow at every eaveFlow.
+ for(const f of [0,.01,.05,.1,.2,.45,.5,.8,1]){
+  assert.equal(S.eaveCatchFlow(f,1),f,`c=1 identical to main at flow=${f}`);
+  for(const c of [.5,.55,.7,.85,1]){
+   assert.ok(S.eaveCatchFlow(f,c)>=.85*f-1e-9,`c=${c} at flow=${f}: ${S.eaveCatchFlow(f,c).toFixed(4)} >= ${(0.85*f).toFixed(4)}`);
+  }
+ }
+ // F1: small catchments visibly active at pouring, no heavy sheet, strictly thinner than c = 1, and dry first.
+ const f02=S.eaveCatchFlow(1,.2),f01=S.eaveCatchFlow(1,.1),f10=S.eaveCatchFlow(1,1);
+ assert.ok(f02>.45&&f02<.62,`c=0.2 pouring instFlow=${f02.toFixed(3)} stays active yet below sheet threshold`);
+ assert.ok(f01>.40&&f01<f02,`c=0.1 pouring instFlow=${f01.toFixed(3)} stays active yet lighter than c=0.2`);
+ let act02=0,w02Sum=0,act10=0,w10Sum=0;
+ for(let i=0;i<60;i++){
+  const sd=(i+1)/61,a02=S.eaveActivity(i*.1,12,sd,f02),a10=S.eaveActivity(i*.1,12,sd,f10);
+  if(a02>.1){act02++;w02Sum+=S.eaveWidth(.5,12,sd,f02)*(.65+.75*a02)*mix(.66,1,Math.min(1,.2*2));}
+  if(a10>.1){act10++;w10Sum+=S.eaveWidth(.5,12,sd,f10)*(.65+.75*a10);}
+ }
+ assert.ok(act02>=8,`c=0.2 overhang has active streams at eaveFlow=1: ${act02}/60`);
+ const meanW02=w02Sum/act02,meanW10=w10Sum/act10;
+ assert.ok(meanW02>.010,`c=0.2 active stream width stays visible (${(meanW02*1000).toFixed(1)} mm)`);
+ assert.ok(meanW02<meanW10,`c=0.2 mean width (${(meanW02*1000).toFixed(1)} mm) strictly thinner than c=1 mean (${(meanW10*1000).toFixed(1)} mm)`);
+ assert.equal(S.eaveSheetAmount(1,5,f02,1),0,'small overhang never forms a heavy sheet curtain');
+ assert.equal(S.eaveCatchFlow(.60,.1),0,'c=0.1 cuts out before c=0.2 during drying');
+ assert.ok(S.eaveCatchFlow(.60,.2)>0,'c=0.2 still drips slightly after c=0.1 stops');
+ assert.equal(S.eaveCatchFlow(.50,.2),0,'4 ft overhang (c=0.2) stops by dry40 (eaveFlow=0.50)');
+ assert.ok(S.eaveCatchFlow(.50,.55)>.45,'mid-size wing gable (c=0.55) keeps streaming at dry40');
+ assert.ok(S.eaveCatchFlow(.20,.55)>.17,'mid-size wing gable (c=0.55) keeps dripping at dry80');
+ assert.equal(S.eaveCatchFlow(.20,smallC),0,'small overhang stays dry late in drying');
+ assert.ok(S.eaveCatchFlow(.20,largeC)>.15,'large main roof still drips at eaveFlow=0.20');
+ // M1: small pours stay visible while pouring (share not over-crushed) and dry by catchment under eaveCatchFlow.
+ const smallPourFlow=S.eaveCatchFlow(1,.08);
+ assert.ok(smallPourFlow>.35,`small porch pour (share=0.08) stays active at pouring: ${smallPourFlow.toFixed(3)}`);
+ assert.equal(S.eaveCatchFlow(.50,.08),0,'small porch pour stops early during drying');
+ assert.ok(S.eaveCatchFlow(.50,1)>.49,'full-catchment pour keeps running at dry40');
+ assert.ok(!es.streams.material.fragmentShader.includes('mix(.30,.54,pourShare)'),'pour share is not re-multiplied into fragment pourGain');
+ // M4: eaveSheetCapable only emits {0, 0.75, 1} and packMetaZ throws in test mode on any other sheetCap.
+ const validCaps=new Set([0,.75,1]);
+ for(const e of ownerRes.eaves)assert.ok(validCaps.has(E.eaveSheetCapable(e)),`valid sheetCap ${E.eaveSheetCapable(e)}`);
+ assert.throws(()=>E.packMetaZ({sheetCap:.5,catchment:.4}),RangeError,'packMetaZ must throw on unencodable sheetCap in test mode');
+ // Verify zero new instanced attributes: catchment is packed into existing eaveMeta.z.
+ assert.deepEqual(Object.keys(es.streams.geometry.attributes).sort(),['eaveBottom','eaveMeta','eaveRank','eaveTop','position','uv']);
+ const verifyShaderUnpack=(insts,metaAttr,label)=>{
+  for(let i=0;i<insts.length;i++){
+   const rawZ=metaAttr.getZ(i),inst=insts[i];
+   const isPour=rawZ<-.001;
+   assert.equal(isPour,!!inst.pour,`${label}[${i}] isPour flag`);
+   if(isPour){
+    const unpackedShare=Math.max(0,-rawZ);
+    assert.ok(Math.abs(unpackedShare-Math.max(.05,inst.share))<1e-5,`${label}[${i}] pour share round-trip`);
+   }else{
+    const sIdx=Math.floor(Math.max(0,rawZ));
+    const unpackedSheet=sIdx>1.5?1:sIdx*.75;
+    const unpackedC=(rawZ-sIdx)*2;
+    assert.ok(Math.abs(unpackedSheet-inst.sheetCap)<1e-5,`${label}[${i}] sheetCap round-trip: ${unpackedSheet} vs ${inst.sheetCap}`);
+    assert.ok(Math.abs(unpackedC-inst.catchment)<1e-5,`${label}[${i}] catchment round-trip: ${unpackedC} vs ${inst.catchment}`);
+   }
+  }
+ };
+ verifyShaderUnpack(es.data.instances,es.streams.geometry.attributes.eaveMeta,'shingle(sIdx=0)');
+ es.dispose();
+ // M5: Exercise standing-seam pan (sIdx=1, sheetCap=0.75) and attachment (sIdx=2, sheetCap=1.0) shader unpack + flat-roof+shed case.
+ const panPlan=fixture([
+  section('shed',{id:'s',low_side:'y0',rect:[0,0,18,12],plate:10,pitch:5,overhang:1}),
+  section('flat',{id:'f',rect:[18,0,30,12],plate:10,overhang:0}),
+ ]);
+ const panKit={materials:{roof:{asset:'standing_seam'}}};
+ const esPan=E.createEaveStreams(new THREE.Scene(),{tier:'high'});
+ esPan.setPlan(panPlan,new Map(),panKit);
+ assert.equal(esPan.data.eaves.length,1,'flat roof emits no eaves beside shed');
+ assert.ok(esPan.data.instances.every(i=>i.sheetCap===.75&&i.catchment>.6&&i.catchment<.8),'pan shed has sheetCap=0.75 and valid catchment');
+ verifyShaderUnpack(esPan.data.instances,esPan.streams.geometry.attributes.eaveMeta,'pan(sIdx=1)');
+ esPan.dispose();
+ // Attachment (sIdx=2, sheetCap=1.0) on real owner plan with standing-seam material.
+ const esOwner=E.createEaveStreams(new THREE.Scene(),{tier:'high'});
+ esOwner.setPlan(plan,twin.roofSurfaces,panKit);
+ assert.ok(esOwner.data.instances.some(i=>i.sheetCap===1),'owner plan with standing-seam has attachment instances (sheetCap=1)');
+ assert.ok(esOwner.data.instances.some(i=>i.sheetCap===.75),'owner plan with standing-seam has roof pan instances (sheetCap=0.75)');
+ verifyShaderUnpack(esOwner.data.instances,esOwner.streams.geometry.attributes.eaveMeta,'owner-pan(sIdx=1,2)');
+ esOwner.dispose();
+
+ // M2: Failed trace falls back to the eave's own analytic local run (never c = 0) and increments traceFallbacks.
+ const missPlan=fixture([section('shed',{low_side:'y0',rect:[0,0,16,10],plate:10,pitch:6,overhang:0})]);
+ const fullEnv={...roofMesh(missPlan.buildings[0].roof.sections),sections:missPlan.buildings[0].roof.sections};
+ const emptyEnv={...fullEnv,positions:new Float32Array(0),section:new Int32Array(0),side:[]};
+ let roofReads=0;
+ const missRoofs={get(id){if(id!=='b')return undefined;return ++roofReads>=5?emptyEnv:fullEnv;}};
+ E._eaveCatchmentStats.reset();
+ const missRes=E.eaveInstances(missPlan,missRoofs);
+ assert.ok(E._eaveCatchmentStats.traceFallbacks>0,'failed trace increments traceFallbacks counter');
+ assert.ok(missRes.instances.length>10&&missRes.instances.every(i=>Math.abs(i.catchmentFt-10)<.5&&i.catchment>=.45),
+  `failed trace falls back to eave own 10 ft local run (never c=0): runs=${missRes.instances.slice(0,3).map(i=>i.catchmentFt)}`);
+
+ // 4. Downspout pour share follows catchment (not run length), pour packing round-trips, and roof-landing downspouts route & conserve area.
+ const poly=(x0,y0,x1,y1)=>[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
+ const makeGutteredBuilding=(id,depth,pos)=>(({
+  id,position:pos,base:0,rotation:0,
+  levels:[{id:'L1',elevation:0,ceiling:10,outline:poly(0,0,20,depth)}],rooms:[],
+  walls:poly(0,0,20,depth).map((a,i,arr)=>({id:'w'+i,from:a,to:arr[(i+1)%4],exterior:true,height:10,thickness:.5,level:'L1'})),
+  openings:[],porches:[],
+  roof:{sections:[{id:'r',roof:'r',kind:'shed',low_side:'y0',rect:[0,0,20,depth],plate:10,pitch:6,overhang:0,level:'L1',plane_edges:{y0:0,x1:1,y1:2,x0:3},gutters:{y0:true}}],extensions:[]},
+  roofs:[{id:'r',area:poly(0,0,20,depth),overhang:0,edges:[{setting:'sloped',gutter:true},{setting:'gable'},{setting:'gable'},{setting:'gable'}]}],
+ }));
+ const pourPlan={units:'ft',buildings:[makeGutteredBuilding('small-ov',3,[0,0]),makeGutteredBuilding('big-roof',20,[40,0])],site:{}};
+ const pourRes=E.eaveInstances(pourPlan);
+ assert.equal(pourRes.pours.length,2,'one pour per guttered building');
+ const smallPour=pourRes.pours.find(p=>p.spout.run.startsWith('small-ov:'));
+ const bigPour=pourRes.pours.find(p=>p.spout.run.startsWith('big-roof:'));
+ assert.ok(smallPour&&bigPour);
+ assert.ok(smallPour.share<.25,`small 20x3 ft overhang pour share=${smallPour.share.toFixed(3)} stays small`);
+ assert.ok(bigPour.share>.95,`large 20x21 ft roof pour share=${bigPour.share.toFixed(3)} saturates near 1`);
+ assert.ok(smallPour.pourWidth<bigPour.pourWidth*.7,'pour width reflects catchment share');
+ // Verify pour packing round-trip through actual geometry attribute.
+ const esPour=E.createEaveStreams(new THREE.Scene(),{tier:'high'});
+ esPour.setPlan(pourPlan);
+ verifyShaderUnpack(esPour.data.instances,esPour.streams.geometry.attributes.eaveMeta,'pours(rawZ<0)');
+ esPour.dispose();
+ // Upper guttered roof with downspout landing on lower unguttered roof boosts lower eave catchment & conserves spout area (and guttered upper eave adds 0 directly).
+ const upperSpoutPlan={units:'ft',buildings:[{
+  id:'b',position:[0,0],base:0,rotation:0,
+  levels:[
+   {id:'L1',elevation:0,ceiling:10,outline:poly(0,0,30,20)},
+   {id:'L2',elevation:10,ceiling:10,outline:poly(5,8,25,20)},
+  ],rooms:[],
+  walls:[
+   ...poly(0,0,30,20).map((a,i,arr)=>({id:'w1'+i,from:a,to:arr[(i+1)%4],exterior:true,height:10,thickness:.5,level:'L1'})),
+   ...poly(5,8,25,20).map((a,i,arr)=>({id:'w2'+i,from:a,to:arr[(i+1)%4],exterior:true,height:10,thickness:.5,level:'L2'})),
+  ],openings:[],porches:[],
+  roof:{sections:[
+   {id:'low',roof:'low',kind:'shed',low_side:'y0',rect:[0,0,30,8],plate:10,pitch:3,overhang:0,level:'L1',plane_edges:{y0:0,x1:1,y1:2,x0:3},gutters:{}},
+   {id:'up',roof:'up',kind:'shed',low_side:'y0',rect:[5,8,25,20],plate:20,pitch:6,overhang:1,level:'L2',plane_edges:{y0:0,x1:1,y1:2,x0:3},gutters:{y0:true}},
+  ],extensions:[]},
+  roofs:[
+   {id:'low',area:poly(0,0,30,8),overhang:0,edges:[{setting:'sloped',gutter:false},{setting:'gable'},{setting:'gable'},{setting:'gable'}]},
+   {id:'up',area:poly(5,8,25,20),overhang:1,edges:[{setting:'sloped',gutter:true},{setting:'gable'},{setting:'gable'},{setting:'gable'}]},
+  ],
+ }],site:{}};
+ const routedSpoutRes=E.eaveInstances(upperSpoutPlan);
+ assert.equal(routedSpoutRes.pours.length,1);
+ assert.equal(routedSpoutRes.pours[0].lands,'roof','upper downspout lands on lower roof');
+ const lowStreams=routedSpoutRes.instances.filter(i=>!i.pour).sort((a,b)=>a.top[0]-b.top[0]);
+ const spoutX=routedSpoutRes.pours[0].top[0];
+ const nearSpout=lowStreams.filter(i=>Math.abs(i.top[0]-spoutX)<1.5*.3048);
+ const farFromSpout=lowStreams.filter(i=>Math.abs(i.top[0]-spoutX)>6*.3048);
+ assert.ok(nearSpout.length>3&&farFromSpout.length>10);
+ assert.ok(mean(nearSpout.map(i=>i.catchment))>mean(farFromSpout.map(i=>i.catchment))+.2,
+  `downspout landing on roof raises lower eave catchment below outlet: near=${mean(nearSpout.map(i=>i.catchment)).toFixed(3)} far=${mean(farFromSpout.map(i=>i.catchment)).toFixed(3)}`);
+ // Guttered upper eave adds zero direct runoff away from the downspout outlet (own run is 7 ft under the 1 ft upper overhang, 8 ft on unsheltered flanks),
+ // and total extra area equals the spout's captured area.
+ assert.ok(farFromSpout.every(i=>i.catchmentFt>=6.9&&i.catchmentFt<=8.1),
+  `guttered upper eave adds zero direct runoff away from spout outlet: [${Math.min(...farFromSpout.map(i=>i.catchmentFt)).toFixed(2)}..${Math.max(...farFromSpout.map(i=>i.catchmentFt)).toFixed(2)}]`);
+ const ownRun=i=>{const xFt=i.top[0]/.3048;return xFt>=4&&xFt<=26?7:8;};
+ const spoutExtraSqFt=lowStreams.reduce((s,i)=>s+Math.max(0,i.catchmentFt-ownRun(i))*(30/lowStreams.length),0);
+ const spoutExpectedSqFt=routedSpoutRes.pours[0].catchmentAreaSqFt;
+ assert.ok(Math.abs(spoutExtraSqFt-spoutExpectedSqFt)<spoutExpectedSqFt*.15,
+  `spout routed area conserved: deposited=${spoutExtraSqFt.toFixed(1)} vs captured=${spoutExpectedSqFt.toFixed(1)} sq ft`);
+});
 finish();
 """
 
