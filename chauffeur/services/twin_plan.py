@@ -950,43 +950,154 @@ def record_compose_overrides(before: dict, after: dict, *, _inplace=False) -> di
     return result
 
 
+DIRECTOR_LISTS = ('planting', 'beds', 'edges', 'furniture')
+
+
+class DirectorUnsafe(ValueError):
+    """The exact storage candidate could alter existing work."""
+
+
+def director_piece_ids(plan):
+    ids = set()
+    def visit(value):
+        if isinstance(value, dict):
+            if isinstance(value.get('id'), str):
+                ids.add(value['id'])
+            for key, child in value.items():
+                if key not in ('materials', 'read_geometry', 'compose_overrides'):
+                    visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(plan)
+    return ids
+
+
+def _director_removal(piece):
+    for key, value in piece.items():
+        key = str(key).lower().lstrip('_')
+        if key in ('remove', 'delete', 'deleted', 'removed', 'removal') and value:
+            return True
+        if key in ('op', 'action', 'status', 'state') and isinstance(value, str):
+            if value.lower() in ('remove', 'delete', 'deleted', 'removed', 'ghost', 'proposal'):
+                return True
+    return False
+
+
 def overlay_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
-    """Overlay explicit edits; omissions preserve the household's current work."""
-    merged = deepcopy(plan)
-    notes = []
-    for name in ('site', 'materials'):
-        if name not in revised:
-            notes.append(f'Kept omitted {name} unchanged.')
-            continue
-        value = revised[name]
-        if value is None or value == []:
-            notes.append(f'Kept empty top-level {name} unchanged.')
-        elif isinstance(value, dict):
-            for key in plan.get(name, {}):
-                if key not in value:
-                    notes.append(f'Kept omitted {name}.{key} unchanged.')
-            for key, item in value.items():
-                if name == 'site' and key in ('lot', 'pool'):
-                    if item != plan.get('site', {}).get(key):
-                        notes.append(f'Kept site.{key} unchanged; the director cannot change plot-plan facts.')
+    """Only append candidates; every existing site value is immutable."""
+    merged, notes = deepcopy(plan), []
+    site = revised.get('site')
+    if not isinstance(site, dict):
+        notes.append('Kept the site unchanged; no site additions were supplied.')
+    else:
+        if any(key not in site for key in plan['site']):
+            notes.append('Kept omitted site values unchanged.')
+        reserved = director_piece_ids(plan)
+        for key, value in site.items():
+            old = plan['site'].get(key)
+            if key not in DIRECTOR_LISTS:
+                if value != old:
+                    label = {'yard_rooms': 'yard rooms', 'devices': 'yard devices',
+                             'compose_overrides': 'saved yard edits'}.get(key, str(key).replace('_', ' '))
+                    if isinstance(old, list) and (value is None or value == []
+                            or isinstance(value, dict) and _director_removal(value)):
+                        notes.append(f'The art director suggested removing {len(old)} {label}; nothing was changed.')
+                    else:
+                        count = len(value) if isinstance(value, list) else 1
+                        notes.append(f'The art director suggested {count} changes to {label}; nothing was changed.')
+                continue
+            changed, removed = set(), set()
+            anonymous_removals = 0
+            if value is None or value == []:
+                removed.update(p.get('id') for p in old or [] if isinstance(p, dict))
+            elif not isinstance(value, list):
+                if isinstance(value, dict) and _director_removal(value):
+                    removed.update(p.get('id') for p in old or [] if isinstance(p, dict))
                 else:
-                    merged[name][key] = deepcopy(item)
-        else:
-            notes.append(f'Kept invalid {name} unchanged; expected an object or null.')
-    # Normalize explicit list deletions before recording compose removals.
-    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
-        if merged['site'].get(name) is None:
-            merged['site'][name] = []
-    merged['materials'] = {role: value for role, value in merged['materials'].items()
-                           if value is not None and value != []}
+                    notes.append(f'Refused {key} additions: use a list of pieces.')
+            else:
+                for entry in value:
+                    if not isinstance(entry, dict):
+                        notes.append(f'Refused a {key} addition: use a piece object.')
+                        continue
+                    item_id = entry.get('id')
+                    if _director_removal(entry):
+                        if isinstance(item_id, str):
+                            removed.add(item_id)
+                        else:
+                            anonymous_removals += 1
+                    elif isinstance(item_id, str) and item_id in reserved:
+                        changed.add(item_id)
+                    else:
+                        merged['site'].setdefault(key, []).append(deepcopy(entry))
+            changed -= removed
+            if changed or removed or anonymous_removals:
+                singular, plural = {'planting': ('plant', 'plants'), 'beds': ('bed', 'beds'),
+                                    'edges': ('edge planting', 'edge plantings'),
+                                    'furniture': ('furnishing', 'furnishings')}[key]
+                parts = []
+                if changed:
+                    parts.append(f'changing {len(changed)} {singular if len(changed) == 1 else plural}')
+                if removed or anonymous_removals:
+                    count = len(removed) + anonymous_removals
+                    parts.append(f'removing {count}' + (f' {singular if count == 1 else plural}' if not changed else ''))
+                notes.append('The art director suggested ' + ' and '.join(parts) + '; nothing was changed.')
+    materials = revised.get('materials')
+    if isinstance(materials, dict):
+        for role, value in materials.items():
+            if value is None or value == []:
+                if isinstance(merged.get('materials'), dict):
+                    merged['materials'].pop(role, None)
+            else:
+                merged.setdefault('materials', {})[role] = deepcopy(value)
+    else:
+        notes.append('Kept materials unchanged; no material changes were supplied.')
     return merged, notes
 
 
+def assert_director_preserved(before: dict, after: dict, *, stored=True):
+    """Compare exact JSON values, including numeric types, order and metadata."""
+    import json
+    if not isinstance(after, dict) or set(after) - {'materials'} != set(before) - {'materials'}:
+        raise DirectorUnsafe('The art director could not keep every existing piece unchanged. Nothing was saved.')
+    def same(a, b):
+        return json.dumps(a, sort_keys=True, allow_nan=False) == json.dumps(b, sort_keys=True, allow_nan=False)
+    for key, value in before.items():
+        if key == 'materials' or not stored and key not in ('site', 'buildings'):
+            continue
+        if key != 'site':
+            valid = key in after and same(value, after[key])
+        else:
+            site = after.get('site', {})
+            valid = isinstance(site, dict) and all(name in site and (
+                isinstance(site[name], list) and same(old, site[name][:len(old)])
+                if name in DIRECTOR_LISTS else same(old, site[name])) for name, old in value.items())
+            if valid:
+                valid = all(name in value or name in DIRECTOR_LISTS for name in site)
+        if not valid:
+            raise DirectorUnsafe('The art director could not keep every existing piece unchanged. Nothing was saved.')
+
+
+def normalize_director(plan: dict, before: dict) -> tuple[dict, list[str]]:
+    """Legacy flat-plan helper; connected director publication bypasses this."""
+    import json
+    notes = []
+    for _ in range(8):
+        normalized, problems = normalize(plan)
+        notes.extend(problems)
+        # The connected store checks and grafts raw records in update_model.
+        if json.dumps(normalized, sort_keys=True, allow_nan=False) == json.dumps(plan, sort_keys=True, allow_nan=False):
+            return normalized, list(dict.fromkeys(notes))
+        plan = normalized
+    raise DirectorUnsafe('The art director could not produce a stable plan. Nothing was saved.')
+
+
 def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
-    """Apply the director's site and materials only, then normalize a copy."""
     merged, notes = overlay_director(plan, revised)
-    normalized, normalized_notes = normalize(record_compose_overrides(plan, merged))
-    return normalized, notes + normalized_notes
+    normalized, problems = normalize_director(merged, plan)
+    assert_director_preserved(plan, normalized, stored=False)
+    return normalized, notes + problems
 
 
 def diff_paths(a: dict, b: dict) -> list[str]:

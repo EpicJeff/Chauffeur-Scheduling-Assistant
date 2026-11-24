@@ -723,8 +723,8 @@ def push_round(plan: dict, kind: str, note: str = '', cost: float | None = None,
         if kind not in _KINDS:
             raise ValueError('Unknown twin round kind.')
         _check_base(base)
-        plan, _ = twin_plan.normalize(plan)
         previous = _read_round(row, row['current']) if row['current'] is not None else None
+        plan, _ = twin_plan.normalize(plan)
         model, _ = twin_model_bridge.assemble(plan, previous=previous)
         return _append_round(row, model, kind, note, cost, run, base, step=step)
 
@@ -746,25 +746,78 @@ def update_current(mutator, kind, note='', step=None, cost=None, generation=None
         return _append_round(row, model, kind, note=note, cost=cost, step=step, partial=partial)
 
 
+def _director_normalize(model):
+    """A director round may never publish a connected model that still drifts."""
+    first, _ = twin_model.normalize(model)
+    second, _ = twin_model.normalize(first)
+    if _director_json(first) != _director_json(second):
+        def changed(a, b, path=''):
+            if _director_json(a) == _director_json(b):
+                return []
+            if isinstance(a, dict) and isinstance(b, dict):
+                return [p for k in sorted(a.keys() | b.keys()) for p in
+                        (changed(a[k], b[k], f'{path}.{k}'.lstrip('.'))
+                         if k in a and k in b else [f'{path}.{k}'.lstrip('.')])]
+            if isinstance(a, list) and isinstance(b, list):
+                return [p for i in range(max(len(a), len(b))) for p in
+                        (changed(a[i], b[i], f'{path}[{i}]')
+                         if i < len(a) and i < len(b) else [f'{path}[{i}]'])]
+            return [path]
+        raise twin_plan.DirectorUnsafe('The art director could not produce a stable plan. '
+                                       'Changed records: ' + ', '.join(changed(first, second)) +
+                                       '. Nothing was saved.')
+    return first
+
+
+def _director_json(value):
+    return json.dumps(value, sort_keys=True, allow_nan=False)
+
+
 def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None,
-                 return_model=False, preserve_room_polygons=False) -> int | tuple[int, dict]:
-    """Publish an edit; optionally return its exact serialized model with the id."""
+                 return_model=False, preserve_room_polygons=False, cost=None, run=None,
+                 base=None) -> int | None | tuple[int | None, dict]:
+    """Publish a connected edit; a director no-op returns no new round id."""
     with LIFECYCLE, _LOCK:
         row = _state()
         if generation is not None and generation != row['generation']:
             raise StaleGeneration('The house was started over. Discard this result.')
         if kind not in _KINDS:
             raise ValueError('Unknown twin round kind.')
+        _check_base(base)
         if row['current'] is None:
             raise ValueError('There is no house yet.')
         before = (deepcopy(_READ_MODEL) if _READ_MODEL is not None and _READ_KEY == _read_key(row)
                   else _read_round(row, row['current']))
-        model, _ = twin_model.normalize(mutator(before), preserve_room_polygons=preserve_room_polygons)
+        if kind == 'director':
+            from services import twin_cost
+            if director_round_count(run) >= twin_cost.ROUND_CAP:
+                raise twin_plan.DirectorUnsafe('round cap reached')
+            candidate = mutator(deepcopy(before))
+            twin_plan.assert_director_preserved(before, candidate)
+            # Graft only the accepted additions/roles onto the raw stored house.
+            # Normalization is a read-only stability check, never the published data.
+            model = deepcopy(before)
+            for name in twin_plan.DIRECTOR_LISTS:
+                additions = candidate['site'].get(name, [])[len(before['site'].get(name, [])):]
+                if additions:
+                    model['site'].setdefault(name, []).extend(deepcopy(additions))
+            if 'materials' in candidate:
+                model['materials'] = deepcopy(candidate['materials'])
+            checked = _director_normalize(model)
+            normalized = _director_json(model) == _director_json(checked)
+        else:
+            model, _ = twin_model.normalize(mutator(before), preserve_room_polygons=preserve_room_polygons)
+            normalized = True
         if state_mutator is not None:
             state_mutator(row)
-        _follow_place(row, model)
-        # _follow_place only copies registry names onto buildings normalize already kept.
-        round_id = _append_round(row, model, kind, note=note, changes=changes, normalized=True)
+        if kind == 'director':
+            twin_plan.assert_director_preserved(before, model)
+            if _director_json(before) == _director_json(model):
+                return (None, deepcopy(before)) if return_model else None
+        else:
+            _follow_place(row, model)
+        round_id = _append_round(row, model, kind, note=note, changes=changes, normalized=normalized,
+                                 cost=cost, run=run, base=base)
         return (round_id, deepcopy(_READ_MODEL)) if return_model else round_id
 
 
@@ -803,7 +856,11 @@ def revert(round_id: int, generation=None) -> int:
             raise ValueError('Stop the build before returning to an earlier house.')
         plan = _read_round(row, round_id)
         restored, origin = _restore_load_state(row, round_id)
-        if not restored:
+        previous = max((r['id'] for r in row['rounds']
+                        if r['id'] < row['current'] and not r.get('stale')), default=None)
+        undoing_director = round_id == previous and any(
+            r['id'] == row['current'] and r['kind'] == 'director' for r in row['rounds'])
+        if not restored and not undoing_director:
             _follow_place(row, plan)
         _follow_tombstones(row, round_id)
         return _append_round(row, plan, 'revert', restored_from=origin)
