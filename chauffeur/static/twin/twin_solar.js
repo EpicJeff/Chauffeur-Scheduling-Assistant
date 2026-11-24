@@ -1,5 +1,5 @@
 // Shared by the generator, editor and energy anchors. Building-local feet, z up.
-import { roofMesh, planes as sidePlanes } from './twin_roof.js';
+import { roofMeshGroups, planes as sidePlanes } from './twin_roof.js';
 export const SOLAR_DEFAULTS = {panel_width: 65/12, panel_height: 39/12, orientation: 'portrait', gap: 1/12, setback: 0, count: null, entity: null};
 const dot = (a, b) => a.reduce((s, v, i) => s + v*b[i], 0);
 const cross = (a, b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
@@ -20,7 +20,7 @@ export function solarUV(plane, point) {
 const planeCache = new WeakMap();
 export function solarPlanes(building, envelope = null) {
   if(!envelope && planeCache.get(building)?.sections===building.roof?.sections)return planeCache.get(building)?.result || [];
-  const sections = building.roof?.sections || [], mesh = envelope || roofMesh(sections), groups = new Map();
+  const sections = building.roof?.sections || [], mesh = envelope || roofMeshGroups(sections), groups = new Map();
   for (let i=0; i<mesh.positions.length; i+=9) {
     const p=[0,3,6].map(j=>Array.from(mesh.positions.slice(i+j,i+j+3))), n=cross(p[1].map((v,j)=>v-p[0][j]),p[2].map((v,j)=>v-p[0][j]));
     if (Math.abs(n[2])<1e-8) continue;

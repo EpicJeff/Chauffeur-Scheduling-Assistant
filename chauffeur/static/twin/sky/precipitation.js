@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { groundAt, inPolygon, edgeDistance, buildingBase, buildingFootprint, poolDatum } from '../twin_ground.js';
 import { heightAt } from '../twin_roof.js';
+import { isSupported } from '../roof_supports.js';
 import { allPorches } from '../twin_generator.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { yardPaverLayout } from '../paver_path.js';
@@ -239,7 +240,7 @@ export function createSplashSampler(plan={},roofs=new Map(),cover=createSkyCover
   const beds=(site.beds||[]).map(b=>b.polygon).filter(Boolean);
   const buildings=(plan.buildings||[]).map(b=>{
     const angle=finite(b.rotation)*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle),pos=b.position||[0,0];
-    return {b,c,s,pos,base:buildingBase(plan,b),footprint:buildingFootprint(b),porches:allPorches(b),sections:roofs?.get(b.id)?.sections||[]};
+    return {b,c,s,pos,base:buildingBase(plan,b),footprint:buildingFootprint(b),porches:allPorches(b),sections:roofs?.get(b.id)?.sections||(b.roof?.sections||[]).filter(isSupported)};
   });
   const normalScratch=new THREE.Vector3();
   let bestHeight,bestKind,bestX,bestY,bestZ;

@@ -12,7 +12,8 @@ import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
-import { roofEnvelope, heightAt, stepFaces, endKind, planes } from './twin_roof.js';
+import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes } from './twin_roof.js';
+import { isSupported } from './roof_supports.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
@@ -49,7 +50,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
   group.traverse(o => {
     // Independently faded viewing domains must never merge into their parent.
     for (let p = o.parent; p && p !== group; p = p.parent)
-      if (p.userData.viewingWalls || p.userData.viewingTree) return;
+      if (p.userData.viewingWalls || p.userData.viewingTree || p.userData.supportedRoof) return;
     if (!o.isMesh || o.userData.part === 'ceiling' || o.userData.effectFixture || o.userData.garageDoor || o.userData.fireFlame || o.userData.modelLod || o.userData.pendingImport || o.userData.ghost || o.layers.isEnabled(PICK_LAYER) || o.isInstancedMesh || o.isSkinnedMesh || Array.isArray(o.material) || o.material?.vertexColors ||
         !o.geometry?.attributes.position || Object.keys(o.geometry.morphAttributes || {}).length) return;
     let g;
@@ -555,16 +556,25 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
     && Math.abs(p[1] - q[1]) <= 3 / 12 + 0.02;
 
   const buckets = new Map();
-  let cur = null;
+  let cur = null, gutterOwner = null;
   const selectBucket = info => {
     let bucket = buckets.get(info.key);
     if (!bucket) {
       bucket = { mat: info.mat, ref: info.ref, seed: info.seed, positions: [], uvs: [] };
+      if (info.supportedRoof) bucket.supportedRoof = info.supportedRoof;
+      if (info.supportedLevel) { bucket.supportedLevel = info.supportedLevel; bucket.ranges = []; }
       buckets.set(info.key, bucket);
     }
     cur = bucket;
+    gutterOwner = info.supportedRoof || null;
   };
   const pushTri = (a, bPt, c, ua, ub, uc) => {
+    if (gutterOwner) {
+      const start = cur.positions.length / 3, previous = cur.ranges.at(-1);
+      if (previous?.pieceId === gutterOwner && previous.start + previous.count === start) previous.count += 3;
+      else cur.ranges.push({ start, count: 3, pieceId: gutterOwner, kind: 'roof', buildingId: b.id,
+        part: 'gutter', bakePart: 'gutter', surfaceKind: 'gutter' });
+    }
     cur.positions.push(a[0], a[1], a[2], bPt[0], bPt[1], bPt[2], c[0], c[1], c[2]);
     cur.uvs.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
   };
@@ -883,6 +893,11 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(bucket.positions, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uvs, 2));
     geometry.computeVertexNormals();
+    if (bucket.supportedRoof) geometry.userData.supportedRoof = bucket.supportedRoof;
+    if (bucket.supportedLevel) {
+      geometry.userData.supportedLevel = bucket.supportedLevel;
+      geometry.userData.snapRanges = bucket.ranges;
+    }
     parts.push({ geometry, mat: bucket.mat, ref: bucket.ref, seed: bucket.seed });
   }
   return parts;
@@ -1058,9 +1073,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         local[l.id].add(group); mergeGroups.push(group);
       }
     }
-    const sections = b.roof?.sections || [];
+    const allSections = b.roof?.sections || [], sections = [], supportedSections = [], sectionIndices = [], supportedIndices = [];
+    allSections.forEach((section, index) => {
+      if (isSupported(section)) { supportedSections.push(section); supportedIndices.push(index); }
+      else { sections.push(section); sectionIndices.push(index); }
+    });
     const roofSidePlanes = sections.map(planes);
-    const roofLevel = section => levels[section.level] || [...ordered].reverse().find(l => l.elevation + .5 < section.plate);
+    const roofLevel = section => levels[section.level] || (isSupported(section) ? first
+      : [...ordered].reverse().find(l => l.elevation + .5 < section.plate));
     const roofRef = (section, edge = null) => surfaceRef('roof', roofLevel(section),
       edge === null || edge < 0 ? null : section.plane_materials?.[String(edge)],
       { parents: [section.material, section.materials?.roof] });
@@ -1122,6 +1142,46 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     // the visible envelope remains above occupied attic outlines.
     const roofLayers = roofEnvelope(sections, { retainLower: true, exclude, materialKey: roofIdentity }).walled;
     const visibleRoof = envelope;
+    // Supported roofs retain their own envelopes, even below another roof.
+    // Stored floors own visibility. Only storeys reaching the slab cut it.
+    const roofGroups = [{ sections, indices: sectionIndices, roofLayers, visibleRoof, exclude,
+      roofSidePlanes, roofIdentity, supported: false, group: local.roof }];
+    const supportedGroups = new Map(), supportedLevels = new Map(), supportCuts = new Map();
+    supportedSections.forEach((section, index) => {
+      const key = section.roof || section.id || supportedIndices[index];
+      if (!supportedGroups.has(key)) supportedGroups.set(key, { sections: [], indices: [] });
+      const entry = supportedGroups.get(key); entry.sections.push(section); entry.indices.push(supportedIndices[index]);
+    });
+    for (const entry of supportedGroups.values()) {
+      const level = levels[entry.sections[0].level] || first;
+      if (!supportedLevels.has(level.id)) {
+        const group = new THREE.Group();
+        group.name = `${b.id}:supported:${level.id}`;
+        group.userData.supportedRoof = true;
+        local[level.id].add(group); mergeGroups.push(group);
+        supportedLevels.set(level.id, group);
+      }
+      const group = supportedLevels.get(level.id);
+      const identity = face => {
+        const section = entry.sections[face.section], ref = roofRef(section, face.edge);
+        return JSON.stringify([mat('roof', roofLevel(section), ref).uuid, ref.uv || null]);
+      };
+      const cuts = entry.sections.map(section => {
+        const cutters = supportedRoofCutters(section, ordered, floorCutters, ROOF_THICKNESS);
+        supportCuts.set(section, cutters); return cutters;
+      });
+      const mesh = roofMesh(entry.sections, { exclude: cuts, cutAll: true, materialKey: identity });
+      roofGroups.push({ ...entry, roofLayers: mesh, visibleRoof: mesh, exclude: cuts,
+        roofSidePlanes: entry.sections.map(planes), roofIdentity: identity, supported: true, group });
+    }
+    const combinedRoof = field => {
+      if (!supportedSections.length) return field === 'roofLayers' ? roofLayers : envelope;
+      const rows = roofGroups.map(g => ({ mesh: g[field], indices: g.indices }));
+      return { positions: new Float32Array(rows.flatMap(r => Array.from(r.mesh.positions))),
+        section: new Int32Array(rows.flatMap(r => Array.from(r.mesh.section, i => r.indices[i]))),
+        side: rows.flatMap(r => r.mesh.side), edge: new Int32Array(rows.flatMap(r => Array.from(r.mesh.edge))) };
+    };
+    const allEnvelope = combinedRoof('visibleRoof'), allRoofLayers = combinedRoof('roofLayers');
     const storeyRoofs = new Map(ordered.map(l => {
       const own = sections.filter(s => l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2);
       return [l.id, { sections: own,
@@ -1156,6 +1216,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         bounds.applyMatrix4(group.matrixWorld.clone().invert().multiply(object.matrixWorld));
       }
       records.get(key).box.union(bounds);
+      if (activeSurface && isSupported(activeSurface) && part.startsWith('roof-plane:')) tagPart(object, part);
       return object;
     };
     // Keep the original geometry for precise part hits after static batching.
@@ -1180,6 +1241,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       return { sign, outward: [sign * dy, -sign * dx] };
     };
     const roofHeight = (x, y) => heightAt(sections, x, y) ?? Infinity;
+    // Row 5: preserve the walled query exactly; only a lower covering
+    // supported roof above this floor may replace it with its underside.
+    const supportCap = (x, y, floor, currentHeight) => {
+      if (!supportedSections.length) return currentHeight;
+      const height = supportedRoofAbove(supportedSections, x, y, floor, currentHeight,
+        { cuts: section => supportCuts.get(section), thickness: ROOF_THICKNESS });
+      return height === null ? currentHeight : height - ROOF_THICKNESS;
+    };
     const supportingWalls = [];
     function wall(group, from, to, elevation, thickness, top, holes, exterior, role = null, clipRoof = true, profile = {}) {
       const { matrix, length, z } = wallBasis(from, to, elevation);
@@ -1552,21 +1621,23 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       geometry.computeVertexNormals(); return geometry;
     };
     // Retain the actual envelope geometry for diagnostics after it is merged.
-    roofSurfaces.set(b.id, { sections, positions: envelope.positions, section: envelope.section, side: envelope.side, edge: envelope.edge });
-    for (const {zone,panels} of solarZones(b,envelope)) {
+    roofSurfaces.set(b.id, { sections: allSections, positions: allEnvelope.positions, section: allEnvelope.section, side: allEnvelope.side, edge: allEnvelope.edge });
+    for (const {zone,panels} of solarZones(b,allEnvelope)) {
+      const roofGroup = zone.roof !== undefined && roofGroups.find(g => g.supported && g.sections.some(s => (s.roof || s.id) === zone.roof))?.group || local.roof;
       const positions=[];
       for(const rect of panels){const corners=solarRect(rect).map(p=>solarPoint(zone.plane,p,.15));
         for(const i of [0,1,2,0,2,3])positions.push(...corners[i]);}
       // A zero-count zone remains selectable and resizable in the editor.
       use(zone,'solar_zone',zone.id);
-      if(positions.length)mesh(local.roof,roofGeometry(positions),plain('solar_panel','#285888'));
+      if(positions.length)mesh(roofGroup,roofGeometry(positions),plain('solar_panel','#285888'));
       else if(showAnchors){const p=solarRect(zone.rect).map(p=>solarPoint(zone.plane,p,.15)),empty=[];
         for(const i of [0,1,2,0,2,3])empty.push(...p[i]);
-        const object=mesh(local.roof,roofGeometry(empty),plain('solar_zone','#285888')); object.material.transparent=true; object.material.opacity=.2;}
+        const object=mesh(roofGroup,roofGeometry(empty),plain('solar_zone','#285888')); object.material.transparent=true; object.material.opacity=.2;}
     }
+    for (const {sections, indices, roofLayers, visibleRoof, exclude, roofSidePlanes, roofIdentity, supported, group: roofGroup} of roofGroups) {
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
-      use(section, 'roof', `roof:${index}`);
+      use(section, 'roof', `roof:${indices[index]}`);
       const finishes = new Map(), triangleFinishes = [];
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) {
         const ref = roofRef(section, roofLayers.edge[t]), key = JSON.stringify([ref, ref.uv ? roofLayers.edge[t] : null]);
@@ -1575,9 +1646,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const finish = finishes.get(key), triangle = Array.from(roofLayers.positions.slice(t*9,t*9+9));
         finish.positions.push(...triangle); positions.push(...triangle); triangleFinishes.push(finish);
       }
-      const planePart = edge => `roof-plane:${section.roof || section.id || index}:${edge}`;
+      const planePart = edge => `roof-plane:${section.roof || section.id || indices[index]}:${edge}`;
       for (const finish of finishes.values()) if (finish.positions.length)
-        mesh(local.roof, roofGeometry(finish.positions), finish.material, null, null, finish.ref, planePart(finish.edge));
+        mesh(roofGroup, roofGeometry(finish.positions), finish.material, null, null, finish.ref, planePart(finish.edge));
       const block = section.block || section.rect;
       // Editor only: the live house view and wall panels never show the check marker (user,
       // 2026-11-14: "no idea why it shows on the panel").
@@ -1592,7 +1663,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const marker = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), ghostEdges);
         geometry.dispose();
         Object.assign(marker.userData, activePiece);
-        marker.computeLineDistances(); local.roof.add(marker);
+        marker.computeLineDistances(); roofGroup.add(marker);
       }
       const underside = [], edges = new Map(), trim = [];
       const below = p => [p[0], p[1], p[2] - ROOF_THICKNESS];
@@ -1615,22 +1686,22 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const shared = sections.some((other,j) => j !== index && roofSidePlanes[j].some(plane => {
           if (roofIdentity({section:j,edge:plane.edge}) === identity
               || !triangle.every(p => Math.abs(plane[0]*p[0]+plane[1]*p[1]+plane[2]-p[2]) < 1e-5)) return false;
-          const oh = other.overhang || 0, r = other.rect;
-          return [a,c,a.map((v,i)=>(v+c[i])/2)].every(p => p[0] >= r[0]-oh-1e-5 && p[0] <= r[2]+oh+1e-5
-            && p[1] >= r[1]-oh-1e-5 && p[1] <= r[3]+oh+1e-5
+          const r = roofBounds(other);
+          return [a,c,a.map((v,i)=>(v+c[i])/2)].every(p => p[0] >= r[0]-1e-5 && p[0] <= r[2]+1e-5
+            && p[1] >= r[1]-1e-5 && p[1] <= r[3]+1e-5
             && Math.abs(Math.min(...roofSidePlanes[j].map(q=>q[0]*p[0]+q[1]*p[1]+q[2]))-p[2]) < 1e-5);
         }));
         // A shared coplanar material seam has no exposed thickness. Two bands
         // here would occupy the same plane (and fight for double-sided looks).
         if (!shared) band(a, c, finish.stitching);
       }
-      if (underside.length) mesh(local.roof, roofGeometry(underside), kindMat('soffit', section), null, null, kindRef('soffit', section));
+      if (underside.length) mesh(roofGroup, roofGeometry(underside), kindMat('soffit', section), null, null, kindRef('soffit', section));
       // These outward-facing shell edges are the visible covering thickness.
       for (const finish of finishes.values()) if (finish.stitching.length)
-        mesh(local.roof, roofGeometry(finish.stitching), finish.material, null, null, finish.ref, planePart(finish.edge));
+        mesh(roofGroup, roofGeometry(finish.stitching), finish.material, null, null, finish.ref, planePart(finish.edge));
       // Only exposed section perimeters receive fascia / rake boards. Face
       // intersections and triangulation edges never grow decorative trim.
-      const oh = section.overhang || 0, rect = section.rect.map((v, i) => v + (i < 2 ? -oh : oh));
+      const rect = roofBounds(section);
       for (let t = 0; t < visibleRoof.section.length; t++) {
         if (visibleRoof.section[t] !== index) continue;
         const triangle = [0, 3, 6].map(i => Array.from(visibleRoof.positions.slice(t * 9 + i, t * 9 + i + 3)));
@@ -1650,7 +1721,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           }
         }
       }
-      if (trim.length) mesh(local.roof, roofGeometry(trim), kindMat('fascia', section), null, null, kindRef('fascia', section));
+      if (trim.length) mesh(roofGroup, roofGeometry(trim), kindMat('fascia', section), null, null, kindRef('fascia', section));
       const wallCover = (index, axis, sign, end) => supportingWalls.flatMap(({ w, l, outward, dx, dy, panels }) => {
         const s = sections[index], along = 1 - axis;
         if (!(l.elevation + 0.5 < s.plate && s.plate <= l.elevation + l.ceiling + 2) ||
@@ -1663,8 +1734,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           return direction > 0 ? poly : poly.reverse();
         });
       });
-      const steps = stepFaces(sections, { section: index, exclude, wallCover });
-      if (steps.length) mesh(local.roof, roofGeometry(steps), mat('siding'));
+      const steps = supported ? [] : stepFaces(sections, { section: index, exclude, wallCover });
+      if (steps.length) mesh(roofGroup, roofGeometry(steps), mat('siding'));
       // Clip standing seams to each face triangle, running down its gradient.
       // Adjacent triangles meet at the same seam spacing in plan feet.
       if (materialKit.materials.roof?.asset === 'standing_seam') for (let t = 0; t < positions.length; t += 9) {
@@ -1692,14 +1763,15 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const geometry = new THREE.BoxGeometry(0.065, 0.08, length);
           geometry.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), delta.normalize()));
           geometry.translate(...a.add(c).multiplyScalar(0.5).toArray());
-          mesh(local.roof, geometry, finish.material, null, null, finish.ref, planePart(finish.edge));
+          mesh(roofGroup, geometry, finish.material, null, null, finish.ref, planePart(finish.edge));
         }
       }
+    }
     }
     for (const gable of envelope.gables) {
       const section = sections[gable.section], [x0, y0, x1, y1] = section.rect;
       const alongX = section.ridge !== 'y';
-      use(section, 'roof', `roof:${gable.section}`);
+      use(section, 'roof', `roof:${sectionIndices[gable.section]}`);
       for (const end of (alongX ? [x0, x1] : [y0, y1])) {
         const axis = alongX ? 0 : 1;
         if (endKind(section, `${section.ridge}${end === section.rect[axis] ? 0 : 1}`) === 'hip') continue;
@@ -1747,6 +1819,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         }
       }
     }
+    {
+    const sections = allSections;
     for (const extension of b.roof?.extensions || []) {
       const section = sections.find(s => s.id === extension.section); if (!section) continue;
       use(section, 'roof', `roof:${sections.indexOf(section)}`);
@@ -1820,7 +1894,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         }
       }
     }
-    if (buildingHasGutters(b, sections)) {
+    }
+    if (buildingHasGutters(b, allSections)) {
+      const sections = allSections;
       const slice = gutters || sliceForBuilding(resolveGutterPlacement(plan, timing), b.id);
       const bAngle = (b.rotation || 0) * Math.PI / 180, cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
       const bx0 = b.position?.[0] || 0, by0 = b.position?.[1] || 0;
@@ -1869,7 +1945,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const gutterParts = buildGutterGeometry(b, base, slice.runs, slice.spouts, seg => {
         const owner = gutterOwner(seg);
         const matGutter = kindMat('gutter', owner), refGutter = kindRef('gutter', owner);
-        return { mat: matGutter, ref: refGutter, key: `${matGutter.uuid}:${JSON.stringify(refGutter?.uv || null)}`, seed: `${b.id}:gutter:${owner?.id || 'default'}` };
+        const supportedRoof = owner && isSupported(owner) ? owner.roof || owner.id : null;
+        const supportedLevel = supportedRoof ? roofLevel(owner).id : null;
+        return { mat: matGutter, ref: refGutter, key: `${matGutter.uuid}:${JSON.stringify(refGutter?.uv || null)}${supportedLevel ? ':supported:' + supportedLevel : ''}`,
+          seed: `${b.id}:gutter:${owner?.id || 'default'}`, supportedRoof, supportedLevel };
       });
       const gMs = performance.now() - gStart;
       _gutterPlacementStats.lastGeometryMs += gMs;
@@ -1877,12 +1956,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       for (const { geometry: gutterGeo, mat: matGutter, ref: refGutter, seed } of gutterParts) {
         if (refGutter?.uv) uvParts.push({ geometry: gutterGeo, material: matGutter, seed, offset: refGutter.uv, key: JSON.stringify([b.id, seed, refGutter.uv]) });
         else offsetSurfaceUvs(gutterGeo, matGutter, seed);
-        const gMesh = addMesh(local.roof, gutterGeo, matGutter);
+        const roofGroup = supportedLevels.get(gutterGeo.userData.supportedLevel) || local.roof;
+        const gMesh = addMesh(roofGroup, gutterGeo, matGutter);
         gMesh.userData.surfaceKind = 'gutter';
         gMesh.userData.buildingId = b.id;
         gMesh.userData.kind = 'roof';
         gMesh.userData.part = 'gutter';
         gMesh.userData.bakePart = 'gutter';
+        if (gutterGeo.userData.snapRanges) gMesh.userData.snapRanges = gutterGeo.userData.snapRanges;
       }
     }
     const porches = allPorches(b);
@@ -1984,8 +2065,9 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const roof = heightAt(sections, x, y);
         // Tuck into the roof shell, allowing for the triangulated surface's
         // small difference from the analytic height at overlapping sections.
-        if (roof !== null && roof !== undefined) return roof - ROOF_THICKNESS + 0.05;
-        return main && shed ? main.plate - (x - main.x1) * shed.pitch / 12 : first.elevation + first.ceiling;
+        const height = roof !== null && roof !== undefined ? roof - ROOF_THICKNESS + 0.05
+          : main && shed ? main.plate - (x - main.x1) * shed.pitch / 12 : first.elevation + first.ceiling;
+        return supportCap(x, y, floor, height);
       };
       for (const c of po.columns || []) {
         const top = topAt(...c.at);
@@ -2095,7 +2177,14 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (!l.device && !objectShown(l, showAnchors || !!editableLevel)) continue;
       use(l, 'light', `light:${index}`);
       const level = levels[l.level] || first;
-      const y = l.room === 'Porch' ? level.elevation + level.ceiling - 2 : Math.min(level.elevation + level.ceiling - 0.25, roofHeight(...l.at) - 0.5);
+      const height = l.room === 'Porch' ? level.elevation + level.ceiling - 2 : Math.min(level.elevation + level.ceiling - 0.25, roofHeight(...l.at) - 0.5);
+      let y = height;
+      if (supportedSections.length) {
+        const porch = l.room === 'Porch' && porches.find(po => (po.level || first.id) === level.id && contains(po.polygon, l.at));
+        const room = (b.rooms || []).find(r => r.level === level.id && r.polygon?.length >= 3 && contains(r.polygon, l.at));
+        const floor = porch ? porch.floor + (porchRoom(porch)?.floor_offset_ft || 0) : room ? roomFloor(level, room) : level.elevation;
+        y = supportCap(...l.at, floor, height);
+      }
       const size = l.kind === 'recessed' ? 0.6 : 1.4;
       const light = new THREE.RectAreaLight('#ffc98a', l.kind === 'recessed' ? 9 : 6, size, size);
       light.position.set(l.at[0], y, -l.at[1]); light.lookAt(l.at[0], y - 1, -l.at[1]);
@@ -2191,8 +2280,8 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const basis = wallBasis(wall.from, wall.to, box.min.y);
           geometry = boxGeometry(basis.length, size.y, wall.thickness + 0.2).translate(basis.length / 2, size.y / 2, 0).applyMatrix4(basis.matrix);
         } else if (data.kind === 'roof') {
-          const index = sections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
-          for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) positions.push(...roofLayers.positions.slice(t * 9, t * 9 + 9));
+          const index = allSections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
+          for (let t = 0; t < allRoofLayers.section.length; t++) if (allRoofLayers.section[t] === index) positions.push(...allRoofLayers.positions.slice(t * 9, t * 9 + 9));
           geometry = roofGeometry(positions);
         } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
         const proxy = new THREE.Mesh(geometry, pickMaterial);
@@ -2289,6 +2378,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   // before material batching loses their independent transforms.
   for (const b of plan.buildings || []) {
     const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
+    const supportedIds = new Set((b.roof?.sections || []).flatMap((s, i) => isSupported(s) ? [s.id || `roof:${i}`] : []));
     const positions = [], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
     const capture = (o, target, ceiling = false, space = domain) => {
       if (!o.isMesh || o.userData.ghost || o.userData.surfaceKind === 'gutter' || !o.geometry?.attributes.position) return;
@@ -2319,6 +2409,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     });
     for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
       for (const space of group.children) space.traverse(o => {
+        if (o.userData.kind === 'roof' && supportedIds.has(o.userData.pieceId)) capture(o, positions, false, space);
         if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
       });
     if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,

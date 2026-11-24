@@ -51,9 +51,10 @@
 // Their outlet.at is just below the gutter, not at the receiving surface: the
 // renderer must use the landing sampler to find the falling water's length.
 import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSampler } from './sky/eave_streams.js';
-import { roofMesh, endKind, heightAt, sectionHeight } from './twin_roof.js';
+import { roofMeshGroups, supportedRoofAbove, supportedRoofCutters, roofBounds, endKind, heightAt, sectionHeight } from './twin_roof.js';
+import { isSupported } from './roof_supports.js';
 import { allPorches } from './twin_generator.js';
-import { FASCIA } from './trim_dims.js';
+import { FASCIA, ROOF_THICKNESS } from './trim_dims.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { buildingBase, inPolygon, edgeDistance } from './twin_ground.js';
 import { pathOutline, pathSurfacePolygons } from './path_shapes.js';
@@ -231,6 +232,14 @@ function prepare(plan,provided){
     const ctx={plan,b,f,porches,levels,walls,mountWalls,openingWalls,regions,footprints:new Map(),info:new Map(),drops:new Map(),contexts};
     const cached=provided?.get(b.id),sections=cached?.sections||b.roof?.sections||[];
     ctx.sections=sections;ctx.awnings=awnings(ctx,sections);
+    ctx.hasSupported=sections.some(isSupported);
+    ctx.walledSections=ctx.hasSupported?sections.filter(s=>!isSupported(s)):sections;
+    if(ctx.hasSupported){
+      const polygons=new Map(levels.map(level=>[level.id,level.polys]));
+      const cuts=new Map(sections.filter(isSupported).map(section=>
+        [section,supportedRoofCutters(section,levels,polygons,ROOF_THICKNESS)]));
+      ctx.supportOptions={cuts:section=>cuts.get(section)||[],thickness:ROOF_THICKNESS};
+    }
     // Compute each union once for each distinct set of levels below an eave.
     ctx.footprint=(height,floor=-Infinity)=>{const below=levels.filter(l=>(l.elevation||0)<=height+EPS&&(l.elevation||0)>=floor-EPS);
       const eligiblePorches=porches.filter(p=>(p.floor||0)>=floor-EPS&&(p.floor||0)<=height+EPS);
@@ -252,7 +261,7 @@ export function eaveEdgeIndices(building, roof) {
     SIDES.some(side => (s.plane_edges ? s.plane_edges[side] : SIDES.indexOf(side)) === index && eaveSide(s, side)))) ? [index] : []);
 }
 function source(b,s,side){
-  const id=s.roof||s.id,edge=s.plane_edges? s.plane_edges[side]:SIDES.indexOf(side),r=b.roofs?.find(r=>r.id===id);
+  const id=s.roof||s.id,edge=s.plane_edges? s.plane_edges[side]:SIDES.indexOf(side),r=id==null?null:b.roofs?.find(r=>r.id===id);
   return {id,edge:Number.isInteger(edge)?edge:null,record:r?.edges?.[edge],roof:r};
 }
 
@@ -285,7 +294,7 @@ function awnings(ctx,sections){
 function snapshots(contexts,provided){
   const result=new Map();
   for(const {b,awnings:aw} of contexts.values()){
-    const cached=provided?.get(b.id),sections=cached?.sections||b.roof?.sections||[],base=cached?.positions?cached:roofMesh(sections);
+    const cached=provided?.get(b.id),sections=cached?.sections||b.roof?.sections||[],base=cached?.positions?cached:roofMeshGroups(sections);
     const eaveAttachments=cached?.eaveAttachments?.length?cached.eaveAttachments:aw.map(a=>({section:a.section,positions:a.positions}));
     result.set(b.id,{...base,...cached,sections,eaveAttachments,
       coverPositions:cached?.coverPositions||[...base.positions,...eaveAttachments.flatMap(a=>Array.from(a.positions))]});
@@ -320,7 +329,10 @@ function segmentInfo(ctx,segment){
       :{overhang:Math.max(0,...sections.map(s=>s.overhang||0)),sections};
   }else{
     const r=b.roofs?.find(r=>r.id===segment.roof),sections=ctx.sections.filter(s=>(s.roof||s.id)===segment.roof);
-    info={overhang:r?.overhang??sections[0]?.overhang??0,sections};
+    const section=sections.find(s=>SIDES.some(side=>source(b,s,side).edge===segment.edge));
+    const side=section&&SIDES.find(side=>source(b,section,side).edge===segment.edge);
+    info={overhang:r?.edges?.[segment.edge]?.overhang_ft
+      ??section?.edges?.[SIDES.indexOf(side)]?.overhang_ft??r?.overhang??sections[0]?.overhang??0,sections};
   }
   ctx.info.set(id,info);return info;
 }
@@ -331,8 +343,8 @@ function segmentOrigin(ctx,segment){
   // Recover section ownership for supplied/serialised porch runs without
   // adding provenance fields to the public segment contract.
   const p=ctx.f.local(mul(add(segment.a,segment.b),.5));
-  const sections=info.sections.map(s=>{const oh=s.overhang||0,[x0,y0,x1,y1]=s.rect;
-    const x=Math.max(x0-oh,Math.min(x1+oh,p[0])),y=Math.max(y0-oh,Math.min(y1+oh,p[1]));
+  const sections=info.sections.map(s=>{const [x0,y0,x1,y1]=roofBounds(s);
+    const x=Math.max(x0,Math.min(x1,p[0])),y=Math.max(y0,Math.min(y1,p[1]));
     return {s,gap:Math.hypot(x-p[0],y-p[1],heightAt([s],x,y)-p[2])};})
     .sort((a,b)=>a.gap-b.gap||ctx.sections.indexOf(a.s)-ctx.sections.indexOf(b.s));
   return sections.length?`section:${ctx.sections.indexOf(sections[0].s)}`:segment;
@@ -372,7 +384,7 @@ export function gutterRuns(plan={},roofs=null,prebuilt=null){
   // Flat roofs have no downhill stream edge. Explicitly enabled perimeter
   // gutters still use the same exposure clip, without changing stream rules.
   for(const f of frames)for(const [section,s] of surfaces.get(f.b.id).sections.entries())if(s.kind==='flat'){
-    const [x0,y0,x1,y1]=s.rect,oh=s.overhang||0,p=[[x0-oh,y0-oh,s.plate],[x1+oh,y0-oh,s.plate],[x1+oh,y1+oh,s.plate],[x0-oh,y1+oh,s.plate]];
+    const [x0,y0,x1,y1]=roofBounds(s),p=[[x0,y0,s.plate],[x1,y0,s.plate],[x1,y1,s.plate],[x0,y1,s.plate]];
     SIDES.forEach((side,i)=>{const n=[[0,-1],[1,0],[0,1],[-1,0]][i],tip=f.world([...n,0]),origin=f.world([0,0,0]);
       flat.push({a:f.world(p[i]),b:f.world(p[(i+1)%4]),building:f.b.id,section,side,kind:'flat',gridStart:0,
         outward:[tip[0]-origin[0],0,tip[2]-origin[2]]});});
@@ -478,7 +490,11 @@ function sampleAt(ctx,at){
       const h=(c.f.base+z)*FT;
       if(h>=at[1]-.005||h<=hit.height)continue;
       if(!best||h>best.height){
-        const eaveZ=s.plate-(s.overhang||0)*((s.pitch||0)/12);
+        const bounds=roofBounds(s);
+        const eaveZ=s.edges?.some(edge=>edge?.overhang_ft!==undefined)
+          ?Math.min(...[[bounds[0],bounds[1]],[bounds[2],bounds[1]],[bounds[2],bounds[3]],[bounds[0],bounds[3]]]
+            .map(point=>sectionHeight(s,...point)))
+          :s.plate-(s.overhang||0)*((s.pitch||0)/12);
         best={height:h,kind:'roof',roofEave:(c.f.base+eaveZ)*FT};
       }
     }
@@ -529,12 +545,22 @@ function rimExitDistance(poly,origin,dir,maxDist,backDist){
 }
 function mountAt(ctx,segment,top,corner){
   const p=ctx.f.local(top),oh=segmentInfo(ctx,segment).overhang,postClear=GUTTER.spoutIn[0]/24+.02;
+  const roof=ctx.hasSupported&&segment.roof!=null
+    ?ctx.b.roofs?.find(r=>r.id===segment.roof)||ctx.sections.find(s=>(s.roof||s.id)===segment.roof):null;
+  const supported=!!roof&&isSupported(roof);
+  const postTop=c=>{
+    const ceiling=heightAt(ctx.walledSections,...c.at)??ctx.b.levels?.[0]?.ceiling??0;
+    if(!ctx.hasSupported)return ceiling;
+    const surface=supportedRoofAbove(ctx.sections,...c.at,c.floor,ceiling,ctx.supportOptions);
+    return surface===null?ceiling:surface-ROOF_THICKNESS;
+  };
   const posts=ctx.porches.flatMap(po=>(po.columns||[]).filter(c=>c.at&&pointNearPoly(po.polygon,c.at,.25))
       .map(c=>({at:c.at,floor:po.floor||0,size:c.size||.5,porch:po})))
     .filter(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
-      &&(heightAt(ctx.b.roof?.sections||[],...c.at)??ctx.b.levels?.[0]?.ceiling??0)>=p[2]-.75)
+      &&postTop(c)>=p[2]-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
-  const candidates=ctx.mountWalls.filter(w=>w.floor<p[2]&&w.top>=p[2]-.75&&oh<=GUTTER.maxOverhangFt
+  const candidates=ctx.mountWalls.filter(w=>(!supported||w.id===roof.host?.wall)
+      &&w.floor<p[2]&&w.top>=p[2]-.75&&oh<=GUTTER.maxOverhangFt
       &&p[0]>=Math.min(w.from[0],w.to[0])-oh-1-EPS&&p[0]<=Math.max(w.from[0],w.to[0])+oh+1+EPS
       &&p[1]>=Math.min(w.from[1],w.to[1])-oh-1-EPS&&p[1]<=Math.max(w.from[1],w.to[1])+oh+1+EPS)
     .map(w=>({w,at:projection(p.slice(0,2),w.from,w.to).at,floor:w.floor,top:w.top,normal:w.normal}))

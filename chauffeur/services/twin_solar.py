@@ -8,6 +8,7 @@ from functools import lru_cache
 import json
 import math
 from services.twin_roof_issues import _planes
+from services.twin_model_supports import is_supported
 
 EPS = 1e-7
 DEFAULTS = dict(panel_width=65/12, panel_height=39/12, orientation='portrait',
@@ -398,7 +399,9 @@ def _cached_faces(key):
     for index, section in enumerate(sections):
         planes = list(dict.fromkeys(_planes(section)))
         h = section.get('overhang', 0)
-        rect = [v+(-h if i < 2 else h) for i, v in enumerate(section['rect'])]
+        edges = section.get('edges', [])
+        overhangs = [edges[i].get('overhang_ft', h) if i < len(edges) else h for i in (3, 0, 1, 2)]
+        rect = [v+(-overhangs[i] if i < 2 else overhangs[i]) for i, v in enumerate(section['rect'])]
         for plane in planes:
             poly = rectangle(rect)
             for other in planes:
@@ -412,6 +415,12 @@ def _cached_faces(key):
         pieces = [face['polygon']]
         for other in all_faces:
             if other['section'] == face['section']:
+                continue
+            current, candidate = sections[face['section']], sections[other['section']]
+            # Walled roofs share today's envelope. Each supported roof (and
+            # its dormers) has its own, even beneath or above the house roof.
+            if ((is_supported(current) or is_supported(candidate)) and
+                    current.get('roof', current['id']) != candidate.get('roof', candidate['id'])):
                 continue
             same = all(abs(a-b) < EPS for a, b in zip(other['plane'], face['plane']))
             if same and other['section'] > face['section']:

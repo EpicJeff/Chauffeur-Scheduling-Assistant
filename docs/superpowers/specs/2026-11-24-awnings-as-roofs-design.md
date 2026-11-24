@@ -116,9 +116,9 @@ The places that assume walls today, with the fix each needs, from a code map (li
 | 2 | Step faces, 1654, `twin_roof.js` 244 | Skip pairs with a supported roof |
 | 3 | Gable fill, 1699 | Skip supported roofs |
 | 4 | Single-valued envelope, `twin_roof.js` 83, 324; generator 1123, 1634 | Build one envelope per group and concatenate, so a roof under another keeps its eaves and fascia |
-| 5 | Heights by maximum, generator 1983, 2098; `gutters.js` 537 | Lowest roof above the floor |
+| 5 | Heights by maximum, generator 1983, 2098; `gutters.js` 537 | Preserve today's walled height; where covered, override with the lowest supported roof's underside above the floor and below that height |
 | 6 | Ceilings, generator 1952 | Filter supported roofs |
-| 7 | Floor cutters, generator 1119 | Cut supported roofs by every outline |
+| 7 | Floor cutters, generator 1119 | Cut supported roofs only by outlines whose storey's occupied volume or floor structure overlaps the slab's height range |
 | 8 | Own-storey tests, generator 1126, 1656; `twin_model_bridge.py` 372; `twin_model_ops.py` 1517; `twin_build.py` 1359 | Use the stored level |
 | 9 | Wall attachment, `twin_model_roofs.py` 201; ops 1532, 2379 | Store the host wall; move the whole roof; flag a deleted wall |
 | 10 | Joint snap and report, `twin_joints.py` 221, 552 | Skip supported roofs |
@@ -128,6 +128,32 @@ The places that assume walls today, with the fix each needs, from a code map (li
 | 14 | Solar clipping, `twin_solar.py` 272, 390 | Use the supported roof's own envelope |
 | 15 | Beam and gable trim, generator 1714 | Key on walled roofs |
 | 16 | Buildings with no walls, `twin_ground.js` 75 | Footprint from the supported roof |
+
+**Row 5, owner clarification (2026-11-24):** the walled rule wins. Porch posts,
+screens, columns and porch lights keep today's upper-envelope height query on
+walled roofs. Room lights and gutter posts also compute their existing walled
+result first. Only where a supported roof covers the point, lies above the
+relevant floor and below that existing height, use the lowest such roof's
+underside instead. No supported roof means no height change; the owner's
+walled golden hash must remain equal. "Lowest roof above the floor" in this
+row applies to supported roofs only. Coverage means the drawn, cut footprint;
+an indoor lamp or recessed post under a cut-away part is unaffected. Ghost and
+proposal roofs cannot cap real fixtures, and the underside must be above the floor.
+
+**Row 7, owner correction (2026-11-24):** an outline below an awning does not
+cut it unless that storey reaches the slab. A second-storey awning over a
+one-storey wing therefore draws in full and remains selectable. The same eligible
+cutters govern drawing and the row 5 coverage query.
+
+**Rain paths, owner ruling R1 (2026-11-24):** supported roofs participate in
+rain cover and landing. Where an awning intersects a walled gutter's rain path,
+that run may split and a downspout may move or land on the awning. Walled gutters
+elsewhere remain unchanged. This is the same rain behavior as legacy awnings.
+
+Supported roof envelopes and picks retain each piece's identity, while their
+drawn geometry merges by building, stored level and material. With the existing
+shared finishes, one, two or three awnings cost at most three draws per level
+with awnings and zero on levels without them. Per-piece hide and bake ranges survive batching.
 
 ## Landings
 

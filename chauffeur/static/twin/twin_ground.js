@@ -1,3 +1,5 @@
+import { isSupported } from './roof_supports.js';
+
 // Lot coordinates and returned heights are feet relative to datum zero.
 export function edgeDistance(p, a, b) {
   const dx = b[0] - a[0], dy = b[1] - a[1], d = dx * dx + dy * dy;
@@ -77,6 +79,10 @@ export function buildingFootprint(b) {
   if (first?.outline?.length >= 3) return first.outline;
   const points = (b.rooms || []).filter(r => r.level === first?.id).flatMap(r => r.polygon || [])
     .concat((b.walls || []).flatMap(w => w.from ? [w.from, w.to] : []));
+  if (!points.length) for (const s of b.roof?.sections || []) if (isSupported(s)) {
+    const [x,y,X,Y] = s.rect;
+    points.push([x,y],[X,y],[X,Y],[x,Y]);
+  }
   if (!points.length) return [];
   const lo = [0, 1].map(i => Math.min(...points.map(p => p[i]))), hi = [0, 1].map(i => Math.max(...points.map(p => p[i])));
   return [[lo[0], lo[1]], [hi[0], lo[1]], [hi[0], hi[1]], [lo[0], hi[1]]];

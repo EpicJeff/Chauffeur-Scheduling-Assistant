@@ -1,7 +1,7 @@
 // Roof envelope -> exposed downhill edges -> immutable GPU instances. All plan
 // queries and downward rays happen on rebuild, never in update(). No lit patch.
 import * as THREE from 'three';
-import { roofMesh, planes, sectionHeight } from '../twin_roof.js';
+import { roofMeshGroups, roofBounds, planes, sectionHeight } from '../twin_roof.js';
 import { buildingBase, groundAt, inPolygon, segmentIntersection, poolDatum } from '../twin_ground.js';
 import { allPorches } from '../twin_generator.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
@@ -44,7 +44,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
   for(const frame of frames){
     const {b}=frame,sections=roofs?.get(b.id)?.sections||b.roof?.sections||[];
     if(!sections.length)continue;
-    const envelope=roofs?.get(b.id)||{...roofMesh(sections),sections},groups=new Map();
+    const envelope=roofs?.get(b.id)||{...roofMeshGroups(sections),sections},groups=new Map();
     for(let t=0;t<envelope.section.length;t++){
       const index=envelope.section[t],s=sections[index];
       if(!s||s.kind==='flat')continue;
@@ -55,7 +55,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
         const a=triangle[i],d=triangle[(i+1)%3];
         if(Math.abs(a[2]-d[2])>EPS)continue; // rakes / hips / valleys
         for(let axis=0;axis<2;axis++)for(const sign of [-1,1]){
-          const end=s.rect[axis+(sign>0?2:0)]+sign*(s.overhang||0),along=1-axis;
+          const end=roofBounds(s)[axis+(sign>0?2:0)],along=1-axis;
           if(Math.abs(a[axis]-end)>EPS||Math.abs(d[axis]-end)>EPS||face[axis]*sign>=-EPS)continue;
           const lo=Math.min(a[along],d[along]),hi=Math.max(a[along],d[along]);
           if(hi-lo<EPS)continue;
@@ -120,7 +120,7 @@ export function createEaveClipper(frames,roofs) {
   // interval. One midpoint for an entire edge misses partial abutments.
   const roofsWorld=[],walls=[];
   for(const frame of frames){
-    const snapshot=roofs?.get(frame.b.id)||roofMesh(frame.b.roof?.sections||[]),positions=snapshot.coverPositions||snapshot.positions;
+    const snapshot=roofs?.get(frame.b.id)||roofMeshGroups(frame.b.roof?.sections||[]),positions=snapshot.coverPositions||snapshot.positions;
     for(let t=0;t<positions.length;t+=9){
       const p=[0,3,6].map(i=>frame.world(Array.from(positions.slice(t+i,t+i+3))));
       roofsWorld.push({polygon:p.map(v=>[v[0],v[2]]),p:p.map(v=>new THREE.Vector3(...v)),top:Math.max(...p.map(v=>v[1]))});
@@ -169,7 +169,7 @@ export function createEaveLandingSampler(plan={},roofs=new Map(),{roofDetails=fa
   const caps=lazyCaps?null:collectCapSurfaces(plan);
   const capsAt=lazyCaps?createCapSurfaceIndex(plan):()=>caps;
   for(const b of plan.buildings||[]){
-    const f=buildingFrame(plan,b),roof=roofs?.get(b.id)||roofMesh(b.roof?.sections||[]);
+    const f=buildingFrame(plan,b),roof=roofs?.get(b.id)||roofMeshGroups(b.roof?.sections||[]);
     // section[] indexes positions[], never the renderer's independently
     // ordered coverPositions. Placement uses that canonical mesh plus known
     // attachment geometry; ordinary stream rays retain their existing cover.
@@ -305,7 +305,7 @@ function buildCatchmentContexts(plan, roofs) {
   for (const b of plan.buildings || []) {
     const frame = buildingFrame(plan, b);
     const sections = roofs?.get(b.id)?.sections || b.roof?.sections || [];
-    const envelope = roofs?.get(b.id) || (sections.length ? { ...roofMesh(sections), sections } : null);
+    const envelope = roofs?.get(b.id) || (sections.length ? { ...roofMeshGroups(sections), sections } : null);
     const tris = [];
     let wx0 = Infinity, wx1 = -Infinity, wz0 = Infinity, wz1 = -Infinity, wy0 = Infinity, wy1 = -Infinity;
     const addTri = (a, bPt, c, meta) => {
@@ -414,9 +414,9 @@ function analyticEaveRunFt(ctx, e, dirX, dirY) {
   if (e.kind !== 'attachment') {
     const s = ctx?.sections?.[e.section];
     if (s && s.kind !== 'flat' && s.rect?.length === 4) {
-      const ov = s.overhang || 0;
+      const bounds = roofBounds(s);
       const axis = e.side === 'x0' || e.side === 'x1' ? 0 : 1;
-      const span = Math.abs(s.rect[axis + 2] - s.rect[axis]) + 2 * ov;
+      const span = Math.abs(bounds[axis + 2] - bounds[axis]);
       if (span > EPS) {
         const half = s.kind === 'hip' || (s.kind === 'gable' && ((axis === 1 && s.ridge !== 'y') || (axis === 0 && s.ridge === 'y')));
         return Math.max(1, half ? span * .5 : span);

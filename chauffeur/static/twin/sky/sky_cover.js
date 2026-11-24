@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildingBase, buildingFootprint, inPolygon, edgeDistance } from '../twin_ground.js';
-import { roofMesh } from '../twin_roof.js';
+import { roofMeshGroups } from '../twin_roof.js';
 
 const FT=.3048, EDGE=.6, EPS=.002;
 export const HEIGHT_NONE=-1e4;
@@ -32,7 +32,7 @@ export function createSkyCover(plan={},roofs=new Map()) {
       z0:Math.min(...corners.map(p=>p[2])),z1:Math.max(...corners.map(p=>p[2])),
       porches:(b.rooms||[]).filter(r=>r.kind==='porch').map(r=>r.polygon)});
     corners.forEach(include);
-    const surfaces=roofs.get(b.id),roofPositions=surfaces?.coverPositions||roofMesh(b.roof?.sections||[]).positions;
+    const surfaces=roofs.get(b.id),roofPositions=surfaces?.coverPositions||roofMeshGroups(b.roof?.sections||[]).positions;
     staticParts.push([b.id,pos,angle,base,footprint,top,buildings.at(-1).porches,reference(roofPositions)]);
     dynamicParts.push(surfaces?.slabPositions?reference(surfaces.slabPositions):[levels,(b.rooms||[]).map(r=>[r.level,r.kind,r.state,r.polygon,r.floor_offset_ft])]);
     for(const [positions,roof] of [[roofPositions,true],[surfaces?.slabPositions||[],false]])for(let i=0;i<positions.length;i+=9) {

@@ -22,7 +22,7 @@ from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_dra
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
                       twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
 from services.twin_site_shapes import pieces as site_pieces
-from services.twin_model_supports import CHOICE_FIELDS, carry_fields
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields, is_supported
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -812,6 +812,8 @@ def _centroid(points):
 
 
 def _matches(a, b, kind, house, *, original=False):
+    if kind == 'roof' and is_supported(a) != is_supported(b):
+        return a['id'] == b['id']
     def level(p):
         if kind == 'opening':
             if 'wall' in p:
@@ -930,7 +932,11 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
             merged.append(deepcopy(piece))
     if step and (step.get('reread') or build.get('existing')):
         removed = {step['id'], *step.get('removed_steps', [])}
-        merged = [p for p in merged if protected(p) or p['id'] in kept
+        # Block/floor reads do not own independent awnings. A roof read (even
+        # one with no awnings left), or an explicit supported-roof read, does.
+        keep_supports = (kind == 'roof' and step.get('kind') != 'roof'
+                         and not any(is_supported(p) for p in incoming))
+        merged = [p for p in merged if protected(p) or (keep_supports and is_supported(p)) or p['id'] in kept
                   or p.get('src', {}).get('step') not in removed]
     return merged
 
@@ -1230,8 +1236,8 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     old_sections = [s['id'] for s in roof.get('sections', [])]
     # A person's gable window protects its old carrier in _merge_list. Move
     # the window first so the first block rebuild can retire that old roof.
-    replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person')
-                and any(t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
+    replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person') and not is_supported(s)
+                and any(not is_supported(t) and t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
                 and not any(_matches(t, s, 'roof', house) for t in sections)]
     incoming_ids = [s['id'] for s in sections]
     _remap_roof_attachments(house['openings'], house['roof'].get('extensions', []), replaced, sections)
@@ -1359,6 +1365,8 @@ def _check_draft(house):
         if i == 0:
             first_failed = level_failed or (bool(walls) and all(w.get('state') == 'ghost' for w in walls))
     for section in house['roof']['sections']:
+        if is_supported(section):
+            continue
         bearing = [l for l in levels if l['elevation'] + .5 < section['plate']
                    <= l['elevation'] + l['ceiling'] + 2]
         corners = _corners(section['rect'])
@@ -1498,7 +1506,7 @@ def _images_context(build, step, sheets=None):
         house = _house(_base(plan, build), build)
         context['settled'] = {'outline': deepcopy(next((l.get('outline', []) for l in house['levels']
                                                        if l['id'] == step['level']), []))}
-        sections = house['roof']['sections']
+        sections = [s for s in house['roof']['sections'] if not is_supported(s)]
         if sections:
             bounds = _bounds([p for s in sections for p in _corners(s['rect'])])
             def where(s):
@@ -2178,14 +2186,14 @@ def _read_roof_blocks(build, step, reader, ticket, result):
 
         evidence = {}
         for block in blocks:
-            source = max((s for s in sections if not porch_roof(s)
+            source = max((s for s in sections if not is_supported(s) and not porch_roof(s)
                           and _roof_overlap(block['rect'], s['rect']) > 0),
                          key=lambda s: _roof_overlap(block['rect'], s['rect']), default=None)
             plan = {k: deepcopy(source[k]) for k in ('ridge', 'pitch') if k in source} if source else {}
             plan['dormers'] = deepcopy(source.get('dormers', [])) if source else []
             # Cross gables already drawn on this roof carry their plan position.
             for section in sections:
-                if (source and section is not source and section.get('kind') == 'gable'
+                if (source and section is not source and not is_supported(section) and section.get('kind') == 'gable'
                         and not porch_roof(section)
                         and section.get('ridge') != source.get('ridge')
                         and abs(section['plate'] - source['plate']) < .5
@@ -2201,8 +2209,9 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                     plan['dormers'].append({'side': side, 'centre': (r[axis] + r[axis + 2]) / 2,
                                             'width': r[axis + 2] - r[axis]})
             evidence[block['id']] = plan
-        choices = deepcopy(twin_plan._roof_entries(house['roof'], 'choices'))
-        protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
+        choices = deepcopy([c for c in twin_plan._roof_entries(house['roof'], 'choices') if not is_supported(c)])
+        protected = [s for s in house['roof']['sections']
+                     if s.get('src', {}).get('person') and not is_supported(s)]
         legacy_coverage = []
         for section in protected:
             block_rect = section.get('block')
@@ -2232,18 +2241,18 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                             'rect': deepcopy(block['rect']), 'src': {'person': True}})
         derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
 
-        protected_sources = [s for s in sections if any(
+        protected_sources = [s for s in sections if not is_supported(s) and any(
             _near_geometry({'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
             for p in protected)]
         # Invalid read pieces remain visible as diagnostic ghosts. They must
         # not supply a footprint for new, apparently settled roofs.
-        failed_sources = [s for s in sections if any(
-            p.get('state') == 'ghost' and _near_geometry(
+        failed_sources = [s for s in sections if not is_supported(s) and any(
+            not is_supported(p) and p.get('state') == 'ghost' and _near_geometry(
                 {'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
             for p in house['roof']['sections'])]
         for source in failed_sources:
             source.update(state='ghost', why='This roof section does not meet its bearing walls within 3 ft.')
-        kept = [s for s in sections if s.get('src', {}).get('person') or s in protected_sources
+        kept = [s for s in sections if is_supported(s) or s.get('src', {}).get('person') or s in protected_sources
                 or s in failed_sources or porch_roof(s)]
         # Use the person's carrier, including its level and form. Keeping the
         # raw draft carrier here can create a second roof beside a block roof

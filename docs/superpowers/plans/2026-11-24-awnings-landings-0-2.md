@@ -124,7 +124,9 @@ assert.ok(awningMesh(withAwning));                                   // and it d
 ```
 
 - [ ] **Step 2: Run.** Expected: FAIL (walls rise to the awning).
-- [ ] **Step 3: Implement** by filtering `isSupported` sections at each listed line. `Math.max` heights take the lowest roof above the floor. A supported roof is cut by every floor outline, not only outlines above it.
+- [ ] **Step 3: Implement** by filtering `isSupported` sections at each listed line. Preserve today's walled upper-envelope heights; cap only at the lowest covering supported roof underside above the floor and below that result. Coverage uses its drawn, cut footprint. A supported roof is cut only by outlines whose storey's occupied volume or floor structure overlaps the slab's height range, so an upper awning over a lower wing remains drawn and pickable. Keep per-roof envelopes and picks, but batch by building, stored level and material (at most three draws per awning-bearing level with shared existing finishes).
+
+- **Owner rulings, fix round 1 (2026-11-24):** row 7's earlier "every outline" rule is superseded by the storey/slab overlap rule above. A supported roof can change a walled gutter only where it intersects that gutter's rain path: a run may split and a spout may move or land on the awning. Other walled gutters remain byte-equal to `0ec59a62`. Generated awnings use ordinary roof reread identity/person-field and pruning rules; a supported roof lapping a reread block is retained. Height caps, drawing and gutters share eligible floor cutters.
 - [ ] **Step 4: Run** the tests, Task 1's golden test and its owner export, `test_twin_gutters_js.py`, `test_twin_gutter_geometry_js.py`, `test_twin_eave_streams_js.py`, `test_twin_solar_conduit_js.py`. Expected: PASS, golden hash unchanged.
 - [ ] **Step 5: Report.**
 

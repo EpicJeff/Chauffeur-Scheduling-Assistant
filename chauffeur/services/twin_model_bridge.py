@@ -6,7 +6,7 @@ import math
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_plan
 from services import twin_porches
-from services.twin_model_supports import ROOF_FIELDS, CHOICE_FIELDS, carry_fields, edge_pairs
+from services.twin_model_supports import ROOF_FIELDS, CHOICE_FIELDS, carry_fields, edge_pairs, is_supported
 
 
 _EPS = 1e-6
@@ -408,8 +408,10 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
     for section in sections:
         if section.get('dormer_of') or section.get('state') == 'proposal':
             continue
+        supported = is_supported(old_roofs.get(section['id'], section))
         choice = next((c for c in flat_roof.get('choices', [])
-                       if all(abs(a - b) <= 1 for a, b in zip(section['rect'], c['rect']))), None)
+                       if is_supported(c) == supported
+                       and all(abs(a - b) <= 1 for a, b in zip(section['rect'], c['rect']))), None)
         if choice is not None and not migration:
             # A person's block choice that arrives in the flat plan is applied
             # to its section. On migration the section already holds it (R14).
@@ -421,6 +423,8 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
         old = old_roofs.get(roof['id'])
         if old is not None:
             carry_fields(old, roof, overwrite=True)
+            if is_supported(roof) and not roof.get('level') and old.get('level'):
+                roof['level'] = old['level']
             if choice is not None:
                 for key in ROOF_FIELDS:
                     if key in choice:
@@ -430,11 +434,14 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
                         edge['overhang_ft'] = deepcopy(chosen['overhang_ft'])
         roof.setdefault('overhang', 1)
         if not roof.get('level'):
-            roof['level'] = _bearing_level(building, roof['plate'])
+            roof['level'] = (min(building['levels'], key=lambda l: l['elevation'])['id']
+                             if is_supported(roof) and building['levels']
+                             else _bearing_level(building, roof['plate']))
         if choice is not None:
             roof['src'] = {**roof.get('src', {}), 'person': True}
-        against = next((p for p in pinned if p['id'] == roof['id'] or twin_model._overlap(p['area'], roof['area'])
-                        >= twin_model._area(roof['area']) * .5), None)
+        against = next((p for p in pinned if p['id'] == roof['id'] or
+                        (not is_supported(p) and not is_supported(roof)
+                         and twin_model._overlap(p['area'], roof['area']) >= twin_model._area(roof['area']) * .5)), None)
         if against is not None:
             if choice is None or migration or _roof_form(roof) == _roof_form(against):
                 if _roof_form(roof) != _roof_form(against):
@@ -473,7 +480,7 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
         parent = next((r for r in building['roofs'] if r['id'] == known), None)
         if parent is None:
             gaps = [(max(abs(a - b) for a, b in zip(twin_model._bounds(r['area']), target)), r['id'], r)
-                    for r in building['roofs']]
+                    for r in building['roofs'] if is_supported(r) == is_supported(section)]
             parent = min((g for g in gaps if g[0] <= 1), default=(None, None, None), key=lambda g: g[:2])[2]
         if parent is not None:
             try:

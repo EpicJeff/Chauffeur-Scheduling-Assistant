@@ -6,6 +6,8 @@ import { guessEnergy, chargingCar, flowReading, watts, energyBalance } from './e
 import { energyCheck, renderEnergyCheck } from './energy_check.js';
 import { energyTopology, energyPlacementLegend, energyAnchors, worldPoint, flowCurve, flowRoute, flowApex, flowFans, lotPoint } from './energy_geometry.js';
 import { inPolygon, buildingFootprint } from '../twin_ground.js';
+import { solarPlanes, solarPoint } from '../twin_solar.js';
+import { isSupported } from '../roof_supports.js';
 
 import { createConduitRouter } from './solar_conduit.js';
 
@@ -79,6 +81,29 @@ export function flowLabelPositions(entries, rect) {
 // the yard (null: always shown). Visualizations hide with the geometry they are tied to.
 export function energyPlace(plan, p) {
   for (const b of plan?.buildings || []) {
+    // Supported roofs belong to their saved floor even above or outside the
+    // building's ordinary roof. Their independent solar envelope supplies the
+    // same surface used by panels, rather than the wall/storey envelope.
+    if ((b.roof?.sections || []).some(isSupported)) {
+      let nearest=null;
+      for (const surface of solarPlanes(b)) {
+        const section=b.roof.sections.find(s=>(s.roof||s.id)===surface.roof);
+        if (!section) continue;
+        for (const triangle of surface.triangles) {
+          const points=triangle.map(uv=>lotPoint(b,solarPoint(surface.plane,uv),plan));
+          if (!inPolygon(points,p[0],p[1])) continue;
+          const [a,c,d]=points,den=(c[1]-d[1])*(a[0]-d[0])+(d[0]-c[0])*(a[1]-d[1]);
+          if (Math.abs(den)<1e-9) continue;
+          const u=((c[1]-d[1])*(p[0]-d[0])+(d[0]-c[0])*(p[1]-d[1]))/den;
+          const v=((d[1]-a[1])*(p[0]-d[0])+(a[0]-d[0])*(p[1]-d[1]))/den;
+          const distance=Math.abs(p[2]-(u*a[2]+v*c[2]+(1-u-v)*d[2]));
+          if (distance<=2&&(!nearest||distance<nearest.distance-1e-9
+              ||Math.abs(distance-nearest.distance)<=1e-9&&!isSupported(section))) nearest={section,distance};
+        }
+      }
+      if (nearest&&isSupported(nearest.section))
+        return nearest.section.level?{level:b.id+':'+nearest.section.level}:{roof:b.id};
+    }
     const outline = buildingFootprint(b).map(q => lotPoint(b, [q[0], q[1], 0], plan));
     if (outline.length < 3) continue;
     const near = inPolygon(outline, p[0], p[1]) || outline.some((a, i) => {
