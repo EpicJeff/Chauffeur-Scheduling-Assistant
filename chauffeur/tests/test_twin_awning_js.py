@@ -90,7 +90,8 @@ for (const [key, objects] of out.pieces) for (const root of objects) {
     // The roof is one big merged mesh; keep it small by sending only vertices under 10.2 ft.
     const small = verts.length < 6000;
     const kept = small ? verts : verts.filter(p => p[2] < 10.2);
-    if (kept.length) meshes.push({ key, material: o.material && o.material.name, full: small, verts: kept });
+    if (kept.length) meshes.push({ key, material: o.material && o.material.name,
+      solid: !o.material?.transparent || o.material.opacity >= 1, full: small, verts: kept });
   });
 }
 console.log(JSON.stringify({ meshes, notes: out.notes === undefined ? null : out.notes }));
@@ -127,7 +128,7 @@ def _plan(awning, bay=False):
 
 
 def _awning(**kw):
-    a = {'kind': 'awning', 'section': 'main', 'x0': 17.15, 'x1': 30.14, 'depth': 4, 'pitch': 2,
+    a = {'id': 'shade', 'kind': 'awning', 'section': 'main', 'x0': 17.15, 'x1': 30.14, 'depth': 4, 'pitch': 2,
          'eave': 8.75, 'brackets': 2}
     a.update(kw)
     return a
@@ -161,7 +162,7 @@ def top_surface(out):
     surface, so the roof-material top-surface vertices under 9.8 ft are the
     awning's (and its seam ribs, which share the slope).
     """
-    return [p for m in out['meshes'] if m['key'] == 'poolhouse:main' and m['material'] == 'roof'
+    return [p for m in out['meshes'] if m['key'] == 'poolhouse:shade' and m['material'] == 'roof' and m['solid']
             for p in m['verts'] if p[3] > 0.9 and p[2] < 9.8]
 
 
@@ -169,7 +170,7 @@ def bracket_boxes(out):
     """Trim-material meshes chunked back into 24-vertex boxes (merging keeps box order)."""
     boxes = []
     for m in out['meshes']:
-        if m['key'] == 'poolhouse:main' and m['material'] == 'trim' and m['full'] and len(m['verts']) % 24 == 0:
+        if m['key'] == 'poolhouse:shade' and m['material'] == 'trim' and m['solid'] and m['full'] and len(m['verts']) % 24 == 0:
             boxes += [m['verts'][i:i + 24] for i in range(0, len(m['verts']), 24)]
     return boxes
 
@@ -235,9 +236,12 @@ def scenario_awning_side_wall():
 
 def scenario_awning_without_wall_is_skipped():
     awning = _awning(x0=41, x1=50)  # span midpoint is 10+ ft from every wall
-    out = build(_plan(awning))
-    check(out['notes'] is not None and 'extension_skipped' in json.dumps(out['notes']),
-          ('out.notes must record extension_skipped', out['notes']))
+    plan = _plan(awning)
+    b = plan['buildings'][0]
+    shade = next(s for s in b['roof']['sections'] if s['id'] == 'shade')
+    check(shade.get('state') == 'ghost' and shade.get('why'), ('unhosted awning remains fixable', shade))
+    check(any(f.get('id') == 'shade' and f.get('kind') == 'roof' for f in b.get('flags', [])), b.get('flags'))
+    out = build(plan)
     check(not top_surface(out), 'an awning with no wall nearby must draw no panel')
     check(not bracket_boxes(out), 'an awning with no wall nearby must draw no brackets')
 

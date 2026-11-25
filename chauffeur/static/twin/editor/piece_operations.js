@@ -30,8 +30,6 @@ export function findPiece(plan, pieceId, buildingId) {
   }
   const porch = allPorches(building).find(p => p.id === pieceId);
   if (porch) return { piece: porch, building, kind: 'porch' };
-  const awning = building.roof?.extensions?.find(p => p.id === pieceId && p.kind === 'awning');
-  if (awning) return { piece: awning, building, kind: 'awning' };
   const section = building.roof?.sections?.find(p => p.id === pieceId);
   const dormer = building.dormers?.find(p => p.id === pieceId);
   if (dormer) return { piece: section || dormer, building, kind: 'dormer' };

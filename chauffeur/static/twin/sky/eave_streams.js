@@ -2,6 +2,7 @@
 // queries and downward rays happen on rebuild, never in update(). No lit patch.
 import * as THREE from 'three';
 import { roofMeshGroups, roofBounds, planes, sectionHeight } from '../twin_roof.js';
+import { isSupported, roofPoint } from '../roof_supports.js';
 import { buildingBase, groundAt, inPolygon, segmentIntersection, poolDatum } from '../twin_ground.js';
 import { allPorches } from '../twin_generator.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
@@ -48,19 +49,20 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
     for(let t=0;t<envelope.section.length;t++){
       const index=envelope.section[t],s=sections[index];
       if(!s||s.kind==='flat')continue;
-      const face=planes(s).find(p=>p.side===envelope.side[t]);
+      const localSection=s.roof_frame?{...s,roof_frame:null}:s;
+      const face=planes(localSection).find(p=>p.side===envelope.side[t]);
       if(!face||Math.hypot(face[0],face[1])<EPS)continue;
-      const triangle=[0,3,6].map(i=>Array.from(envelope.positions.slice(t*9+i,t*9+i+3)));
+      const triangle=[0,3,6].map(i=>{const p=Array.from(envelope.positions.slice(t*9+i,t*9+i+3));return s.roof_frame?roofPoint(s,p,true):p;});
       for(let i=0;i<3;i++){
         const a=triangle[i],d=triangle[(i+1)%3];
         if(Math.abs(a[2]-d[2])>EPS)continue; // rakes / hips / valleys
         for(let axis=0;axis<2;axis++)for(const sign of [-1,1]){
-          const end=roofBounds(s)[axis+(sign>0?2:0)],along=1-axis;
+          const end=roofBounds(localSection)[axis+(sign>0?2:0)],along=1-axis;
           if(Math.abs(a[axis]-end)>EPS||Math.abs(d[axis]-end)>EPS||face[axis]*sign>=-EPS)continue;
           const lo=Math.min(a[along],d[along]),hi=Math.max(a[along],d[along]);
           if(hi-lo<EPS)continue;
           const key=`${index}:${axis}:${sign}:${a[2].toFixed(4)}`;
-          if(!groups.has(key))groups.set(key,{index,s,edge:envelope.edge?.[t],axis,along,sign,end,z:a[2],ranges:[]});
+          if(!groups.has(key))groups.set(key,{index,s,localSection,edge:envelope.edge?.[t],axis,along,sign,end,z:a[2],ranges:[]});
           groups.get(key).ranges.push([lo,hi]);
         }
       }
@@ -71,15 +73,28 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
         const prev=merged.at(-1);if(prev&&r[0]<=prev[1]+EPS)prev[1]=Math.max(prev[1],r[1]);else merged.push([...r]);
       }
       for(const [lo,hi] of merged){
-        const local=u=>{const p=[0,0,g.z];p[g.axis]=g.end;p[g.along]=u;return p;};
-        const a=frame.world(local(lo)),b=frame.world(local(hi));
+        const bare=isSupported(g.s)&&g.s.fascia===false, reverse=bare&&(g.axis===0?g.sign<0:g.sign>0);
+        const analytic=bare&&!envelope.slabPositions;
+        const local=u=>{
+          const bounds=roofBounds(g.localSection);
+          const bound=analytic&&[bounds[g.along],bounds[g.along+2]].find(v=>Math.abs(u-v)<1e-5);
+          const p=[0,0,g.z];p[g.axis]=bare&&!analytic?Math.fround(g.end):g.end;p[g.along]=typeof bound==='number'?bound:u;
+          if(analytic)p[2]=sectionHeight(g.localSection,p[0],p[1])??g.z;
+          return g.s.roof_frame?roofPoint(g.s,p):p;
+        };
+        const a=frame.world(local(reverse?hi:lo)),b=frame.world(local(reverse?lo:hi));
         const key=[a,b].map(p=>p.map(v=>v.toFixed(4)).join(',')).sort().join(':');
         if(seen.has(key))continue;seen.add(key);
         const n=[0,0,0];n[g.axis]=g.sign;
-        const origin=frame.world([0,0,0]),tip=frame.world(n);
+        const origin=frame.world([0,0,0]);
+        if(g.s.roof_frame){const a=g.s.roof_frame.angle,c=Math.cos(a),s=Math.sin(a),x=n[0],y=n[1];n[0]=c*x-s*y;n[1]=s*x+c*y;}
+        const tip=frame.world(n);
+        const pattern=eavePattern(plan,frame.b,g.s,g.edge,kit);
+        const bounds=roofBounds(g.localSection), rawOffset=reverse?bounds[g.along+2]-hi:lo-bounds[g.along];
+        const offset=Math.abs(rawOffset)<1e-5?0:rawOffset;
         result.push({a,b,outward:[tip[0]-origin[0],0,tip[2]-origin[2]],building:frame.b.id,
-          section:g.index,side:`${'xy'[g.axis]}${g.sign>0?1:0}`,edge:g.edge>=0?g.edge:null,kind:g.s.kind,gridStart:lo*FT,
-          ...eavePattern(plan,frame.b,g.s,g.edge,kit)});
+          section:g.index,side:`${'xy'[g.axis]}${g.sign>0?1:0}`,edge:g.edge>=0?g.edge:null,kind:g.s.kind,gridStart:bare?(pattern.pitch===null?0:-pattern.pitch*.5)+offset*FT:lo*FT,
+          ...(bare?{fascia:false}:{}),...pattern});
       }
     }
     // Coverings outside the section envelope (wall awnings / continuations)
@@ -213,7 +228,7 @@ export function eaveSheetCapable(e) {
   // under heavy flow (strongest on flat straight wall awnings); corrugated
   // troughs (!pan && pitch) and rough/shingle edges (!pan) stay discrete streams.
   if(!e.pan)return 0;
-  return e.kind==='attachment'?1:.75;
+  return e.kind==='attachment'||e.fascia===false?1:.75;
 }
 
 function planHasGutters(plan) {
@@ -221,7 +236,6 @@ function planHasGutters(plan) {
     if ((b.roofs || []).some(r => (r.edges || []).some(e => e?.gutter === true))) return true;
     if ((b.roof?.sections || []).some(s => s.gutters && Object.values(s.gutters).some(v => v === true))) return true;
     if (allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal')) return true;
-    if ((b.roof?.extensions || []).some(e => e?.kind === 'awning' && e.gutter === true && e.state !== 'ghost' && e.state !== 'proposal')) return true;
   }
   return false;
 }
@@ -353,7 +367,7 @@ function buildCatchmentContexts(plan, roofs) {
         addTri(a, bPt, c, { section: att.section, side: null, attIdx, isAttachment: true, pl, ux: gx / gLen, uy: gy / gLen });
       }
     }
-    contexts.set(b.id, { b, frame, sections, tris, wx0, wx1, wz0, wz1, wy0, wy1 });
+    contexts.set(b.id, { b, frame, sections, tris, independent:sections.some(isSupported), wx0, wx1, wz0, wz1, wy0, wy1 });
   }
   return contexts;
 }
@@ -362,6 +376,12 @@ function buildCatchmentContexts(plan, roofs) {
 // envelope's fall line, crossing continuous slope breaks (e.g. a steeper main
 // roof meeting a lower-pitch patio shed) and stopping at ridges, hip crests,
 // boundaries, or vertical walls/steps (which route separately from upper eaves).
+function sameEnvelope(ctx, a, b) {
+  const left=ctx.sections[a], right=ctx.sections[b];
+  if (!isSupported(left||{}) && !isSupported(right||{})) return true;
+  return (left?.roof||left?.id||a)===(right?.roof||right?.id||b);
+}
+
 function upslopeRunAt(ctx, startX, startY, startZ, dirX, dirY, section, side, isAttachment, attIdx) {
   if (!ctx?.tris?.length) return null;
   let tri = null, cx = startX, cy = startY, initNudge = 0;
@@ -370,6 +390,7 @@ function upslopeRunAt(ctx, startX, startY, startZ, dirX, dirY, section, side, is
     let best = null, bestErr = Infinity;
     for (const t of ctx.tris) {
       if (t.isAttachment !== isAttachment) continue;
+      if (ctx.independent && !sameEnvelope(ctx,t.section,section)) continue;
       if (isAttachment && attIdx >= 0 && t.attIdx !== attIdx) continue;
       if (!inTri2D(px, py, t, 1e-3)) continue;
       const err = Math.abs(triZ(t, px, py) - startZ);
@@ -389,6 +410,7 @@ function upslopeRunAt(ctx, startX, startY, startZ, dirX, dirY, section, side, is
     let nextTri = null, bestErr = Infinity;
     for (const t of ctx.tris) {
       if (t.isAttachment !== isAttachment) continue;
+      if (ctx.independent && !sameEnvelope(ctx,t.section,section)) continue;
       if (isAttachment && t.attIdx !== tri.attIdx) continue;
       if (!inTri2D(nx, ny, t, 1e-3)) continue;
       if (t.ux * dx + t.uy * dy <= .25) continue;
@@ -493,6 +515,7 @@ function traceDownhillToEave(contexts, hitWorld, eaveStatesByBuilding) {
     let nextTri = null, nextErr = Infinity;
     for (const t of ctx.tris) {
       if (t.isAttachment !== tri.isAttachment) continue;
+      if (ctx.independent && !sameEnvelope(ctx,t.section,tri.section)) continue;
       if (tri.isAttachment && t.attIdx !== tri.attIdx) continue;
       if (!inTri2D(nx, ny, t, 1e-3)) continue;
       if ((-t.ux) * dx + (-t.uy) * dy <= .25) continue;

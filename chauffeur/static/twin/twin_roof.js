@@ -1,5 +1,5 @@
 // Roof geometry in plan feet, with z up. No renderer or browser dependencies.
-import { isSupported } from './roof_supports.js';
+import { isSupported, roofPoint } from './roof_supports.js';
 
 const EPS = 1e-9;
 const AREA_EPS = 1e-10;
@@ -26,6 +26,11 @@ export function rectangleEdgeIndices(area, rect) {
 }
 
 export function roofBounds(section) {
+  if (section.roof_frame) {
+    const r=roofBounds({...section,roof_frame:null});
+    const p=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]].map(p=>roofPoint(section,p));
+    return [Math.min(...p.map(p=>p[0])),Math.min(...p.map(p=>p[1])),Math.max(...p.map(p=>p[0])),Math.max(...p.map(p=>p[1]))];
+  }
   const [x0, y0, x1, y1] = section.rect;
   const overhang = section.overhang ?? 0;
   if (!section.edges) return [x0 - overhang, y0 - overhang, x1 + overhang, y1 + overhang];
@@ -47,6 +52,7 @@ export function endKind(section, end) {
 // A section is the minimum of its side planes, restricted to its footprint.
 // Distances are signed: extending a plane past the plate lowers the eave.
 export function planes(section) {
+  if (section.roof_frame) return planes({...section,roof_frame:null}).map(p=>rotatePlane(section,p));
   const [x0, y0, x1, y1] = section.rect;
   const plate = section.plate;
   const side = name => (section.pitches?.[name] ?? section.pitch) / 12;
@@ -80,7 +86,8 @@ export function planes(section) {
 
 /** Height of one section, including its signed-slope overhang. */
 export function sectionHeight(section, x, y) {
-  if (!covers(bounds(section), x, y)) return null;
+  const local=section.roof_frame?roofPoint(section,[x,y],true):[x,y];
+  if (!covers(section.roof_frame?bounds({...section,roof_frame:null}):bounds(section), ...local)) return null;
   return Math.min(...planes(section).map(plane => valueAt(plane, x, y)));
 }
 
@@ -129,14 +136,16 @@ function insidePolygon(polygon, x, y) {
 
 /** Optional support cap, restricted to the same cut footprint as drawing. */
 export function supportedRoofAbove(sections, x, y, floor, ceiling = Infinity,
-  { cuts = () => [], thickness = 0.25 } = {}) {
+  { cuts = () => [], thickness = 0.25, underside = false } = {}) {
   let height = null;
   sections.forEach((section, index) => {
     if (!isSupported(section) || ['ghost', 'proposal'].includes(section.state)) return;
     const z = sectionHeight(section, x, y);
-    if (z === null || z - thickness <= floor + EPS || z >= ceiling - EPS
+    const depth = section.thickness_ft ?? thickness;
+    if (z === null || z - depth <= floor + EPS || z >= ceiling - EPS
         || cuts(section, index).some(poly => insidePolygon(poly, x, y))) return;
-    if (height === null || z < height) height = z;
+    const result = underside ? z - depth : z;
+    if (height === null || result < height) height = result;
   });
   return height;
 }
@@ -215,7 +224,16 @@ function subtract(polygon, cutter) {
   return pieces;
 }
 
+function rotatePlane(section, plane) {
+  const {origin,angle}=section.roof_frame,c=Math.cos(angle),s=Math.sin(angle);
+  const a=c*plane[0]-s*plane[1],b=s*plane[0]+c*plane[1];
+  return Object.defineProperties([a,b,plane[2]+(plane[0]-a)*origin[0]+(plane[1]-b)*origin[1]],
+    {side:{value:plane.side},edge:{value:plane.edge}});
+}
+
 function sectionFaces(section, index) {
+  if (section.roof_frame) return sectionFaces({...section,roof_frame:null},index).map(face=>
+    ({...face,polygon:face.polygon.map(p=>roofPoint(section,p)),plane:rotatePlane(section,face.plane)}));
   const all = planes(section);
   const faces = [];
   for (let i = 0; i < all.length; i++) {
@@ -399,7 +417,7 @@ export function roofMesh(sections, { retainLower = false, exclude = [], material
           // Different finishes retain their own section's territory. Partition
           // a shared plane by section centres, rather than painting all of the
           // overlap with the lower index. Both owners use the same boundary.
-          const rawCentre = i => { const r = sections[i].rect; return [(r[0]+r[2])/2,(r[1]+r[3])/2]; };
+          const rawCentre = i => { const r = sections[i].rect; return roofPoint(sections[i],[(r[0]+r[2])/2,(r[1]+r[3])/2]); };
           const centre = i => {
             const c = rawCentre(i);
             const tied = faces.filter(f => samePlane(f.plane,face.plane)

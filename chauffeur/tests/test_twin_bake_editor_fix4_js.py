@@ -4,6 +4,7 @@ import test_twin_bake_runtime_js as R
 
 DRIVER = R.DRIVER[:R.DRIVER.index('await check(')] + r"""
 const {lightSource}=await import(file('static/twin/bake/reach.js'));
+const {registerBakeSource,bakeSource}=await import(file('static/twin/bake/source.js'));
 const {ATLAS_VERSION}=await import(file('static/twin/bake/key_inputs.js'));
 const output=d=>d.host.querySelectorAll('output')[0];
 const opts=extra=>({mode:'manual',display:false,poll:0,parent:true,host:new Node('div'),view:{round:42},...extra});
@@ -72,6 +73,14 @@ function oneChart(d){
  const m=new THREE.Mesh(new THREE.PlaneGeometry(.4,.4).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial({name:'floor'}));
  const source=lightSource(job.plan,k1).source;
  m.userData={merged:true,buildingId:job.pool};m.position.set(source.x/gen.FT,source.y/gen.FT-1,-k1.at[1]);d.out.root.add(m);
+ // This fixture intentionally has one receiver. Clearing drawn children does
+ // not remove a nondefault house's registered neutral topology; declare the
+ // empty neutral source so only the literal plane is copied as an extra.
+ registerBakeSource(d.out.root,()=>new THREE.Group(),{children:[]});
+ const receivers=[];bakeSource(d.out.root).traverse(node=>{if(node.isMesh)receivers.push(node);});
+ assert.equal(receivers.length,1,'the neutral bake source must contain only the literal receiver');
+ assert.equal(receivers[0].geometry.attributes.position.count,4);
+ assert.equal(receivers[0].geometry.index.count,6);
 }
 await check('partial_publication_does_not_sign_unfinished_entries_under_new_global_inputs',async()=>{
  const d=await seed();let editor,viewer;

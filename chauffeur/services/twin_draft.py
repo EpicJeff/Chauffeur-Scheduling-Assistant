@@ -34,12 +34,14 @@ Each building uses this schema (optional details may be omitted):
              "ha_area":"optional HA area id"}],
   "stairs": [{"level":"L1", "from":[1,1], "to":[10,1], "width":4,
               "risers":17, "rise_to":11}],
-  "roof": {"main":{"kind":"gable", "ridge_axis":"y", "x0":0, "x1":30,
-                   "y0":0, "y1":20, "pitch":11, "plate":10, "overhang":1},
-           "extensions":[{"kind":"shed_continuation", "side":"x1", "to_x":37,
-                          "pitch":3, "overhang":1},
-                         {"kind":"awning", "wall":"front", "x0":17, "x1":30,
-                          "depth":4, "pitch":2, "eave":9, "brackets":3}]},
+  "roof": {"sections":[{"id":"main-roof", "level":"L1", "kind":"gable",
+                        "ridge":"y", "rect":[0,0,30,20], "pitch":11, "plate":10, "overhang":1},
+                       {"id":"porch-roof", "level":"L1", "kind":"shed", "low_side":"x1",
+                        "rect":[30,0,37,20], "pitch":3, "plate":10, "overhang":1},
+                       {"id":"window-shade", "level":"L1", "kind":"shed", "low_side":"y0",
+                        "rect":[17,-4,30,0], "pitch":2, "plate":9, "overhang":0,
+                        "support":{"kind":"bracket", "count":3, "inset_ft":0.6, "size_ft":0.3},
+                        "host":{"wall":"front", "edge":2}, "thickness_ft":0.3, "fascia":false}]},
   "porch": {"polygon":[[30,0],[37,0],[37,20],[30,20]], "floor":0.5,
             "columns":[{"at":[36,1], "size":0.667}]},
   "fixtures": [{"kind":"counter", "level":"L1", "rect":[1,1,5,3], "height":3}],
@@ -54,6 +56,13 @@ referenced level, not world elevations. Gable openings instead use
 An opening references exactly one wall or gable. Rooms need level IDs and
 polygons with at least three points. Use provided HA area names for unnamed
 rooms when suitable; otherwise leave names blank for descriptive labels.
+An awning is an ordinary roof section with a support kind (bracket, corbel,
+brace, cable or post), never an extension. Its plate is its lowest eave height,
+and its level is the host wall's level. Canonical edge indices are y0=0, x1=1,
+y1=2, x0=3; host.edge is the parallel edge at the named wall. Omit host when
+there is no wall. Count is an integer 0..40; absent means 2, while 0 is a
+cantilever with no visible supports. Wall-supported lean-tos are shed
+sections without support. Give every roof its own section; emit no extensions.
 """ + _RULES
 
 FINISHES_PROMPT = """Read the household photos and return only

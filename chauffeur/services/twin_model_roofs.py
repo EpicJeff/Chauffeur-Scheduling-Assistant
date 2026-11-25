@@ -4,7 +4,7 @@ from copy import deepcopy
 import math
 
 from services import twin_blocks, twin_joints, twin_roof_issues
-from services.twin_model_supports import is_supported, carry_fields
+from services.twin_model_supports import is_supported, carry_fields, wall_axis
 
 
 _EPS = 1e-8
@@ -231,7 +231,7 @@ def attach_edges(roof: dict, walls: list, joints) -> dict:
         for i, (a, b) in enumerate(_segments(roof['area'])):
             axis, line, start, end = _edge(a, b)
             for wall in lines:
-                if wall.get('level') != roof.get('level') or twin_joints._axis(wall) != axis:
+                if wall.get('level') != roof.get('level') or wall_axis(wall['from'], wall['to']) != axis:
                     continue
                 named = ((isinstance(host, dict) and host.get('wall') == wall['id'] and host.get('edge') == i)
                          or roof['edges'][i].get('wall') == wall['id'])
@@ -281,7 +281,7 @@ def follow_walls(roof: dict, walls: list, joints) -> dict:
         if wall is not None and type(index) is int and 0 <= index < len(roof['area']):
             a, b = _segments(roof['area'])[index]
             axis, line, _, _ = _edge(a, b)
-            if twin_joints._axis(wall) == axis:
+            if wall_axis(wall['from'], wall['to']) == axis:
                 edge = roof['edges'][index]
                 delta = [0, 0]
                 delta[axis] = wall['from'][axis] + edge.get('wall_offset', 0) - line
@@ -292,6 +292,9 @@ def follow_walls(roof: dict, walls: list, joints) -> dict:
                 for point in roof['support'].get('at', {}).values():
                     for k in (0, 1):
                         point[k] += delta[k]
+                if roof.get('roof_frame'):
+                    for k in (0, 1):
+                        roof['roof_frame']['origin'][k] += delta[k]
         return roof
     for i, (edge, (a, b)) in enumerate(zip(roof['edges'], _segments(deepcopy(roof['area'])))):
         wall = lines.get(edge.get('wall'))

@@ -8,7 +8,7 @@ from functools import lru_cache
 import json
 import math
 from services.twin_roof_issues import _planes
-from services.twin_model_supports import is_supported
+from services.twin_model_supports import is_supported, frame_point
 
 EPS = 1e-7
 DEFAULTS = dict(panel_width=65/12, panel_height=39/12, orientation='portrait',
@@ -397,18 +397,28 @@ def _cached_faces(key):
             sections.extend(roofs.dormer_sections(d, roof))
     all_faces = []
     for index, section in enumerate(sections):
-        planes = list(dict.fromkeys(_planes(section)))
+        local_planes = list(dict.fromkeys(_planes(section)))
+        frame = section.get('roof_frame')
+        if frame:
+            cosine, sine = math.cos(frame['angle']), math.sin(frame['angle'])
+            ox, oy = frame['origin']
+            planes = []
+            for a, b, c in local_planes:
+                x, y = a*cosine-b*sine, a*sine+b*cosine
+                planes.append((x, y, c+a*ox+b*oy-x*ox-y*oy))
+        else:
+            planes = local_planes
         h = section.get('overhang', 0)
         edges = section.get('edges', [])
         overhangs = [edges[i].get('overhang_ft', h) if i < len(edges) else h for i in (3, 0, 1, 2)]
         rect = [v+(-overhangs[i] if i < 2 else overhangs[i]) for i, v in enumerate(section['rect'])]
-        for plane in planes:
-            poly = rectangle(rect)
+        for local_plane, plane in zip(local_planes, planes):
+            poly = ([frame_point(section, p) for p in rectangle(rect)] if frame else rectangle(rect))
             for other in planes:
                 poly = clip(poly, [other[i]-plane[i] for i in range(3)])
             if poly:
                 all_faces.append(dict(plane=plane, polygon=poly, section=index,
-                                      identity=_face_identity(section, plane),
+                                      identity=_face_identity(section, local_plane),
                                       roof=section.get('roof', section['id'])))
     exposed = []
     for face in all_faces:

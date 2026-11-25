@@ -14,6 +14,16 @@ _SEPARATOR = 'I added an invisible wall here to keep two rooms apart; check it.'
 _DORMER = 'This dormer lost its roof; place it again.'
 
 
+def _migrate_extensions(value):
+    for building in value.get('buildings', []):
+        roof = building.get('roof', {})
+        for extensions in (building.get('extensions', []), roof.get('extensions', []) if isinstance(roof, dict) else []):
+            if isinstance(extensions, list) and any(isinstance(e, dict) and e.get('kind') in ('awning', 'shed_continuation') for e in extensions):
+                from services.twin_awning_migration import migrate_awnings
+                return migrate_awnings(value)
+    return value, []
+
+
 def _person(piece):
     return piece.get('src', {}).get('person') is True
 
@@ -797,10 +807,11 @@ def _separator_flags(building):
 
 def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]:
     """Migrate a flat read, preserving person-owned pieces from the last model."""
+    flat, migration_notes = _migrate_extensions(flat)
     flat = deepcopy(flat)
     if flat.get('units') != 'ft':
         raise ValueError('Twin plan units must be ft.')
-    notes = []
+    notes = list(migration_notes)
     room_reads = {}
     flat['solar_source_building'] = (previous or {}).get('solar_source_building', flat.get('solar_source_building'))
     flat['solar_source_roof'] = (previous or {}).get('solar_source_roof', flat.get('solar_source_roof'))
@@ -905,6 +916,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
 
 def flatten(model: dict) -> dict:
     """Return renderer-compatible schema 2 geometry and connected-model extras."""
+    model, _ = _migrate_extensions(model)
     flat = deepcopy(model)
     flat['schema'] = twin_plan.SCHEMA
     for building in flat.get('buildings', []):

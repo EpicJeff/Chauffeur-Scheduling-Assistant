@@ -7,6 +7,7 @@ from twin_editor_dom import run_node
 from test_twin_awning_golden_js import baseline_sources
 
 os.environ.pop('HA_BASE_URL', None)
+sys.path.insert(0, str(ROOT))
 
 DRIVER = r"""
 globalThis.consumerSnapshots={gutter:[],extract:[],clip:[],catchment:[],sky:[]};
@@ -216,14 +217,11 @@ await check('a walled-only precipitation fallback retains its original no-snapsh
  const p=plan(building([section('main',[0,0,20,12])]));
  assert.equal(createSplashSampler(p)(10*FT,-6*FT),null);
 });
-await check('legacy awning extensions retain gutter and downspout consumers without roof records',()=>{
- const b=building([section('r',[0,0,20,12])]),outline=[[0,0],[20,0],[20,12],[0,12]];
- b.levels=[{id:'L1',elevation:0,ceiling:10,outline}];
- b.walls=outline.map((from,i)=>({id:'w'+i,from,to:outline[(i+1)%4],level:'L1',height:10,exterior:true,thickness:.5}));
- b.roof.extensions=[{id:'old-awning',kind:'awning',section:'r',wall:'w0',x0:5,x1:15,depth:3,eave:8,pitch:3,gutter:true}];
- const p=plan(b),before=JSON.stringify(p),runs=gutterRuns(p),drops=downspouts(p,runs);
- assert.ok(runs.some(r=>r.segments.some(s=>s.porch==='old-awning')));
- assert.ok(drops.some(d=>d.edge.porch==='old-awning'));assert.equal(JSON.stringify(p),before);
+await check('migrated legacy awnings retain gutter and downspout consumers without native roof records',()=>{
+ const p=structuredClone(config.migratedLegacy),before=JSON.stringify(p),runs=gutterRuns(p),drops=downspouts(p,runs);
+ assert.ok(!p.buildings[0].roofs,'the flat consumer still has no native roof records');
+ assert.ok(runs.some(r=>r.segments.some(s=>s.roof==='old-awning')));
+ assert.ok(drops.some(d=>d.edge.roof==='old-awning'));assert.equal(JSON.stringify(p),before);
 });
 console.log(JSON.stringify({results}));if(results.some(r=>!r.ok))process.exitCode=1;
 """
@@ -236,7 +234,18 @@ if __name__ == '__main__':
     # This file exercises pure consumers and never mounts that live layer.
     anchor="const liveModule = await import(file('static/twin/live/live.js'));"
     assert PRELUDE.count(anchor)==1
+    from services.twin_awning_migration import migrate_awnings
+    outline = [[0, 0], [20, 0], [20, 12], [0, 12]]
+    old = {'units': 'ft', 'buildings': [{'id': 'b', 'position': [0, 0],
+        'levels': [{'id': 'L1', 'elevation': 0, 'ceiling': 10, 'outline': outline}],
+        'walls': [{'id': 'w'+str(i), 'from': p, 'to': outline[(i+1)%4], 'level': 'L1',
+                   'height': 10, 'exterior': True, 'thickness': .5} for i, p in enumerate(outline)],
+        'roof': {'sections': [{'id': 'r', 'kind': 'gable', 'ridge': 'x', 'rect': [0, 0, 20, 12],
+                              'plate': 10, 'pitch': 6, 'overhang': 1}],
+                 'extensions': [{'id': 'old-awning', 'kind': 'awning', 'section': 'r', 'wall': 'w0',
+                                 'x0': 5, 'x1': 15, 'depth': 3, 'eave': 8, 'pitch': 3, 'gutter': True}]}}], 'site': {}}
+    migrated, _ = migrate_awnings(old)
     code, output=run_node(PRELUDE.replace(anchor,'const liveModule=null;')+DRIVER,
-        {'root': ROOT.as_posix(), 'sources': baseline_sources(), 'mutation': args.mutation})
+        {'root': ROOT.as_posix(), 'sources': baseline_sources(), 'mutation': args.mutation, 'migratedLegacy': migrated})
     print(output,end='')
     sys.exit(code or 0)

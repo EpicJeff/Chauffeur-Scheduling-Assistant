@@ -1,9 +1,11 @@
 """Metered crop reads and whole-building reads in dimensioned building feet."""
+from copy import deepcopy
 import json
 import re
 
 from services import llm, llm_budget, model_pools, storage, twin_cost, twin_place
 from services.twin_draft import FINISHES_PROMPT
+from services.twin_model_supports import normalize_support
 
 
 KINDS = ('sheet_roles', 'outline', 'walls', 'openings', 'rooms', 'registration',
@@ -283,11 +285,18 @@ ROOF
   when slopes differ. If no pitch is drawn, estimate against photos, set
   pitch_source:"photos" and say so in notes. Check each ridge height against
   photos: plate + half span * pitch/12 for hips and gables.
-- A small bracketed roof is an extension: {kind:"awning", section, wall, x0,
-  x1, depth, pitch, eave, brackets}. Reference its section and supporting wall;
-  it hangs from that exterior wall and slopes down away. depth is projection,
-  eave is its low edge height above L1. brackets is an integer count, 0 if none,
-  never true/false. It need not hang from the section's front edge.
+- A bracketed awning is an ordinary shed section with support:{kind:"bracket",
+  count:2,inset_ft:0.6,size_ft:0.3}, thickness_ft:0.3 and fascia:false. Give its
+  actual rect, low_side, pitch, plate and level; plate is its LOW eave height,
+  and the roof rises toward its host wall. Use overhang:0 for its exact outline.
+  host:{wall:"wall-id",edge:2} names the parallel wall and the section's edge:
+  canonical edge order is y0=0, x1=1, y1=2, x0=3. Use the actual host edge;
+  omit host when no wall supports it. Other support kinds are corbel, brace,
+  cable and post. Count is an integer 0..40, never true/false; absent means 2,
+  and 0 is a cantilever with no visible supports. A normal lean-to
+  carried by walls is another ordinary shed section without support. Do not
+  emit roof extensions. Optional edges[i].overhang_ft overrides the uniform
+  overhang; gutters:{y0:true} and downspouts:{y0:[0,1]} use section side names.
 
 PORCH, STAIRS AND PHOTOS
 - porches: [{id, polygon, floor, columns:[{at:[x,y],size}], screened}] for
@@ -590,6 +599,20 @@ def _parse_draft(kind, answer, v, context=None):
             'id': v.text, 'kind': lambda x, p: v.choice(x, p, ('gable', 'hip', 'shed', 'flat')),
             'rect': rect, 'pitch': lambda x, p: v.numeric(x, p, maximum=24),
             'plate': signed, 'overhang': v.numeric}, {
+            'name': v.text, 'level': v.text,
+            'support': v.object,
+            'host': lambda x, p: v.fields(x, p, {'wall': v.text, 'edge': integer}),
+            'thickness_ft': lambda x, p: v.numeric(x, p, minimum=.05, maximum=2),
+            'fascia': boolean,
+            'edges': lambda x, p: v.items(x, p, lambda edge, q: v.fields(edge, q, {}, {
+                'setting': lambda x, p: v.choice(x, p, ('sloped', 'gable', 'clip')),
+                'pitch': lambda x, p: v.numeric(x, p, maximum=24),
+                'overhang_ft': lambda x, p: v.numeric(x, p, maximum=6),
+                'gutter': boolean, 'downspouts': lambda x, p: v.items(x, p, lambda n, q: v.numeric(n, q, maximum=1)),
+                'wall': v.text, 'wall_offset': signed, 'wall_along_offset': signed})),
+            'gutters': lambda x, p: v.fields(x, p, {}, {side: boolean for side in ('x0', 'x1', 'y0', 'y1')}),
+            'downspouts': lambda x, p: v.fields(x, p, {}, {side: lambda x, p: v.items(
+                x, p, lambda n, q: v.numeric(n, q, maximum=1)) for side in ('x0', 'x1', 'y0', 'y1')}),
             'pitch_source': lambda x, p: v.choice(x, p, ('drawn', 'photos', 'person', 'card', 'default')),
             'pitches': lambda x, p: v.fields(x, p, {}, {
                 side: lambda x, p: v.numeric(x, p, maximum=24) for side in ('x0', 'x1', 'y0', 'y1')})})
@@ -602,7 +625,17 @@ def _parse_draft(kind, answer, v, context=None):
                 'low_side': lambda x, p: v.choice(x, p, ('x0', 'x1', 'y0', 'y1'))})
         else:
             extra = {}
-        return {**out, **extra} if extra is not None else None
+        if extra is None:
+            return None
+        out = deepcopy({**out, **extra})
+        notes = []
+        normalize_support(out, notes)
+        for note in notes:
+            v.bad(path, note)
+        if out.get('host', {}).get('edge', 0) > 3:
+            out.pop('host')
+            v.bad(path + '.host.edge', 'expected an edge index in 0..3')
+        return out
 
     def extension(value, path):
         if v.object(value, path) is None:
@@ -1018,6 +1051,60 @@ def _usable(kind, fragment, problems):
     return any(key in fragment and (fragment[key] or not problems) for key in keys)
 
 
+def _migrate_read_fragment(fragment, context, *, final=False, parent_fields=None):
+    """Convert historical attachments with complete building geometry at merge.
+
+    A live answer may not contain its parent, walls or settled material context.
+    Keep it in the old shape until the merge has that context, rather than
+    fixing its position or finish at a guess. Context parents supply geometry only; they
+    are not incoming rereads. parent_fields carries their ordinary field edits.
+    """
+    owned = fragment.get('building')
+    if not isinstance(owned, dict):
+        return fragment
+    roof = owned.get('roof', {})
+    extensions = roof.get('extensions', [])
+    legacy = [e for e in extensions if isinstance(e, dict)
+              and e.get('kind') in ('awning', 'shed_continuation')]
+    if not legacy:
+        return fragment
+    from services.twin_awning_migration import migrate_awnings
+    context = context or {}
+    base, settled = context.get('building'), context.get('settled')
+    base = {**deepcopy(base if isinstance(base, dict) else {}),
+            **deepcopy(settled if isinstance(settled, dict) else {})}
+    incoming = roof.get('sections', [])
+    incoming_ids = {s.get('id') for s in incoming}
+    needed = {e.get('section') for e in legacy}
+    parents = [s for s in base.get('roof', {}).get('sections', [])
+               if s.get('id') in needed and s.get('id') not in incoming_ids]
+    sections = [*deepcopy(parents), *deepcopy(incoming)]
+    combined = {**base, **deepcopy(owned), 'materials': deepcopy(base.get('materials', {}))}
+    if final and 'walls' in base:
+        combined['walls'] = deepcopy(base['walls'])
+    combined['roof'] = {**deepcopy(base.get('roof', {})), **deepcopy(roof), 'sections': sections}
+    complete_house = all(key in base for key in ('levels', 'walls', 'roof'))
+    if not final and ('materials' not in context or not complete_house
+                      or not combined.get('walls') or not needed.issubset(incoming_ids)):
+        return fragment
+    migrated, notes = migrate_awnings({'materials': context.get('materials', {}), 'buildings': [combined]})
+    result = migrated['buildings'][0]
+    context_ids = {s.get('id') for s in parents}
+    converted = deepcopy(fragment)
+    converted['building']['roof'] = {**result['roof'], 'sections': [
+        s for s in result['roof'].get('sections', []) if s.get('id') not in context_ids]}
+    if parent_fields is not None:
+        for section in result['roof'].get('sections', []):
+            if section.get('id') in context_ids:
+                parent_fields[section['id']] = ({'gable_beam': True} if section.get('gable_beam') else {})
+    new_flags = [flag for flag in result.get('flags', []) if flag not in combined.get('flags', [])]
+    if new_flags:
+        converted['building'].setdefault('flags', []).extend(new_flags)
+    if notes:
+        converted.setdefault('notes', []).extend(notes)
+    return converted
+
+
 def read(kind, images, context, *, run, step, checkpoint_checked=False):
     """Meter every request; draft/photo reads retry parse failures once at the same size.
 
@@ -1082,7 +1169,7 @@ def read(kind, images, context, *, run, step, checkpoint_checked=False):
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
     if problems:
         fragment['problems'] = problems
-    return fragment
+    return _migrate_read_fragment(fragment, context)
 
 
 class Cancelled(RuntimeError):
@@ -1186,7 +1273,7 @@ def read_stream(kind, context, images, *, cancel, on_text, run, step, on_reset=N
         return {'error': '; '.join(problems) or f'{kind} returned no usable fragment.'}
     if problems:
         fragment['problems'] = problems
-    return fragment
+    return _migrate_read_fragment(fragment, context)
 
 
 def _stream_answer(reply, draft):

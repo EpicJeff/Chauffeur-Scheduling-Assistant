@@ -2,6 +2,7 @@ import { findPiece, deleteOperation } from './piece_operations.js';
 export { findPiece } from './piece_operations.js';
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
+import { isSupported } from '../roof_supports.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
@@ -62,7 +63,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     : field.startsWith('ends.') ? (piece.ends?.[field.slice(5)] ?? piece.kind) : piece[field];
   const title = ({ kind, piece, building }) => {
     const name = kind==='solar_zone'?'Solar zone':kind==='anchor' && ['meter','electric_panel','charger','parking'].includes(piece.kind)?(piece.name || ({meter:'Meter',electric_panel:'Electric panel',charger:'Charger',parking:'Parking spot'}[piece.kind])):kind === 'opening' ? (piece.kind === 'window' ? 'Window' : 'Door')
-      : piece.name || piece.preset || siteShapeLabels[kind] || (kind === 'roof' ? 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
+      : piece.name || piece.preset || siteShapeLabels[kind] || (kind === 'roof' ? isSupported(piece) ? 'Awning' : 'Roof section' : kind[0].toUpperCase() + kind.slice(1));
     if (!['wall', 'opening'].includes(kind)) return name;
     const wall = kind === 'wall' ? piece : building.walls.find(w => w.id === (piece.wall || piece.host?.wall));
     const room = building.rooms?.find(r => r.id === getSelection().room);
@@ -266,7 +267,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });
-    if (kind === 'porch' || kind === 'awning' || kind === 'room' && piece.kind === 'porch') {
+    if (kind === 'porch' || kind === 'room' && piece.kind === 'porch') {
       const detail = kind === 'room' ? building.porches?.find(p => p.id === piece.id) || piece : piece;
       gutterToggle(!!detail.gutter, value => queue(async () => {
         if (!canEdit()) return;

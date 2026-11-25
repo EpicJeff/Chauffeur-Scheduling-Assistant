@@ -31,7 +31,7 @@ await test('real owner roof envelopes yield exposed horizontal downhill eaves, s
  assert.ok(instances.every(i=>Number.isFinite(i.bottom)&&i.top[1]-i.bottom>.079));
  console.log('OWNER_COST',JSON.stringify({eaves:eaves.length,kinds:[...new Set(eaves.map(e=>e.kind))],instances:instances.length,
   landingKinds:[...new Set(instances.map(i=>i.landing))],draws:2,programs:1,buildMs}));
- assert.ok(eaves.some(e=>e.kind==='attachment'),'owner awnings must not disappear outside the envelope');
+ assert.ok(eaves.some(e=>plan.buildings.find(b=>b.id===e.building)?.roof.sections[e.section]?.support),'owner awnings must not disappear outside the envelope');
 });
 function fixture(sections,extra={}){return {buildings:[{id:'b',position:[0,0],levels:[],rooms:[],roof:{sections},...extra}]};}
 const section=(kind='gable',extra={})=>({kind,rect:[0,0,20,12],plate:10,pitch:6,ridge:'x',overhang:1,...extra});

@@ -33,9 +33,9 @@ export function gutterOwner(plan, buildingId, ref) {
     return roof?.edges?.[ref.edge] ? { record: roof.edges[ref.edge], roof,
       name: roof.name || `${b.name || 'House'} roof ${b.roofs.indexOf(roof) + 1}` } : null;
   }
-  const record = [...(b.porches || []), ...(b.porches_detail || []), b.porch, ...(b.roof?.extensions || [])].find(p => p?.id === ref.porch);
+  const record = [...(b.porches || []), ...(b.porches_detail || []), b.porch].find(p => p?.id === ref.porch);
   return record ? { record, name: record.name || b.rooms?.find(r => r.id === record.id)?.name
-    || (record.kind === 'awning' ? 'Awning' : 'Porch') } : null;
+    || 'Porch' } : null;
 }
 
 export function gutterLocation(plan, buildingId, ref, fraction = null) {

@@ -22,7 +22,7 @@ from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_dra
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
                       twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
 from services.twin_site_shapes import pieces as site_pieces
-from services.twin_model_supports import CHOICE_FIELDS, carry_fields, is_supported
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields, is_supported, normalize_host
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -1137,7 +1137,7 @@ def _migrate_crop_draft_frame(house, draft, step, tombstones, notes):
             house['position'] = [house['position'][i] - delta[i] for i in (0, 1)]
 
 
-def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, partial=False):
+def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, partial=False, materials=None):
     """The read already uses building feet. Merge identities before references."""
     draft = deepcopy(fragment.get('building', {}) if step['kind'] == 'draft' else fragment)
     pages = _draft_pages(build, floors_only=True)
@@ -1168,6 +1168,11 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
         return [_piece(build, step, kind, i, **{'state': 'settled', **{k: v for k, v in p.items() if k != 'id'}})
                 for i, p in enumerate(draft.get(key, []) if values is None else values)]
 
+    # A roof-only historical answer can retire this step's old walls below.
+    # Their lines still locate its attachment; they never re-enter the house.
+    migration_walls = (deepcopy(house['walls']) if not draft.get('walls') and any(
+        e.get('kind') in ('awning', 'shed_continuation')
+        for e in draft.get('roof', {}).get('extensions', [])) else None)
     walls = pieces('walls', 'wall')
     old_ids = [w.get('id') for w in draft.get('walls', [])]
     # A rooms partition may continue inward from a short exterior jog. It
@@ -1223,6 +1228,28 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step, tombstones=tombstones)
     if step['kind'] != 'draft':
         return
+    # Cached pre-migration answers must enter the roof identity/tombstone path,
+    # using the walls just merged above and any settled parent omitted by the read.
+    roof = draft.get('roof', {})
+    legacy_extensions = any(e.get('kind') in ('awning', 'shed_continuation')
+                            for e in roof.get('extensions', []))
+    for section in roof.get('sections', []):
+        if section.get('host'):
+            section['host']['wall'] = wall_ids.get(section['host']['wall'], section['host']['wall'])
+    for extension in roof.get('extensions', []):
+        if 'wall' in extension:
+            extension['wall'] = wall_ids.get(extension['wall'], extension['wall'])
+    parent_fields = {}
+    migration_house = house if migration_walls is None else {**house, 'walls': migration_walls}
+    migrated = twin_reads._migrate_read_fragment({'building': draft},
+        {'building': migration_house, 'materials': materials or {}}, final=True, parent_fields=parent_fields)
+    draft = migrated['building']
+    if notes is not None:
+        notes.extend(line for line in migrated.get('notes', []) if line not in notes)
+    context_parents = [s for s in house['roof']['sections'] if s['id'] in parent_fields]
+    for parent in context_parents:
+        for key, value in parent_fields[parent['id']].items():
+            parent.setdefault(key, value)
     roof = draft.get('roof', {})
     current_choices = twin_plan._roof_entries(house['roof'], 'choices')
     choices = [c for c in twin_plan._roof_entries(roof, 'choices') if not any(
@@ -1245,11 +1272,30 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     roof_step = {**step, 'removed_steps': [*step.get('removed_steps', []), 'roof_blocks']}
     house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, roof_step,
                                             tombstones=tombstones)
+    live_ids = {s['id'] for s in house['roof']['sections']}
+    house['roof']['sections'].extend(s for s in context_parents if s['id'] not in live_ids)
     merged_ids = dict(zip(incoming_ids, (s['id'] for s in sections)))
     for attachment in [*house['openings'], *house['roof'].get('extensions', [])]:
         if attachment.get('section') in merged_ids:
             attachment['section'] = merged_ids[attachment['section']]
     section_ids = dict(zip(old_sections, (s['id'] for s in sections)))
+    if migration_walls is not None:
+        live_walls = {w['id'] for w in house['walls']}
+        for section in house['roof']['sections']:
+            if section['id'] in section_ids.values() and is_supported(section):
+                normalize_host(section, house, notes if notes is not None else [])
+                for edge in section.get('edges', []):
+                    if edge.get('wall') and edge['wall'] not in live_walls:
+                        for key in ('wall', 'wall_offset', 'wall_along_offset'):
+                            edge.pop(key, None)
+    live_ids = {s['id'] for s in house['roof']['sections']}
+    for flag in draft.get('flags', []) if legacy_extensions else []:
+        if flag.get('kind') != 'roof':
+            continue
+        flag = {**flag, 'id': section_ids.get(flag.get('id'), flag.get('id'))}
+        if flag['id'] in live_ids and not any(f.get('kind') == 'roof' and f.get('id') == flag['id']
+                                            for f in house.get('flags', [])):
+            house.setdefault('flags', []).append(flag)
     openings = pieces('openings', 'opening')
     for opening in openings:
         if 'wall' in opening:
@@ -1737,7 +1783,7 @@ def _keep_partial(build, step, ticket):
         # read remain until a complete reread can reconcile them.
         partial_step = {k: v for k, v in step.items() if k not in ('reread', 'removed_steps')}
         _merge_draft({**build, 'existing': False}, partial_step, fragment, house,
-                     tombstones=twin_store.tombstones(), partial=True)
+                     tombstones=twin_store.tombstones(), partial=True, materials=plan.get('materials', {}))
         return plan
 
     twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
@@ -1836,7 +1882,7 @@ def _register_draft(result):
 def _draft_preview(build, step, fragment):
     """Check a fresh read without publishing it or reusing a previous draft."""
     plan = _base(None, build)
-    _merge_draft(build, step, fragment, _house(plan, build))
+    _merge_draft(build, step, fragment, _house(plan, build), materials=plan.get('materials', {}))
     plan, _ = twin_plan.normalize(plan)
     house = _house(plan, build)
     twin_joints.snap(house)
@@ -2115,9 +2161,10 @@ def _read_roof_blocks(build, step, reader, ticket, result):
     if _cache_result(build, step, ticket, result) is None:
         return None
     try:
-        house = _house(_base(twin_store.current(), build), build)
+        plan = _base(twin_store.current(), build)
+        house = _house(plan, build)
         _migrate_crop_draft(house, draft, step, [], [])
-        _merge_draft(build, step, result['fragment'], house)
+        _merge_draft(build, step, result['fragment'], house, materials=plan.get('materials', {}))
         normalized, _ = twin_plan.normalize({'units': 'ft', 'buildings': [house]})
         house = normalized['buildings'][0]
         twin_joints.snap(house)
@@ -2644,7 +2691,7 @@ def _settle(build, step, result, decision=None):
         if kind in ('draft', 'draft_rooms'):
             if kind == 'draft':
                 _migrate_crop_draft(house, fragment.get('building', {}), step, draft_tombstones, notes)
-            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones, notes=notes)
+            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones, notes=notes, materials=plan.get('materials', {}))
         elif kind == 'shell':
             shell = deepcopy(fragment)
             generated_levels = {w['level'] for w in house['walls']

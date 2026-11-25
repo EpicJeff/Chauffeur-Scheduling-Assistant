@@ -1,5 +1,7 @@
-"""Landing 0: drawn buffers and building atlases equal main at 0ec59a62.
+"""Walled drawn buffers remain byte-identical to main at 0ec59a62.
 
+Homes without awnings also keep their full buffers and building atlas keys.
+Migrated awnings are reported separately; their full batch identities may change.
 The optional private export is flattened in memory and piped to Node on stdin.
 Only its path, never its contents, enters the temporary job files.
 """
@@ -11,23 +13,36 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 from test_twin_tree_once_js import PREFIX
 from test_twin_untouched_house_js import COMMON
+from twin_editor_dom import run_node
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = '0ec59a62'
+PRE_MIGRATION = 'a57eb1b3'
 
 
-def baseline_sources():
+def legacy_flatten(model):
+    """Run the pre-migration bridge from git, keeping private input in memory."""
+    source = subprocess.check_output(['git', 'show', PRE_MIGRATION + ':chauffeur/services/twin_model_bridge.py'],
+                                     cwd=ROOT, encoding='utf-8')
+    namespace = {'__name__': 'services._awning_legacy_bridge', '__package__': 'services',
+                 '__file__': str(ROOT / 'services' / 'twin_model_bridge.py')}
+    exec(compile(source, namespace['__file__'], 'exec'), namespace)
+    return namespace['flatten'](deepcopy(model))
+
+
+def baseline_sources(revision=BASELINE):
     sources = {}
 
     def read(path):
         if path in sources:
             return
         source = subprocess.check_output(
-            ['git', 'show', f'{BASELINE}:chauffeur/{path}'], cwd=ROOT, encoding='utf-8')
+            ['git', 'show', f'{revision}:chauffeur/{path}'], cwd=ROOT, encoding='utf-8')
         sources[path] = source
         for ref in re.findall(r"(?:from|import)\s*['\"](\.[^'\"]+)['\"]", source):
             child = posixpath.normpath(posixpath.join(posixpath.dirname(path), ref))
@@ -41,6 +56,29 @@ def baseline_sources():
 
 # The same two-storey, two-building household as the untouched-house guard.
 FIXTURE = COMMON[COMMON.index('const square='):COMMON.index('const hash=')]
+FIXTURE_SETUP = r"""
+const plans=[['household',fixture()]],household=fixture();
+household.buildings[0].roof.sections[0].id='roof-main';
+household.buildings[0].roof.extensions=[{id:'awning',kind:'awning',section:'roof-main',wall:'L1w0',
+ x0:3,x1:15,depth:3,pitch:3,eave:7,brackets:2,gutter:true}];
+plans.push(['household_awning',household]);
+// I4: exercise both lost and gained P0 beam reproductions. The old rule is
+// attached to roof-main itself, independent of which physical wall is used.
+for(const [label,wall,off,parent] of [
+ ['gable_side_awning','L1w1',0,'roof-main'],
+ ['gable_offset_front','L1w0',.4,'roof-main'],
+ ['gable_offset_side','L1w1',.4,'roof-main'],
+ ['gable_other_parent','L1w0',0,'hip']]){
+ const plan=fixture(),b=plan.buildings[0];b.roof.sections[0].id='roof-main';
+ // Both gables must be unowned: otherwise the wall-owned fill path skips
+ // the old P0 beam entirely and a trim comparison would be vacuous.
+ b.walls=b.walls.filter(w=>w.level!=='L2'||Math.abs(w.to[1]-w.from[1])>1e-5);
+ b.roof.sections[0].rect[1]-=off;
+ b.roof.extensions=[{id:'awning',kind:'awning',section:parent,wall,x0:3,x1:15,
+  depth:3,pitch:3,eave:7,brackets:2,gutter:false}];
+ plans.push([label,plan]);
+}
+"""
 
 DRIVER = PREFIX + r"""
 const THREE=await import('three');
@@ -54,12 +92,18 @@ function instrument(source){
  const start=source.indexOf("} else if (extension.kind === 'awning') {"),
        end=source.indexOf('\n    if (buildingHasGutters',start),
        batch='  for (const g of mergeGroups) batch(';
- assert.ok(start>=0&&end>start&&source.includes(batch),'legacy awning/batch interception anchors');
+ assert.ok(source.includes(batch),'awning/batch interception anchor');
+ if(start>=0){assert.ok(end>start,'legacy awning block end');
  const block=source.slice(start,end).replace(/\bmesh\(/g,'goldenAwningMesh(');
  source=source.slice(0,start)+block.replace("} else if (extension.kind === 'awning') {",
   `} else if (extension.kind === 'awning') {
    const goldenAwningMesh=(...args)=>{const object=mesh(...args);
     globalThis.__goldenAwnings?.push(object);return object;};`)+source.slice(end);
+ }
+ const assign='Object.assign(object.userData, data);';
+ assert.ok(source.includes(assign),'supported mesh observation point');
+ source=source.replace(assign,assign+`\n      if(activeSurface?.support?.kind && activeSurface.support.kind!=='walls')
+       globalThis.__goldenAwnings?.push(object);`);
  // Awning gutters/downspouts already share a material bucket with the roof.
  // Split that bucket only in the isolated build, using the segment's porch id.
  const gutterStart='function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {';
@@ -68,13 +112,14 @@ function instrument(source){
  for(const anchor of [gutterStart,gutterPart,gutterLoop])assert.ok(source.includes(anchor),'awning gutter interception anchor');
  source=source.replace(gutterStart,gutterStart+`
   const originalFinish=resolveFinish;resolveFinish=seg=>{const info=originalFinish(seg);
-   const awning=globalThis.__goldenAwnings&&b.roof?.extensions?.some(e=>e.kind==='awning'&&e.id===seg?.porch);
+   const awning=globalThis.__goldenAwnings&&(b.roof?.extensions?.some(e=>e.kind==='awning'&&e.id===seg?.porch)
+    ||b.roof?.sections?.some(s=>s.support?.kind&&s.support.kind!=='walls'&&(s.roof||s.id)===seg?.roof));
    return awning?{...info,key:info.key+':golden-awning',goldenAwning:true}:info;};`)
   .replace('seed: info.seed, positions: [], uvs: []','seed: info.seed, goldenAwning: info.goldenAwning, positions: [], uvs: []')
   .replace(gutterPart,'parts.push({ geometry, mat: bucket.mat, ref: bucket.ref, seed: bucket.seed, goldenAwning: bucket.goldenAwning });')
   .replace(gutterLoop,gutterLoop.replace('seed }','seed, goldenAwning }'))
   .replace("gMesh.userData.surfaceKind = 'gutter';","if(goldenAwning)globalThis.__goldenAwnings.push(gMesh);\n        gMesh.userData.surfaceKind = 'gutter';");
- return source.replace(batch,`  if(globalThis.__goldenAwnings)for(const m of globalThis.__goldenAwnings){
+ return source.replace(batch,`  if(globalThis.__goldenAwnings)for(const m of new Set(globalThis.__goldenAwnings)){
    m.updateWorldMatrix(true,false);m.removeFromParent();}
 `+batch);
 }
@@ -89,7 +134,12 @@ for(const [path,original] of Object.entries(input.sources)){
 registerHooks({resolve(spec,ctx,next){return spec.startsWith('baseline:')
  ?{url:urls.get(spec.slice(9)),shortCircuit:true}:next(spec,ctx);},
  load(url,ctx,next){const result=next(url,ctx);
-  return url===file('static/twin/twin_generator.js')?{...result,source:instrument(String(result.source))}:result;}});
+  if(url!==file('static/twin/twin_generator.js'))return result;
+  let source=String(result.source);
+  if(input.legacySpatialTrim){const anchor='if (section.gable_beam === true)';assert.ok(source.includes(anchor));
+   source=source.replace(anchor,`if(section.id==='roof-main' && !alongX && allSections.some(s=>isSupported(s)
+    && Math.abs(s.rect[3]-y0)<1e-5 && s.rect[0]<x1 && s.rect[2]>x0))`);}
+  return {...result,source:instrument(source)};}});
 // This import deliberately fails on main before any comparison can pass.
 const {SUPPORT_KINDS,isSupported}=await import(file('static/twin/roof_supports.js'));
 const {roofMesh,roofEnvelope}=await import(file('static/twin/twin_roof.js'));
@@ -161,32 +211,29 @@ await test('support_predicate_and_grouped_envelope_contract',()=>{
  assert.deepEqual(roofEnvelope(mixed,options),{
   walled:roofMesh([sections[0],sections[1]],options),supported:roofMesh([supported],options)});
 });
-const plans=[['household',fixture()]];
-const household=fixture();
-// Exercise legacy awning slab, seams, brackets, gutters and gable trim as well
-// as the unchanged household, without keeping any private fixture in the repo.
-household.buildings[0].roof.sections[0].id='roof-main';
-household.buildings[0].roof.extensions=[{id:'awning',kind:'awning',section:'roof-main',wall:'L1w0',
- x0:3,x1:15,depth:3,pitch:3,eave:7,brackets:2,gutter:true}];
-plans.push(['household_awning',household]);
-if(input.ownerExport)plans.push(['owner',JSON.parse(readFileSync(0,'utf-8'))]);
-for(const [label,plan] of plans)await test(label+'_equals_0ec59a62',async()=>{
- const baseline=await evidence(plan,oldG,oldA),current=await evidence(plan,G,A);
+const plans=input.fixtures.map(c=>[c.label,c.old,c.current]);
+if(input.ownerExport){const c=JSON.parse(readFileSync(0,'utf-8'));plans.push(['owner',c.old,c.current]);}
+for(const [label,plan,changed] of plans)await test(label+'_equals_0ec59a62',async()=>{
+ if(input.withoutGableBeam)for(const b of changed.buildings||[])for(const s of b.roof?.sections||[])delete s.gable_beam;
+ const baseline=await evidence(plan,oldG,oldA),current=await evidence(changed,G,A);
  console.log('GOLDEN '+JSON.stringify({fixture:label,baseline:input.baseline,old:baseline,current}));
- assert.equal(current.sections_supported,0);
+ const oldAwnings=(plan.buildings||[]).flatMap(b=>(b.roof?.extensions||[]).filter(e=>e.kind==='awning'));
+ assert.equal(current.sections_supported,oldAwnings.length);
  assert.equal(current.walled_hash,baseline.walled_hash,'walled drawn hash');
- assert.deepEqual(current.full,baseline.full,'all drawn meshes, materials, buffers and counts');
+ if(!oldAwnings.length)assert.deepEqual(current.full,baseline.full,'all drawn meshes, materials, buffers and counts');
  assert.deepEqual(current.walled,baseline.walled,'walled counts');
- assert.deepEqual(current.awning,baseline.awning,'legacy awning geometry separately');
+ if(!oldAwnings.length)assert.deepEqual(current.awning,baseline.awning,'legacy awning geometry separately');
  if(label!=='household')assert.ok(current.awning.triangles>0,'fixture must exercise legacy awning geometry');
- assert.deepEqual(current.atlas,baseline.atlas,'house atlas and lightmap keys/order');
- assert.deepEqual(current.building_atlases,baseline.building_atlases,'per-building atlas and lightmap keys/order');
+ if(!oldAwnings.length){
+  assert.deepEqual(current.atlas,baseline.atlas,'house atlas and lightmap keys/order');
+  assert.deepEqual(current.building_atlases,baseline.building_atlases,'per-building atlas and lightmap keys/order');
+ }
  if(input.measure&&label==='owner'){
   const times={baseline:[],current:[]};
   // One warm-up per module, then five samples each, alternating order.
-  for(const module of [oldG,G]){const s=await build(plan,module);dispose(s.out);}
+  for(const module of [oldG,G]){const s=await build(module===G?changed:plan,module);dispose(s.out);}
   for(let i=0;i<5;i++)for(const [name,module] of i%2?[['current',G],['baseline',oldG]]:[['baseline',oldG],['current',G]]){
-   const s=await build(plan,module);times[name].push(s.ms);dispose(s.out);
+   const s=await build(module===G?changed:plan,module);times[name].push(s.ms);dispose(s.out);
   }
   const med=a=>[...a].sort((a,b)=>a-b)[2];
   console.log('BUILD_MS '+JSON.stringify({samples:times,median:{baseline:med(times.baseline),current:med(times.current)}}));
@@ -199,6 +246,9 @@ finish();
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--owner-export', type=Path)
+    parser.add_argument('--owner-only', action='store_true', help='Run only optional native owner evidence')
+    parser.add_argument('--legacy-spatial-trim', action='store_true', help='Test-only negative proof: restore the reviewed spatial trim dependency in memory')
+    parser.add_argument('--without-gable-beam', action='store_true', help='Test-only negative proof: remove the migrated parent trim field in memory')
     parser.add_argument('--measure', action='store_true', help='Node build medians of five, owner export required')
     args = parser.parse_args()
     if args.measure and not args.owner_export:
@@ -206,13 +256,23 @@ def main():
     node = shutil.which('node')
     if not node:
         raise RuntimeError('Node is required for the golden test')
-    payload = {'root': ROOT.as_posix(), 'baseline': BASELINE, 'sources': baseline_sources(),
-               'ownerExport': str(args.owner_export) if args.owner_export else None, 'measure': args.measure}
+    sys.path.insert(0, str(ROOT))
+    from services.twin_awning_migration import migrate_awnings
+    code, output = run_node(PREFIX + FIXTURE + FIXTURE_SETUP + '\nconsole.log("FIXTURE_PLANS "+JSON.stringify(plans));',
+                            {'root': ROOT.as_posix()}, timeout=60)
+    if code != 0:
+        raise RuntimeError(output)
+    synthetic = json.loads(next(line[14:] for line in output.splitlines() if line.startswith('FIXTURE_PLANS ')))
+    fixtures = [{'label': label, 'old': old, 'current': migrate_awnings(old)[0]} for label, old in synthetic]
+    payload = {'root': ROOT.as_posix(), 'baseline': BASELINE, 'sources': baseline_sources(), 'fixtures': [] if args.owner_only else fixtures,
+               'ownerExport': str(args.owner_export) if args.owner_export else None, 'measure': args.measure, 'withoutGableBeam': args.without_gable_beam, 'legacySpatialTrim': args.legacy_spatial_trim}
     stdin = None
     if args.owner_export:
-        sys.path.insert(0, str(ROOT))
-        from services.twin_model_bridge import flatten
-        stdin = json.dumps(flatten(json.loads(args.owner_export.read_text(encoding='utf-8'))['model']))
+        from services.twin_model_bridge import flatten as flatten_model
+        model = json.loads(args.owner_export.read_text(encoding='utf-8'))['model']
+        old = legacy_flatten(model)
+        current = flatten_model(migrate_awnings(model)[0])
+        stdin = json.dumps({'old': old, 'current': current})
     with tempfile.TemporaryDirectory(prefix='twin_awning_golden_') as directory:
         driver, job = Path(directory) / 'driver.mjs', Path(directory) / 'job.json'
         driver.write_text(DRIVER, encoding='utf-8')

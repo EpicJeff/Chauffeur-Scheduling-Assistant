@@ -360,30 +360,43 @@ class GutterModel(unittest.TestCase):
                                     floor=0, columns=[])]
         b['extensions'] = [dict(id='a', kind='awning', section='r', x0=2, x1=10,
                                 depth=4, eave=8, pitch=3)]
-        for pid in ('p', 'a'):
+        b['joints'] = [dict(id='j0', level='L1', at=[0, 0]), dict(id='j1', level='L1', at=[40, 0])]
+        b['walls'] = [dict(id='front', level='L1', joints=['j0', 'j1'],
+                           height=10, thickness=.5, exterior=True)]
+        model = twin_model.normalize(model)[0]
+        for pid in ('p',):
             model, _ = ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=True))
             model, _ = ops.apply(model, dict(op='set', building='b', id=pid, field='gutter_ack', value=['hang', 'stub']))
             with self.assertRaises(ops.Refused):
                 ops.apply(model, dict(op='set', building='b', id=pid, field='gutter_ack', value=['unknown']))
             with self.assertRaises(ops.Refused):
                 ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=1))
+        awning_op = dict(op='set_roof_edge', building='b', roof='a', edge=0)
+        model, _ = ops.apply(model, dict(awning_op, gutter=True))
+        model, _ = ops.apply(model, dict(awning_op, gutter_ack=['hang', 'stub']))
+        for invalid in ({'gutter_ack': ['unknown']}, {'gutter': 1}):
+            with self.assertRaises(ops.Refused):
+                ops.apply(model, dict(awning_op, **invalid))
         b = bridge.flatten(model)['buildings'][0]
+        shade = next(s for s in b['roof']['sections'] if s['id'] == 'a')
         self.assertTrue(b['porches'][0]['gutter'])
-        self.assertTrue(b['roof']['extensions'][0]['gutter'])
+        self.assertTrue(shade['edges'][0]['gutter'])
         self.assertEqual(b['porches'][0]['gutter_ack'], ['hang', 'stub'])
-        self.assertEqual(b['roof']['extensions'][0]['gutter_ack'], ['hang', 'stub'])
+        self.assertEqual(shade['edges'][0]['gutter_ack'], ['hang', 'stub'])
         roundtrip = bridge.assemble(twin_plan.normalize(dict(units='ft', buildings=[b], site={}))[0])[0]
         self.assertTrue(roundtrip['buildings'][0]['porches_detail'][0]['gutter'])
-        self.assertTrue(roundtrip['buildings'][0]['extensions'][0]['gutter'])
+        self.assertTrue(next(r for r in roundtrip['buildings'][0]['roofs'] if r['id'] == 'a')['edges'][0]['gutter'])
         self.assertTrue(model['buildings'][0]['porches_detail'][0]['src']['person'])
-        self.assertTrue(model['buildings'][0]['extensions'][0]['src']['person'])
-        for pid in ('p', 'a'):
+        self.assertTrue(next(r for r in model['buildings'][0]['roofs'] if r['id'] == 'a')['src']['person'])
+        for pid in ('p',):
             model, _ = ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=False))
+        model, _ = ops.apply(model, dict(awning_op, gutter=False))
         b = bridge.flatten(model)['buildings'][0]
+        shade = next(s for s in b['roof']['sections'] if s['id'] == 'a')
         self.assertFalse(b['porches'][0]['gutter'])
-        self.assertFalse(b['roof']['extensions'][0]['gutter'])
+        self.assertFalse(shade['edges'][0]['gutter'])
         self.assertNotIn('gutter_ack', b['porches'][0])
-        self.assertNotIn('gutter_ack', b['roof']['extensions'][0])
+        self.assertNotIn('gutter_ack', shade['edges'][0])
 
     def test_attachment_flags_validated(self):
         model = house()
@@ -394,11 +407,13 @@ class GutterModel(unittest.TestCase):
                                 depth=4, eave=8, pitch=3, gutter=1)]
         normalized, notes = twin_model.normalize(model)
         self.assertNotIn('gutter', normalized['buildings'][0]['porches_detail'][0])
-        self.assertNotIn('gutter', normalized['buildings'][0]['extensions'][0])
+        shade = next(r for r in normalized['buildings'][0]['roofs'] if r['id'] == 'a')
+        self.assertNotIn('gutter', shade['edges'][0])
         self.assertTrue(notes)
         flat, notes = twin_plan.normalize(bridge.flatten(model))
         self.assertNotIn('gutter', flat['buildings'][0]['porches'][0])
-        self.assertNotIn('gutter', flat['buildings'][0]['roof']['extensions'][0])
+        shade = next(r for r in flat['buildings'][0]['roof']['sections'] if r['id'] == 'a')
+        self.assertNotIn('gutter', shade['edges'][0])
 
     def test_porch_room_gutter_uses_generator_detail(self):
         from test_twin_model_ops_walls import box
@@ -416,7 +431,11 @@ class GutterModel(unittest.TestCase):
                                       plane_edges={'y0': 0, 'x1': 1, 'y1': 2, 'x0': 3}))
         fixture = Path(__file__).parent / 'fixtures/twin_model/household-2026-11-09.json'
         model = bridge.assemble(json.loads(fixture.read_text(encoding='utf-8')))[0]
-        sections = [b['roof']['sections'] for b in bridge.flatten(model)['buildings']]
+        from services.twin_model_supports import is_supported
+        sections = [[copy.deepcopy(s) for s in b['roof']['sections'] if not is_supported(s)]
+                    for b in bridge.flatten(model)['buildings']]
+        # The fixture has no P0 roof-main, so no beam migration metadata is
+        # expected: retain every field of its original walled sections.
         # Captured from HEAD's to_sections before implementing Task 1.
         digest = hashlib.sha256(json.dumps(sections, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         self.assertEqual(digest, '69517edff37d5d696f86908ec942c3edfb88b3047495fe5a86bb03ca9d6757f6')

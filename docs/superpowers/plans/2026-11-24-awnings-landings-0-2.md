@@ -41,6 +41,12 @@ Stored fields on a `roofs` record, all optional:
 - `host: {wall, edge}`, `thickness_ft`, `fascia: bool`
 - `edges[i].overhang_ft`, optional on every roof: overrides the roof's `overhang` for that edge, so the edge against a wall can be 0. Absent means today's uniform overhang.
 
+`support.count` is an integer from 0 to 40, defaulting to 2 when absent. Zero means no support instances for every support kind. Legacy numeric bracket counts are rounded up and clamped to 0..40 (legacy true means 1); absent or zero brackets means count 0. Later invalid edits (including bool, string and fractional values) default to 2. Fractional legacy spacing is retained as ordinary building-frame `support.at` overrides. These are the owner's Task 4 review rulings.
+
+Task 4 review I3: gutter mount overhang is the edge's own `overhang_ft`, falling back to uniform overhang; it never uses section depth. Post searches retain that limit. Only an eave parallel to and opposite its recorded host edge can route to that host wall across the measured wall gap; this separate wall reach also identifies the wall's corner. It cannot extend post searches or reach another wall.
+
+`roof_frame: {origin: [x, y], angle}` is an ordinary optional roof transform: origin is in building-frame feet, angle is radians, and canonical area/section coordinates rotate about that origin. Automatic support points follow it; authored `support.at` overrides remain in building-frame feet. A host within 1 degree of a building axis is accepted. More diagonal walls retain their exact drawn roof frame without a host and receive a plain flag. `gable_beam` is an ordinary boolean on the walled roof, independent of supported roofs.
+
 Automatic placement, the same as today's brackets: along the outer edge of width `w`, with `inset = min(inset_ft ?? 0.6, w / 2)` and index `i` of `count`, the position is `inset + i * (w - 2 * inset) / max(1, count - 1)` from its start. `at[i]` overrides a position. Defaults: bracket, corbel, brace `count 2`; cable `count 2`; post `count 2`.
 
 ## Review Focus

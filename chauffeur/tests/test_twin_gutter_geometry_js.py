@@ -119,7 +119,10 @@ const disposeTwin = twin => {
 
 // Baseline captured from base commit before Task 3 edits on household-2026-11-09.json
 const EXPECTED_HOUSEHOLD_TRIS = 67978;
-const EXPECTED_HOUSEHOLD_HASH = 'ba229fe1cb8a11951a92d25779ecd88c46e6506826af93d3ceacb577de75d94f';
+// Task 4 moves the supported slab/brackets into their own level batches. The
+// traversal order changes; the owner geometry proof retains every vertex exactly.
+// Previous traversal hash: ba229fe1cb8a11951a92d25779ecd88c46e6506826af93d3ceacb577de75d94f.
+const EXPECTED_HOUSEHOLD_HASH = '110f5efa058d773ba2b752dd1ecc7df738dcc60f5907fc113288880fc19bb612';
 const EXPECTED_STREAM_COUNT = 1088;
 const EXPECTED_STREAM_HASH = '2b02e0aacdb8dc31f2ffc5d59bbe32771e087fa41dea365a1679a69bc2869535';
 
@@ -392,13 +395,12 @@ await test('test_guttered_edges_shed_no_streams', async () => {
   assert.equal(porchRes.eaves.length, 0, 'guttered porch sheds no eave streams');
   assert.equal(porchRes.instances.filter(i => !i.pour).length, 0);
 
-  // 3) Awning gutter: awning attachment sheds no streams when awning.gutter = true.
-  const pAw = house(30, 'gable');
-  pAw.buildings[0].roof.extensions = [{ id: 'aw', kind: 'awning', section: 'r', wall: 'w0', x0: 5, x1: 15, depth: 3, eave: 8, pitch: 3, gutter: true }];
+  // 3) An old awning crosses the real Python migration boundary before drawing.
+  const pAw = clone(input.awningPlan);
   const twinAw = buildTwin(pAw, input.kit, 'high'); await twinAw.ready;
   try {
     const awRes = E.eaveInstances(pAw, twinAw.roofSurfaces, input.kit);
-    assert.equal(awRes.eaves.filter(e => e.kind === 'attachment').length, 0, 'guttered awning sheds no streams');
+    assert.equal(awRes.eaves.filter(e => pAw.buildings[0].roof.sections[e.section]?.support).length, 0, 'guttered awning sheds no streams');
     assert.equal(awRes.instances.filter(i => !i.pour).length, 0, 'all guttered house+awning has 0 eave streams');
     assert.ok(awRes.instances.filter(i => i.pour).length >= 3, 'house + awning downspouts emit pours');
   } finally { disposeTwin(twinAw); }
@@ -1147,11 +1149,12 @@ if __name__ == '__main__':
     sys.path.insert(0, str(ROOT))
     from services import twin_surface_kinds
     from services.twin_model_bridge import assemble, flatten
+    from twin_awning_test_fixtures import migrated_awning_house
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
     plan = flatten(assemble(fixture)[0])
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'kit': kit}, timeout=180)
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'awningPlan': migrated_awning_house(), 'kit': kit}, timeout=180)
     print(output)
     # Also verify Python surface kind table has gutter in sync.
     row = next((r for r in twin_surface_kinds.KINDS if r['kind'] == 'gutter'), None)

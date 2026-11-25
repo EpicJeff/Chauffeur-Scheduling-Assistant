@@ -56,16 +56,20 @@ def house(supported=True):
 def parity_cases():
     cases = []
     for kind in SUPPORT_KINDS[1:]:
-        r = roof(); r['support'] = dict(kind=kind, count=2)
-        cases.append((kind + '_hosted', r))
+        r = roof(); r['support'] = dict(kind=kind, count=0 if kind == 'cable' else 2)
+        if kind == 'post':
+            r['support'].pop('count')
+        cases.append((kind + ('_zero' if kind == 'cable' else '_default_count' if kind == 'post' else '_hosted'), r))
     for name, changes in [
-        ('one', dict(count=1)), ('twelve', dict(count=12)),
+        ('one', dict(count=1)), ('forty', dict(count=40)),
         ('inset_clamped', dict(count=3, inset_ft=6)),
         ('overrides', dict(count=3, at={'0': [1, 9], '2': [18, 11]})),
     ]:
         r = roof(); r['support'] = dict(kind='post', **changes); cases.append((name, r))
         if name == 'inset_clamped':
             r['area'] = [[0, 0], [4, 0], [4, 10], [0, 10]]
+        if name == 'overrides':
+            r['roof_frame'] = dict(origin=[10, 0], angle=.5)
     r = roof(); r.pop('host'); r['support'] = dict(kind='brace', count=3)
     cases.append(('unhosted_ridge_x', r))
     r = roof(); r.pop('host'); r['ridge'] = 'y'
@@ -429,7 +433,7 @@ class AwningRecord(unittest.TestCase):
             r = roof(); r['support'] = {key: copy.deepcopy(rng.choice(values)) for key in
                 ('kind', 'count', 'inset_ft', 'spacing_ft', 'size_ft', 'style', 'at')}
             if i % 2 == 0:
-                r['support'] = dict(kind=rng.choice(SUPPORT_KINDS[1:]), count=rng.randint(1, 12),
+                r['support'] = dict(kind=rng.choice(SUPPORT_KINDS[1:]), count=rng.randint(0, 40),
                                     inset_ft=rng.uniform(0, 6), size_ft=rng.uniform(.05, 3),
                                     at={'0': [rng.uniform(-10, 10), 3]})
             raw = house(); raw['buildings'][0]['roofs'][0] = copy.deepcopy(r)
@@ -440,17 +444,32 @@ class AwningRecord(unittest.TestCase):
             first = copy.deepcopy(r); notes = []; normalize_support(r, notes)
             self.assertEqual(first, r, f'case {i}'); self.assertEqual(notes, [])
 
-    def test_old_awning_save_still_reopens_unchanged(self):
+    def test_old_awning_save_reopens_as_an_ordinary_roof(self):
         m = house(False)
+        walled = copy.deepcopy(m['buildings'][0]['roofs'])
         awning = dict(id='old-awning', kind='awning', section='shade', x0=2, x1=8,
                       depth=3, pitch=3, eave=7, brackets=2)
         m['buildings'][0]['extensions'] = [awning]
         reopened = self.stored_round_trip(m)
-        self.assertEqual(reopened['buildings'][0]['extensions'], [awning])
+        self.assertEqual(reopened['buildings'][0]['extensions'], [])
+        self.assertEqual(reopened['buildings'][0]['roofs'][:-1], walled)
+        migrated = reopened['buildings'][0]['roofs'][-1]
+        self.assertEqual(migrated['id'], awning['id'])
+        self.assertEqual(migrated['support']['kind'], 'bracket')
+        self.assertEqual(migrated['support']['count'], awning['brackets'])
         flat = bridge.flatten(reopened)
-        self.assertEqual(flat['buildings'][0]['roof']['extensions'], [awning])
+        self.assertEqual(flat['buildings'][0]['roof']['extensions'], [])
+        self.assertTrue(any(s['id'] == awning['id'] and s.get('support') for s in flat['buildings'][0]['roof']['sections']))
         rebuilt, _ = bridge.assemble(flat, previous=reopened)
-        self.assertEqual(rebuilt['buildings'][0]['extensions'], [awning])
+        self.assertEqual(rebuilt['buildings'][0]['extensions'], [])
+        restored = next(r for r in rebuilt['buildings'][0]['roofs'] if r['id'] == awning['id'])
+        # The bridge derives low_side from the authored edge settings and adds
+        # its usual self roof-id cache; all persisted roof facts remain equal.
+        self.assertEqual({k: v for k, v in restored.items() if k != 'roof'},
+                         {k: v for k, v in migrated.items() if k != 'low_side'})
+        self.assertEqual(roofs.to_sections(restored)[0]['low_side'], migrated['low_side'])
+        self.assertEqual([{k: v for k, v in r.items() if k != 'roof'}
+                          for r in rebuilt['buildings'][0]['roofs'] if not r.get('support')], walled)
 
     def test_parity_with_js_twelve_cases_and_expected_positions(self):
         cases = parity_cases(); self.assertEqual(len(cases), 12)
@@ -468,7 +487,13 @@ console.log(JSON.stringify(JSON.parse(readFileSync(0,'utf8')).map(supportPoints)
         actual = json.loads(result.stdout)
         expected = [support_points(r) for _, r in cases]
         for (name, _), js, py in zip(cases, actual, expected):
-            self.assertEqual(js, py, name)
+            if name == 'overrides':
+                for left, right in zip(js, py):
+                    self.assertEqual(left['id'], right['id']); self.assertEqual(left['edge'], right['edge'])
+                    self.assertAlmostEqual(left['u'], right['u'], places=10)
+                    for a, b in zip(left['at'], right['at']): self.assertAlmostEqual(a, b, places=10)
+            else:
+                self.assertEqual(js, py, name)
             print('PARITY ' + name + ' ' + json.dumps(py))
         for actual, u, at in zip(expected[0], [.6, 19.4], [[19.4, 10], [.6, 10]]):
             self.assertEqual(actual['edge'], 2)
@@ -479,6 +504,18 @@ console.log(JSON.stringify(JSON.parse(readFileSync(0,'utf8')).map(supportPoints)
         self.assertEqual([p['u'] for p in expected[7]], [2, 2, 2])
         self.assertFalse(is_supported({'support': {'kind': 'walls'}}))
         self.assertEqual(support_points(roof(False)), [])
+        self.assertEqual(expected[3], [], 'zero cable count produces no points')
+        self.assertEqual(len(expected[4]), 2, 'absent post count still defaults to two')
+        self.assertEqual(len(expected[6]), 40, 'the whole allowed count range reaches JS')
+        self.assertEqual(expected[8][0]['at'], [1, 9], 'authored overrides stay in building feet')
+
+    def test_zero_count_is_valid_and_has_no_points_for_every_support_kind(self):
+        for kind in SUPPORT_KINDS[1:]:
+            r = roof(); r['support'] = dict(kind=kind, count=0)
+            notes = []; normalize_support(r, notes)
+            self.assertEqual(r['support']['count'], 0)
+            self.assertEqual(notes, [])
+            self.assertEqual(support_points(r), [])
 
 
 if __name__ == '__main__':

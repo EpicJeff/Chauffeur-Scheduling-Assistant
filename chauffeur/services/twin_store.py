@@ -86,6 +86,8 @@ def _write_through(row, text, normalized=False):
     model = json.loads(text)
     if model.get('schema') != twin_model.SCHEMA:
         return
+    from services.twin_awning_migration import migrate_awnings
+    model, _ = migrate_awnings(model)
     _READ_KEY, _READ_MODEL, _READ_PLAN, _READ_NORMALIZED = _read_key(row), model, None, normalized
 
 
@@ -506,7 +508,8 @@ def _read_round(row, round_id):
     with open(os.path.join(DATA_DIR, 'rounds', f'{round_id}.json'), encoding='utf-8') as file:
         plan = json.load(file)
     if plan.get('schema') == twin_model.SCHEMA:
-        return plan
+        from services.twin_awning_migration import migrate_awnings
+        return migrate_awnings(plan)[0]
     return twin_model_bridge.assemble(twin_plan.normalize(plan)[0])[0]
 
 

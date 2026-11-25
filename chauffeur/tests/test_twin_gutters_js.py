@@ -68,6 +68,27 @@ function roof(p,id,bounds,kind='hip',extra={}){
  p.buildings[0].roofs.push(r);p.buildings[0].roof.sections.push(s);return s;
 }
 const calc=p=>{const runs=G.gutterRuns(p);return {runs,spouts:G.downspouts(p,runs)};};
+// Migration changes ownership, not these recorded numeric placement checks.
+// Map only legacy awning identities to their ordinary roof edge. Their edge
+// normals now use the section's canonical frame, rather than an attachment's
+// triangle cross product; derive that frame independently from the saved plan.
+function migratedBaseline(value){
+ const result=clone(value),ids=new Map();
+ const owner=(building,id)=>{const b=input.plan.buildings.find(b=>b.id===building),r=b?.roofs?.find(r=>r.id===id&&r.support?.kind);
+  if(!r)return null;const s=b.roof.sections.find(s=>(s.roof||s.id)===id),edge=s.plane_edges?.[s.low_side]??['y0','x1','y1','x0'].indexOf(s.low_side);
+  const a=(b.rotation||0)*Math.PI/180,c=Math.cos(a),sn=Math.sin(a),p=b.position||[0,0],n={y0:[0,-1],x1:[1,0],y1:[0,1],x0:[-1,0]}[s.low_side];
+  const dx=(p[0]+c*n[0]-sn*n[1])*FT-p[0]*FT,dz=-(p[1]+sn*n[0]+c*n[1])*FT+p[1]*FT;
+  const direction=[c*dx-sn*dz,-sn*dx-c*dz],length=Math.hypot(...direction);
+  return {id,edge,outward:direction.map(v=>v/length)};};
+ for(const run of result.runs){const segment=run.segments.find(s=>s.porch&&owner(run.building,s.porch));if(!segment)continue;
+  const o=owner(run.building,segment.porch),id=`${run.building}:${o.id}:${o.edge}`;ids.set(run.id,id);run.id=id;
+  for(const s of run.segments)if(s.porch===o.id)Object.assign(s,{roof:o.id,edge:o.edge,porch:null,outward:o.outward});
+ }
+ for(const spout of result.spouts){const run=result.runs.find(r=>r.id===(ids.get(spout.run)||spout.run)),o=run&&owner(run.building,spout.edge.porch);if(!o)continue;
+  const old=spout.run;spout.run=ids.get(old);spout.id=spout.id.replace(old,spout.run);Object.assign(spout.edge,{roof:o.id,edge:o.edge,porch:null});
+ }
+ return result;
+}
 function allEaves(plan){
  const p=clone(plan);
  for(const b of p.buildings){for(const r of b.roofs||[])for(const e of r.edges)e.gutter=e.setting==='sloped';
@@ -91,11 +112,11 @@ await test('test_household_prechange_baseline',()=>{
  assert.equal(actual.runs.length,22);assert.equal(actual.spouts.length,23);
  const placement=value=>{const result=clone(value);for(const s of result.spouts){delete s.top;delete s.path;
   if(s.mount==='hang')delete s.outlet.at;}return result;};
- assert.deepEqual(placement(actual),placement(input.baseline),'all placement, corners, drainage, shares, outlets and flags are unchanged');
+ assert.deepEqual(placement(actual),placement(migratedBaseline(input.baseline)),'all placement, corners, drainage, shares, outlets and flags are unchanged');
 });
 await test('test_household_full_geometry_baseline',()=>{
  const rounded=value=>JSON.parse(JSON.stringify(value,(_,v)=>typeof v==='number'?Math.round(v*1e6)/1e6:v));
- assert.deepEqual(rounded(coldHousehold||calc(allEaves(input.plan))),rounded(input.geometryBaseline));
+ assert.deepEqual(rounded(coldHousehold||calc(allEaves(input.plan))),rounded(migratedBaseline(input.geometryBaseline)));
 });
 const local=(p,v)=>{const b=p.buildings[0],a=(b.rotation||0)*Math.PI/180,x=v[0]/FT-b.position[0],y=-v[2]/FT-b.position[1];
  return [Math.cos(a)*x+Math.sin(a)*y,-Math.sin(a)*x+Math.cos(a)*y,v[1]/FT-(b.base||0)];};
@@ -661,9 +682,8 @@ await test('test_blocked_elbow_keeps_best_allowed_swiveled_landing',()=>{
  assert.ok(Math.abs(out[0])>.25&&Math.abs(out[0])<=G.GUTTER.elbowFt+.05);
 });
 await test('test_awning_plan_only_and_snapshot_agree',async()=>{
- const p=house(),b=p.buildings[0];b.roofs[0].edges.forEach(e=>e.gutter=false);b.roof.sections[0].gutters={};
- b.roof.extensions=[{id:'aw',kind:'awning',section:'r',wall:'w0',x0:5,x1:15,depth:3,eave:8,pitch:3,gutter:true}];
- const runs=G.gutterRuns(p);assert.equal(runs.length,1);assert.equal(runs[0].segments[0].porch,'aw');
+ const p=clone(input.awningPlan);
+ const runs=G.gutterRuns(p);assert.equal(runs.length,1);assert.equal(runs[0].segments[0].roof,'aw');
  const twin=buildTwin(p,{materials:{}},'high');await twin.ready;
  try{const other=G.gutterRuns(p,twin.roofSurfaces);assert.equal(other.length,1);near(other[0].length,runs[0].length,.01);
   for(const k of [0,1,2])near(other[0].segments[0].a[k],runs[0].segments[0].a[k],.01);
@@ -802,8 +822,9 @@ if __name__ == '__main__':
     os.environ.pop('HA_BASE_URL', None)
     sys.path.insert(0, str(ROOT))
     from services.twin_model_bridge import assemble, flatten
+    from twin_awning_test_fixtures import migrated_awning_house
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'awningPlan': migrated_awning_house(False), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
     print(output)
     for line in output.splitlines():
         if line.startswith('HOUSEHOLD_GUTTERS '):

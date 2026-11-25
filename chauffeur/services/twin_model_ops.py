@@ -1160,10 +1160,7 @@ def _set_field(building, op, ha_catalogue=None, *, actor='person'):
                 _porch_detail(building, room)
                 piece = _find(building, 'porches_detail', pid)
         if piece is None:
-            piece = next((p for p in building.get('extensions', [])
-                          if p.get('id') == pid and p.get('kind') == 'awning'), None)
-        if piece is None:
-            raise Refused('Choose a porch or awning for the gutter flag.')
+            raise Refused('Choose a porch; for a roof or awning use set_roof_edge with its edge.')
         if field == 'gutter' and piece.get('gutter', False) != op['value']:
             piece.pop('gutter_ack', None)
         piece[field] = deepcopy(op['value'])

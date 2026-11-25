@@ -4,7 +4,7 @@ import math
 import re
 
 SUPPORT_KINDS = ['walls', 'bracket', 'corbel', 'brace', 'cable', 'post']
-ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia')
+ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia', 'gable_beam', 'roof_frame')
 CHOICE_FIELDS = (*ROOF_FIELDS, 'edges')
 _SIZES = dict(bracket=.3, corbel=.5, brace=.3, cable=.08, post=.5)
 _EPS = 1e-8
@@ -28,7 +28,9 @@ def _point(value):
 
 
 def _note(roof, notes):
-    text = f"Roof {roof.get('name') or roof.get('id', 'unnamed')}: reset invalid awning settings to their defaults."
+    label = (f"Roof {roof['name']}" if roof.get('name') else
+             'Awning' if is_supported(roof) else f"Roof {roof.get('id', 'unnamed')}")
+    text = f"{label}: reset invalid awning settings to their defaults."
     if text not in notes:
         notes.append(text)
 
@@ -52,7 +54,7 @@ def normalize_support(roof, notes):
             kind = support['kind']
             clean = {'kind': kind}
             for key, default, valid in (
-                ('count', 2, lambda v: type(v) is int and 1 <= v <= 12),
+                ('count', 2, lambda v: type(v) is int and 0 <= v <= 40),
                 ('inset_ft', .6, lambda v: _number(v, 0, 6)),
                 ('size_ft', _SIZES[kind], lambda v: _number(v, .05, 3)),
             ):
@@ -85,6 +87,14 @@ def normalize_support(roof, notes):
         roof['thickness_ft'] = .3; _note(roof, notes)
     if 'fascia' in roof and type(roof['fascia']) is not bool:
         roof['fascia'] = True; _note(roof, notes)
+    if 'gable_beam' in roof and type(roof['gable_beam']) is not bool:
+        roof.pop('gable_beam'); _note(roof, notes)
+    if 'roof_frame' in roof:
+        frame = roof['roof_frame']
+        if not isinstance(frame, dict) or not _point(frame.get('origin')) or not _number(frame.get('angle')):
+            roof.pop('roof_frame'); _note(roof, notes)
+        else:
+            roof['roof_frame'] = dict(origin=list(frame['origin']), angle=frame['angle'])
     for edge in roof.get('edges', []) if isinstance(roof.get('edges'), list) else []:
         if isinstance(edge, dict) and 'overhang_ft' in edge and not _number(edge['overhang_ft'], 0, 6):
             uniform = roof.get('overhang', 1)
@@ -95,6 +105,23 @@ def normalize_support(roof, notes):
 
 def _axis(a, b):
     return 0 if abs(a[0]-b[0]) <= _EPS else 1 if abs(a[1]-b[1]) <= _EPS else None
+
+
+def wall_axis(a, b):
+    """Constant coordinate of a wall within one degree of a building axis."""
+    dx, dy = abs(b[0]-a[0]), abs(b[1]-a[1])
+    return (0 if dx <= dy*math.tan(math.radians(1))+_EPS else
+            1 if dy <= dx*math.tan(math.radians(1))+_EPS else None)
+
+
+def frame_point(roof, point, *, inverse=False):
+    frame = roof.get('roof_frame')
+    if not frame:
+        return list(point)
+    angle = frame['angle'] * (-1 if inverse else 1)
+    c, s = math.cos(angle), math.sin(angle)
+    x, y = [point[i]-frame['origin'][i] for i in (0, 1)]
+    return [frame['origin'][0]+c*x-s*y, frame['origin'][1]+s*x+c*y]
 
 
 def normalize_host(roof, building, notes):
@@ -112,7 +139,7 @@ def normalize_host(roof, building, notes):
         a, b = (wall['from'], wall['to']) if 'from' in wall and 'to' in wall else (endpoints if len(endpoints) == 2 else (None, None))
         axis = _axis(area[edge], area[(edge+1) % len(area)])
         valid = (wall.get('level') == roof.get('level') and a is not None and b is not None
-                 and axis is not None and _axis(a, b) == axis)
+                 and axis is not None and wall_axis(a, b) == axis)
         if valid:
             roof['host'] = {'wall': wall['id'], 'edge': edge}
             if isinstance(roof.get('edges'), list) and edge < len(roof['edges']):
@@ -132,11 +159,13 @@ def normalize_host(roof, building, notes):
     roof.pop('host', None)
     _note(roof, notes)
     if valid and wall is None:
-        text = f"Roof {roof.get('name') or roof['id']} has lost its supporting wall."
+        label = (f"Roof {roof['name']}" if roof.get('name') else
+                 'Awning' if is_supported(roof) else f"Roof {roof['id']}")
+        text = f"{label} has lost its supporting wall."
         flags = building.setdefault('flags', [])
         if not any(f.get('id') == roof['id'] and f.get('kind') == 'roof' for f in flags):
             flags.append({'id': roof['id'], 'kind': 'roof', 'text': text,
-                          'at': [sum(p[i] for p in area)/len(area) for i in (0, 1)],
+                          'at': frame_point(roof, [sum(p[i] for p in area)/len(area) for i in (0, 1)]),
                           'level': roof.get('level')})
 
 
@@ -196,7 +225,7 @@ def carry_fields(source, target, *, overwrite=False):
 
 def support_points(roof):
     """Authored outer-edge points, in edge order; u is distance in feet."""
-    if not is_supported(roof):
+    if not is_supported(roof) or roof['support'].get('count', 2) == 0:
         return []
     area = area_of(roof)
     segments = list(zip(area, area[1:] + area[:1]))
@@ -223,9 +252,10 @@ def support_points(roof):
         u = inset + i*(width-2*inset)/max(1, count-1)
         at = support.get('at', {}).get(str(i))
         if at is None:
-            at = [a[k]+(b[k]-a[k])*u/width for k in (0, 1)]
+            at = frame_point(roof, [a[k]+(b[k]-a[k])*u/width for k in (0, 1)])
         else:
             at = list(at)
-            u = sum((at[k]-a[k])*(b[k]-a[k])/width for k in (0, 1))
+            local = frame_point(roof, at, inverse=True)
+            u = sum((local[k]-a[k])*(b[k]-a[k])/width for k in (0, 1))
         result.append({'id': f'support:{i}', 'edge': edge, 'u': u, 'at': at})
     return result

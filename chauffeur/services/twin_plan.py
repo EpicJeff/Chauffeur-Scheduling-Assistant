@@ -280,9 +280,9 @@ def _roof(building, notes):
                 if isinstance(opening, dict) and 'gable' in opening:
                     opening['section'] = 'roof-main'
 
-    def pitch_value(value, name):
-        if not _number(value) or not 1 <= value <= 24:
-            value = max(1, min(24, value)) if _number(value) else 1
+    def pitch_value(value, name, minimum=1):
+        if not _number(value) or not minimum <= value <= 24:
+            value = max(minimum, min(24, value)) if _number(value) else minimum
             notes.append(f'Roof section {name}: pitch clamped to {value}.')
         return value
 
@@ -303,7 +303,9 @@ def _roof(building, notes):
                 or (section['kind'] == 'shed' and section.get('low_side') not in sides)):
             notes.append(f'Dropped roof section {name}: invalid bounds, kind, direction or plate.')
             continue
-        section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name)
+        from services.twin_model_supports import is_supported
+        minimum_pitch = 0 if is_supported(section) else 1
+        section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name, minimum_pitch)
         if 'ends' in section:
             ends = section.pop('ends')
             if isinstance(ends, dict) and section['kind'] in ('gable', 'hip'):
@@ -321,7 +323,7 @@ def _roof(building, notes):
             pitches = section.pop('pitches')
             if isinstance(pitches, dict):
                 section['pitches'] = {side: (0 if section['kind'] == 'flat'
-                                           else pitch_value(value, f'{name}.{side}'))
+                                           else pitch_value(value, f'{name}.{side}', minimum_pitch))
                                       for side, value in pitches.items() if side in sides}
                 if any(side not in sides for side in pitches):
                     notes.append(f'Roof section {name}: dropped unknown pitch sides.')
@@ -348,6 +350,11 @@ def _roof(building, notes):
             _gutter_flag(extension, notes)
         if migrating and isinstance(extension, dict):
             extension['section'] = 'roof-main'
+        if isinstance(extension, dict) and extension.get('kind') == 'awning':
+            # Migration turns even an incomplete old attachment into a located,
+            # editable roof ghost. Do not discard it before that conversion.
+            extensions.append(extension)
+            continue
         section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
         if (isinstance(extension, dict) and section is None and extension.get('state') == 'ghost'
                 and extension.get('why') and _point(extension.get('position'))
@@ -840,6 +847,12 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
                                                 building.get('name') or 'House')
         walls = _walls(building, levels, notes)
         sections = _roof(building, notes)
+        if any(e.get('kind') in ('awning', 'shed_continuation') for e in building['roof']['extensions']):
+            from services.twin_awning_migration import migrate_awnings
+            migrated, migration_notes = migrate_awnings({'materials': raw.get('materials', {}), 'buildings': [building]})
+            building = migrated['buildings'][0]
+            notes.extend(migration_notes)
+            sections = _roof(building, notes)
         _rooms(building, levels, notes)
         _openings(building, walls, sections, notes)
         _details(building, levels, notes)

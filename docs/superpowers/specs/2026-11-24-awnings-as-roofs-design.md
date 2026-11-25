@@ -53,7 +53,8 @@ Reference photos (not committed): a sloped metal awning on wood braces, a gable 
 
 All fields are optional on the stored `roofs` record. A roof without `support` is a walled roof, exactly as today. Field shapes are the builder's, within these meanings:
 
-- `support`: `{ kind: walls | bracket | corbel | brace | cable | post, count, inset, size, style, at: [overrides] }`.
+- `support`: `{ kind: walls | bracket | corbel | brace | cable | post, count, inset_ft, spacing_ft, size_ft, style, at: {<index>: [x, y]} }`.
+  - `count` is an integer from 0 to 40; absent defaults to 2. Zero means no support geometry for any kind. Legacy numeric bracket counts are rounded up and clamped to 0..40 (true means 1); absent brackets means zero. Later bool, string and fractional edits default to 2; fractional legacy spacing is retained with ordinary building-frame `support.at` overrides (owner Task 4 review rulings).
   - Supports are placed automatically by `count` along the outer edge, spread evenly with an inset. Any one can be dragged; its override replaces the automatic place. Reset returns it.
   - `style` picks a built-in shape for brackets, corbels and braces, or a Library model.
   - Cables: an anchor height above the eave on the wall, rod diameter and an anchor plate. Posts: size and shape, with a base. The ground under a post is the floor or the yard below it.
@@ -65,13 +66,15 @@ All fields are optional on the stored `roofs` record. A roof without `support` i
 - Overhang becomes settable per edge, so the side against the wall can be 0.
 - Materials: the existing roof, plane and fascia materials, plus slots for supports, truss, underside and slats. New slots go in `services/twin_surface_kinds.py` and its JS twin.
 
+Task 4 review I3: gutter mount overhang is the edge's own `overhang_ft`, falling back to uniform overhang; it never uses section depth. Post searches retain that limit. Only an eave parallel to and opposite its recorded host edge can route to that host wall across the measured wall gap; this separate wall reach also identifies the wall's corner. It cannot extend post searches or reach another wall.
+
 Persistence facts that must be handled: `from_section` drops unknown edge fields, a re-read restores only `wall` and `wall_offset`, `accept_proposal` and the legacy edit replace the record, the `choices` whitelists omit new fields, and dormers do not inherit record fields.
 
 ## Calls made where the code left a choice (Claude; change any by asking)
 
 - **Height:** like `plate` today, the eave height is absolute in the building's own frame. `level` is stored only for floor-view visibility. An upper-floor awning uses its host wall's level for that.
 - **Outline:** the same right-angle polygon roofs accept today, split into sections by the existing code. Today's awnings are single rectangles.
-- **Host:** the existing edge attachment (`wall`, `wall_offset`) is reused. For a supported roof, the whole roof moves with the wall, not just the edge. The host wall must be parallel to a building axis (rotated buildings are fine, since their frame rotates); a diagonal wall is refused with a plain message.
+- **Host:** the existing edge attachment (`wall`, `wall_offset`) is reused. For a supported roof, the whole roof moves with the wall, not just the edge. A host within 1 degree of a building axis is accepted (Task 4 review ruling). More diagonal walls keep the old drawn placement without a host, with a plain flag. The optional ordinary `roof_frame: {origin: [x, y], angle}` rotates canonical roof coordinates about a building-frame origin; angle is radians. Automatic support points rotate with it; authored `support.at` points remain in building-frame feet. `gable_beam` is an ordinary boolean stored on the walled roof and round-trips independently of any supported roof.
 - **What counts as an awning:** any roof whose `support` is not `walls`. Post-supported roofs, including the patio, are awnings. The scene panel labels them "Awning" and the agent uses that word.
 - **Old houses:** awnings migrate on load, and the new shape is written on the next save. Undo steps and saves in the old shape keep opening. A house saved by this version does not open in an older app version.
 - **Slats and lamps:** the slat geometry itself is the occluder for baked lamps and the sun. The baker has no partial-transmission occluder, so none is added. At outdoor texel density the lamp stripes will be soft. Cap: 60 slats (720 triangles) per awning; a wider roof spaces them further apart.

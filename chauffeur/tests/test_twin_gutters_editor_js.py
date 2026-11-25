@@ -259,19 +259,28 @@ await test('test_porch_and_awning_toggle',async()=>{
   const {sceneRows}=await import(file('static/twin/editor/scene_tree.js'));
   for(const kind of ['porch','awning']){
     setup();const b=plan.buildings[0],p={id:kind,kind,level:'L1',polygon:[[0,0],[8,0],[8,4],[0,4]],floor:0,roof:{kind:'shed',height:8}};
-    if(kind==='porch')b.porches=[p];else b.roof.extensions=[p];
-    assert.ok(sceneRows(plan).some(r=>r.id===kind),'attachment is reachable in Scene');
-    cards.draw({pieceId:kind,buildingId:'b'});await toggle();
-    assert.deepEqual(ops,[{op:'set',building:'b',id:kind,field:'gutter',value:true}]);
+    if(kind==='porch'){
+      b.porches=[p];assert.ok(sceneRows(plan).some(r=>r.id===kind),'porch is reachable in Scene');
+      cards.draw({pieceId:kind,buildingId:'b'});await toggle();
+      assert.deepEqual(ops,[{op:'set',building:'b',id:kind,field:'gutter',value:true}]);
+    }else{
+      plan=structuredClone(input.awningPlan);
+      const shade=plan.buildings[0].roofs.find(r=>r.id==='aw');shade.edges[0].gutter=false;
+      assert.ok(sceneRows(plan).some(r=>r.id==='aw'&&r.kind==='roof'),'migrated awning is reachable as a roof in Scene');
+      cards.showRoofEdge({id:'aw',building:'b',edge:0});await toggle();
+      assert.deepEqual(ops,[{op:'set_roof_edge',building:'b',roof:'aw',edge:0,gutter:true}]);
+    }
   }
 });
-await test('test_awning_scene_row_omits_ineffective_eye',async()=>{
+await test('test_awning_scene_row_has_effective_roof_eye',async()=>{
   setup();const {createSceneTree}=await import(file('static/twin/editor/scene_tree.js'));
-  plan.buildings[0].roof.extensions=[{id:'shade',kind:'awning',section:'r',level:'L1',name:'Entry awning'}];
+  plan=structuredClone(input.awningPlan);const hidden=[];
   const treeHost=document.createElement('div');document.body.append(treeHost);
-  const tree=createSceneTree({host:treeHost,getPlan:()=>plan,getSelection:()=>null,select(){},floors:{current:()=> 'b:L1',hidden:()=>false}});
-  const row=treeHost.querySelector('[data-scene-id="shade"]');assert.ok(row);
-  assert.equal(row.querySelector('[data-row-eye]'),null);assert.ok(row.querySelector('[data-scene-select]'));tree.dispose();treeHost.remove();
+  const tree=createSceneTree({host:treeHost,getPlan:()=>plan,getSelection:()=>null,select(){},floors:{current:()=> 'b:L1',hidden:()=>false},
+    visibility:{isHidden:()=>false,isLocked:()=>false,hide:id=>hidden.push(id),subscribe:()=>()=>{}}});
+  const row=treeHost.querySelector('[data-scene-id="aw"]');assert.ok(row);
+  const eye=row.querySelector('[data-row-eye]');assert.ok(eye);click(eye);assert.deepEqual(hidden,['aw']);
+  assert.ok(row.querySelector('[data-scene-select]'));tree.dispose();treeHost.remove();
 });
 await test('test_server_and_ui_eaves_match',async()=>{
   const {eaveEdgeIndices}=await import(file('static/twin/gutters.js'));
@@ -319,6 +328,8 @@ if __name__ == '__main__':
             edge['setting'] = setting
         expected = sorted(twin_model_roofs.eave_edge_indices(roof))
         samples.append({'building': flatten(sample)['buildings'][0], 'expected': expected})
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'eaves': samples})
+    from twin_awning_test_fixtures import migrated_awning_house
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': plan, 'eaves': samples,
+                                   'awningPlan': migrated_awning_house()})
     print(output, end='')
     sys.exit(code or 0)

@@ -656,6 +656,11 @@ def normalize(model: dict, *, persist_t_splits=True, preserve_room_polygons=Fals
                 notes.append(f"Room {room['id']}: defaulted invalid floor_offset_ft to 0.")
                 value = 0
             room['floor_offset_ft'] = value
+        if any(e.get('kind') in ('awning', 'shed_continuation') for e in building.get('extensions', [])):
+            from services.twin_awning_migration import migrate_awnings
+            migrated, migration_notes = migrate_awnings({'schema': SCHEMA, 'materials': model.get('materials', {}), 'buildings': [building]})
+            building = migrated['buildings'][0]
+            notes.extend(migration_notes)
         _pieces(building, notes)
         twin_plan._item_slots(building, notes)
         twin_plan._surface_slots(building, notes)
