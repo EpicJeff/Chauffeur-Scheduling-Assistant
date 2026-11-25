@@ -1,3 +1,5 @@
+import { allPorches } from '../gutter_presence.js';
+
 // Selection store (Ruling 1): ordered list of piece references (last-added = primary()),
 // with strict no-op guards and a member-only onChange/subscribe payload.
 // Room-focus navigation lives in createRoomSelection (kept compatible with callers
@@ -196,7 +198,16 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
   const building = id => getModel?.()?.buildings?.find(b => b.id === id) || getPlan?.()?.buildings?.find(b => b.id === id);
 
   function roomContext(pick) {
-    const b = building(pick.building), r = b?.rooms?.find(r => r.id === pick.id);
+    const b = building(pick.building);
+    if (pick.kind === 'level' && b?.levels?.some(l => l.id === pick.id)) {
+      const ids = new Set([pick.id, ...(view?.levelFocusMembers?.(b.id, pick.id) || [])]);
+      for (const list of ['walls', 'rooms', 'joints', 'fixtures', 'lights', 'stairs', 'awnings', 'porches', 'solar_zones'])
+        for (const p of b[list] || []) if (p.level === pick.id) ids.add(p.id);
+      for (const list of ['openings', 'anchors', 'items']) for (const p of b[list] || [])
+        if (p.level === pick.id || ids.has(p.wall || p.host?.wall || p.host?.floor || p.host?.ceiling)) ids.add(p.id);
+      return { kind: 'level', id: pick.id, building: b.id, level: pick.id, walls: [], allowed: [...ids] };
+    }
+    const r = [...(b?.rooms || []), ...allPorches(b || {})].find(r => r.id === pick.id);
     if (!r) return null;
     const cycle = r.joints || [];
     const pairs = new Set(cycle.map((id, i) => [id, cycle[(i + 1) % cycle.length]].sort().join('\n')));
@@ -214,7 +225,7 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
       }
     }
     return {
-      kind: 'room', id: r.id, building: b.id, level: r.level,
+      kind: pick.kind === 'porch' || !b.rooms?.includes(r) ? 'porch' : 'room', id: r.id, building: b.id, level: r.level || b.levels?.[0]?.id,
       walls: boundary.map(w => w.id), allowed: [...ids],
     };
   }
@@ -241,6 +252,7 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
       buildingId: selected?.building ?? null,
       level: selected?.level ?? null,
       room: room?.id ?? null,
+      focusKind: room?.kind ?? null,
       ghosted,
       tinted: { floor: room?.id ?? null, walls: [...walls] },
       hover: hovered && { ...hovered },
@@ -264,11 +276,16 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
     const pick = typeof id === 'object' ? normalize(id) : { id, building: buildingId };
     const context = pick && roomContext(pick);
     if (!context) { clear(); return; }
-    room = { kind: 'room', id: context.id, building: context.building, level: context.level };
+    room = { kind: context.kind, id: context.id, building: context.building, level: context.level };
     walls = context.walls; allowed = context.allowed;
     selected = { ...room };
     hovered = null;
     changed(true);
+  }
+
+  function leaveRoom() {
+    if (!room) return;
+    selected = { ...room }; clearRoom(); hovered = null; changed(true);
   }
 
   function back() {
@@ -284,8 +301,12 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
       if (context) { walls = context.walls; allowed = context.allowed; }
     }
     if (!pick || pick.kind !== 'proposal' && !inside(pick)) { back(); return; }
-    if (pick.kind === 'room') { focusRoom(pick); return; }
     if (['building', 'level', 'proposal'].includes(pick.kind)) clearRoom();
+    if (['room', 'porch'].includes(pick.kind) && !pick.level) {
+      const b = building(pick.building);
+      pick.level = [...(b?.rooms || []), ...allPorches(b || {})].find(r => r.id === pick.id)?.level ?? b?.levels?.[0]?.id ?? null;
+    }
+    if (pick.kind === 'level') pick.level = pick.id;
     selected = pick;
     hovered = null;
     changed(true);
@@ -317,5 +338,5 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
     changed(false);
   }
 
-  return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, back, refresh };
+  return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, leaveRoom, back, refresh };
 }

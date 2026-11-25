@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1002 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1004 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1004 (2026-11-25, NOT device-verified): selecting a room, porch or level is an ordinary selection.**
+
+Owner: "Why does selecting a porch go into this ghosted view that freezes the editor for like 30 seconds? It should just be a selection like any other, right?"
+
+**Before.** `view.setSelection` rebuilt the whole house to unmerge the selected level, ghosted everything else and added 18 shader programs; leaving rebuilt again. Owner's 11-20 house, High, in the editor: 34 s for the pool porch, 12 to 14 s for each further room or porch selection.
+
+**Now.** A room, porch or level selection is an outline and a card: no rebuild, no material clone, no new program, no click limit, nothing hidden or shown. Same house: 0.25 to 0.31 s, the cost of selecting a roof (measured on a busy machine). Other selections keep their accent tint.
+
+**Focus room** (card button and right-click of a room, porch or level; Escape or "Leave room" ends it) is the old inside view as an explicit action: ghosting, clicks limited to the room. It works from the merged meshes and their ownership ranges (`selection_focus.js`), with cached variants warmed off the live scene, so entering and leaving never rebuild. Household entry about 0.35 s in the browser, leaving 0.1 s; inside clicks cost no new render.
+
+**Nothing depends on focus any more:** wall, corner, opening and hosted drags and previews, split room, ceiling and wall devices, fixture cards, Roof over, marquee, materials floor scope, Top and Plan framing. `editor/room_context.js` answers "which room" (selected, else focused, else the host's; no host fallback for Roof over, dimensions and Split room).
+
+**Baking.** Authored materials are captured once where models are created, never from a presentation (focus, faint, Unlit, tint), so a bake after Focus keeps every receiver. Atlas preparation rebases live ownership ranges: the stale `snapRanges` backlog item is closed, and a later weather-open write now reads correct ranges. Viewer geometry, lights, draws, programs, bake keys and atlas are unchanged.
+
+Tests: `test_twin_plain_selection_js` (25 + 6), `test_house_editor_plain_selection_live`, and neighbours `selection`, `gesture_rules`, `view_settle`, `bake_editor_keys`, `house_defaults`. `test_twin_gesture_rules_js` passes 46/46 but exceeds its own 180 s limit on this PC, as on main.
+
+**v2.499.1003 (2026-11-25): two demo stills and a faster demo capture.**
+
+`tools/demo_capture.py` gains two opt-in shots: `twin-lit-models` (a furnished demo room at night; invented furniture built in code, a lamp and a real lighting bake; needs `--timeout 240`) and `twin-eave-streams` (the demo cottage in heavy rain, gutters off; the stream phase is chosen so every stream reaches the ground). `--list` marks opt-in shots.
+
+The nine default shots take about 94 s, from over 170 s: Playwright was serialising the whole three.js scene returned by `compileAsync`; `_ready_evaluate` now discards the value and still awaits it. The four editor shots share one page, with selection, camera, level, time and scroll reset between shots. The editor's cold start may take 25 s. Isolation guards are unchanged; `furnish_demo_room` refuses any data folder that is not a fresh demo one.
+
+Tests: `test_demo_capture`, `test_demo_isolation`, `test_demo_capture_live`.
 
 **v2.499.1002 (2026-11-25, NOT device-verified): full downspouts where there is room, and one placed anywhere by hand.**
 

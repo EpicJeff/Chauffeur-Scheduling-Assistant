@@ -12,7 +12,7 @@ import { resolveSurfaceMaterial } from './surface_material.js';
 import { supportMaterialSurface } from './support_material.js';
 import { undersideMaterialSurface } from './underside_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
-import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
+import { captureBakeMaterials, registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes, authoredRoofShape } from './twin_roof.js';
@@ -428,8 +428,10 @@ export const buildingKey = (plan, building, kit, tier, opts) => keyFromParts(bui
 // A late import must publish into the currently adopted twin, even after its
 // building has survived several rebuilds. The owner changes only at adoption.
 class BuildingRegistry extends Map {
-  set(key, value) { super.set(key, value); this.owner?.set(key, value); return this; }
-  delete(key) { this.owner?.delete(key); return super.delete(key); }
+  revision = 0;
+  touch() { ++this.revision; this.owner?.touch?.(); }
+  set(key, value) { super.set(key, value); ++this.revision; this.owner?.set(key, value); return this; }
+  delete(key) { this.owner?.delete(key); const removed = super.delete(key); if (removed) ++this.revision; return removed; }
 }
 const registries = ['pieces', 'pieceBounds', 'pickObjects', 'roofSurfaces'];
 
@@ -441,7 +443,7 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   const effects = buildEffects(plan, {tier, editor: !opts.viewing});
   if (effects) root.add(effects.group);
   const next = { root, groups, buildings: new Map(), materials: new Map(), roomLights: [], levelElevations: {}, notes: [], effects };
-  for (const name of registries) next[name] = new Map();
+  for (const name of registries) next[name] = new BuildingRegistry();
   if (!opts.bakeSource) { _gutterPlacementStats.lastPlacementMs = 0; _gutterPlacementStats.lastGeometryMs = 0; }
   const placement = opts.gutters ?? resolveGutterPlacement(plan, opts.timing);
   next.gutters = placement;
@@ -504,10 +506,12 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
       if (resolved.fixed === entry.inputs) entry.key = keyFromParts(resolved);
     }
     writeWeatherOpen(root, next.skyCover);
+    if (!opts.bakeSource) captureBakeMaterials(root);
   });
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
   if (opts.timing) { opts.timing.buildings_reused = reused; opts.timing.buildings_rebuilt = rebuilt; }
+  if (!opts.bakeSource) captureBakeMaterials(root);
   if (!opts.bakeSource) {
     const owned=[...root.children,...[...next.buildings.values()].map(entry=>entry.model.root),...Object.values(groups.levels)];
     registerBakeSource(root, () => !opts.editableLevel && defaultBuildingFinishes(plan,kit) ? cloneBakeGeometry(root,owned)
@@ -2467,6 +2471,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (partObjects) Object.defineProperty(proxy.userData, 'partObjects', { value: partObjects });
         group.add(proxy); pickObjects.set(key, proxy);
       }
+      pieces.touch();
     };
     registerRecords();
     // Ghost batching disposes its source meshes. Retain the drawn slab and

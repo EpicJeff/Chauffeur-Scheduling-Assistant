@@ -1,11 +1,12 @@
 import { porchPosts, postRef } from './porch_posts.js';
 import { allPorches } from './gutter_presence.js';
+import { createSelectionFocus } from './selection_focus.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mountEditorCamera } from './editor/camera_controls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles, allPorches } from './twin_generator.js';
 import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
@@ -228,8 +229,26 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   const redrawAfterYard = () => controls.dispatchEvent({ type: 'change' });
   el.addEventListener('twinyardrebuilt', redrawAfterYard);
   const selectedMaterials = new Map(), selectionMaterials = new Set(), selectionLines = [];
-  function restoreSelection() {
+  const selectionWarm = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]),
+    new THREE.LineBasicMaterial({ fog: false, color: 0x52ccff, transparent: true, depthTest: false }));
+  const selectionBoxWarm = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1)), 0x52ccff);
+  Object.assign(selectionBoxWarm.material, { fog: false, transparent: true, depthTest: false });
+  let selectionPiecesRevision = null;
+  const focusStyle = createSelectionFocus({ warmState: () => state.unlit, compile: target => {
+    if (state.unlit) unlit.apply(target);
+    return view.compileModelMaterials(target);
+  }, render: () => {
+    if (state.unlit) unlit.apply(twin?.root);
+    render();
+  }, failed: error => el.dispatchEvent(new CustomEvent('twinerror', { detail: error })) });
+  function selectedFrame() {
+    const selected = selectionStyle?.selected;
+    return ['room', 'porch'].includes(selected?.kind) ? selected
+      : selected?.kind === 'level' ? { ...selected, level: selected.id } : selectionStyle?.room;
+  }
+  function restoreSelection({ focus = true } = {}) {
     unlit.restore();
+    if (focus) focusStyle.restore();
     for (const line of selectionLines) { line.removeFromParent(); line.geometry.dispose(); line.material.dispose(); }
     selectionLines.length = 0;
     for (const [object, material] of selectedMaterials) object.material = material;
@@ -237,63 +256,51 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     selectionMaterials.forEach(material => material.dispose()); selectionMaterials.clear();
   }
   function paintSelection() {
-    restoreSelection();
+    restoreSelection({ focus: false });
     if (!twin || !selectionStyle) {
       if (state.unlit) unlit.apply(twin?.root);
       return;
     }
     const { selected, hover, room } = selectionStyle;
     const members = Array.isArray(selectionStyle.members) ? selectionStyle.members : selected ? [selected] : [];
-    const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []);
     const style = getComputedStyle(el.closest('.editor-shell') || el);
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
-    const matchesMember = (data, objects, m) => {
-      const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
-      if (data.buildingId !== mb) return false;
-      if (data.pieceId === mid || m.kind === 'building') return true;
-      if (m.kind === 'roof') {
-        const section = plan.buildings?.find(b => b.id === mb)?.roof?.sections?.find(s => s.id === data.pieceId);
-        if (section?.roof === mid) return true;
-      }
-      if (m.kind === 'level') {
-        return objects.some(o => {
-          for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${mb}:${mid}`;
-          return false;
-        });
-      }
-      return false;
-    };
-    const styled = new Set();
-    for (const [key, objects] of twin.pieces) {
-      const data = twin.pieceBounds.get(key)?.data;
-      if (!data) continue;
-      const inRoom = room && data.buildingId === room.building && (allowed.has(data.pieceId) || allowed.has(data.parentPieceId));
-      const ghost = room && !inRoom;
-      const tint = inRoom ? data.pieceId === room.id ? accent : walls.has(data.pieceId) ? wallTint : null
-        : !room && members.some(m => matchesMember(data, objects, m)) ? accent : null;
-      if (!ghost && !tint) continue;
-      for (const object of objects) {
-        if (styled.has(object) || !object.material) continue;
-        styled.add(object); selectedMaterials.set(object, object.material);
-        const clone = material => {
-          const next = material.clone(); selectionMaterials.add(next);
-          if (ghost) { next.userData.styledFade = true; next.opacity = 0.25; next.transparent = true; next.depthWrite = false; scaleStyledFadeAlpha(material, next); }
-          else { next.color?.lerp(tint, 0.32); next.userData.selectionTint = tint.getHex(); }
-          return next;
-        };
-        object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
+    selectionPiecesRevision = twin.pieces.revision;
+    view.selectionReady = focusStyle.apply(twin.root, room, accent.getHex(), wallTint.getHex(),
+      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision });
+    if (!room) {
+      const matchesMember = (data, objects, m) => {
+        const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
+        if (data.buildingId !== mb) return false;
+        if (data.pieceId === mid || m.kind === 'building') return true;
+        if (m.kind === 'roof') {
+          const section = plan.buildings?.find(b => b.id === mb)?.roof?.sections?.find(s => s.id === data.pieceId);
+          if (section?.roof === mid) return true;
+        }
+        if (m.kind === 'level') {
+          return objects.some(o => {
+            for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${mb}:${mid}`;
+            return false;
+          });
+        }
+        return false;
+      };
+      const styled = new Set();
+      for (const [key, objects] of twin.pieces) {
+        const data = twin.pieceBounds.get(key)?.data;
+        if (!data || !members.some(m => !['room', 'porch', 'level'].includes(m.kind) && matchesMember(data, objects, m))) continue;
+        for (const object of objects) {
+          if (styled.has(object) || !object.material) continue;
+          styled.add(object); selectedMaterials.set(object, object.material);
+          const clone = material => {
+            const next = material.clone(); selectionMaterials.add(next);
+            next.color?.lerp(accent, .32); next.userData.selectionTint = accent.getHex(); return next;
+          };
+          object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
+        }
       }
     }
-    if (room) twin.groups.site.traverse(object => {
-      if (!object.material || selectedMaterials.has(object) || object.layers.isEnabled(PICK_LAYER)) return;
-      selectedMaterials.set(object, object.material);
-      const clone = material => {
-        const next = material.clone(); next.userData.styledFade = true; next.opacity = .25; next.transparent = true; next.depthWrite = false; scaleStyledFadeAlpha(material, next);
-        selectionMaterials.add(next); return next;
-      };
-      object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
-    });
     const single = members.length <= 1;
     for (const member of members) outline(member, false, { single });
     outline(hover, true, { single: true });
@@ -346,6 +353,30 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const buildingId = pick.building ?? pick.buildingId ?? null;
     if (!id) return;
     const accent = new THREE.Color(getComputedStyle(el.closest('.editor-shell') || el).getPropertyValue('--editor-accent').trim() || '#52ccff');
+    if (pick.kind === 'level') {
+      // Aggregate retained boxes; outlining every proxy on a floor builds
+      // hundreds of EdgesGeometry buffers on the selection frame.
+      twin.root.updateMatrixWorld(true);
+      const box = new THREE.Box3();
+      for (const [key, record] of twin.pieceBounds) {
+        if (record.data.buildingId !== buildingId || record.data.ghost) continue;
+        const proxy = twin.pickObjects.get(key);
+        if (proxy && !visible(proxy)) continue;
+        if (pick.kind === 'level') {
+          let level = null;
+          for (let p = record.group; p && !level; p = p.parent) level = p.userData.levelKey;
+          if (level !== `${buildingId}:${id}`) continue;
+        }
+        box.union(record.box.clone().applyMatrix4(record.group.matrixWorld));
+      }
+      if (!box.isEmpty()) {
+        const helper = new THREE.Box3Helper(box, accent);
+        Object.assign(helper.material, { fog: false, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
+        Object.assign(helper.userData, { pieceId: id, buildingId, kind: pick.kind, isHover });
+        helper.renderOrder = isHover ? 11 : 10; scene.add(helper); selectionLines.push(helper);
+      }
+      return;
+    }
     const yard = !buildingId && plan.site?.yard_rooms?.find(r => r.id === id);
     if (yard) {
       const geometry = new THREE.BufferGeometry().setFromPoints([...yard.polygon, yard.polygon[0]].map(p =>
@@ -429,9 +460,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   }
   // The selected room on this floor, else the floor's walls, in lot feet.
   function floorFocus(frame) {
-    const room = selectionStyle?.room;
+    const room = selectedFrame();
     const focused = room?.building === frame.building.id && room.level === frame.level.id
-      ? frame.building.rooms.find(r => r.id === room.id)?.polygon : null;
+      ? [...frame.building.rooms, ...allPorches(frame.building)].find(r => r.id === room.id)?.polygon : null;
     const points = focused || frame.building.walls.filter(w => w.level === frame.level.id).flatMap(w => [w.from, w.to]);
     const angle = (frame.building.rotation || 0) * Math.PI / 180;
     const world = points.map(([x, y]) => [Math.cos(angle) * x - Math.sin(angle) * y + (frame.building.position?.[0] || 0),
@@ -601,6 +632,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
   }
   function render() {
+    if (!disposed && twin && selectionStyle?.room && selectionPiecesRevision !== twin.pieces.revision) { paintSelection(); return; }
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
@@ -812,7 +844,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       const syncStyled = (source, target) => {
         if (Array.isArray(source)) { source.forEach((m, i) => syncStyled(m, target[i])); return; }
-        if (!ids.includes(source.userData.materialId)) return;
+        if (!source || !target || !ids.includes(source.userData.materialId)) return;
         copyMaterialParams(source, target);
         if (source.userData.waterSurface) { target.transparent = true; target.depthWrite = false; }
         if (target.userData.selectionTint !== undefined) target.color.lerp(new THREE.Color(target.userData.selectionTint), .32);
@@ -821,7 +853,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (disposed) return;
         reflections.request();
         view.prepareViewingMaterial(source);
-        for (const [object, original] of faded) syncStyled(original, object.material);
+        for (const [object, original] of faded) syncStyled(original, fadeCopies.get(object));
+        focusStyle.syncMaterials(syncStyled);
         for (const [object, original] of selectedMaterials) syncStyled(original, object.material);
         view.bake?.refreshMaterials([source.userData.materialId]);
         render();
@@ -867,7 +900,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     compileModelMaterials: target => compileFor ? compileBehind(target, camera, scene) : null,
     prepareViewingMaterial(source, material) { if (material) viewing?.adopt(source, material); else viewing?.refresh(source); },
     prepareModelMaterial(source, material) { viewing?.adopt(source, material, {parameters:false}); },
-    modelMaterial(mesh) { return faded.get(mesh) || selectedMaterials.get(mesh) || mesh.material; },
+    modelMaterial(mesh) { return faded.get(mesh) || focusStyle.baseMaterial(mesh) || selectedMaterials.get(mesh) || mesh.material; },
     replaceModelMaterial(mesh, expected, material) {
       if (faded.has(mesh)) {
         if (faded.get(mesh) !== expected) return false;
@@ -877,6 +910,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (selectedMaterials.get(mesh) !== expected) return false;
         selectedMaterials.set(mesh, material); return true;
       }
+      if (focusStyle.replaceMaterial(mesh, expected, material)) return true;
       if (mesh.material !== expected) return false;
       mesh.material = material; return true;
     },
@@ -899,7 +933,21 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       camera.zoom = saved.zoom; controls.update(); camera.quaternion.copy(saved.quaternion); camera.updateProjectionMatrix(); render();
     },
     screenOfFloor: projectFloor,
-    selectionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
+    levelFocusMembers(building, level) {
+      const ids = new Set([level]);
+      twin?.groups.levels[`${building}:${level}`]?.traverse(object => {
+        if (object.userData.pieceId) ids.add(object.userData.pieceId);
+        for (const range of object.userData.snapRanges || object.geometry?.userData.snapRanges || [])
+          if (range.buildingId === building) ids.add(range.pieceId);
+      });
+      return [...ids];
+    },
+    selectionFloor() { const room = selectedFrame(); return room ? `${room.building}:${room.level}` : editableLevel || state.view; },
+    interactionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
+    isInSelectionFocus(candidate) {
+      const room = selectionStyle?.room;
+      return !room || (candidate.buildingId ?? candidate.building) === room.building && room.allowed.includes(candidate.pieceId ?? candidate.id);
+    },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
     selectionWorldBounds() { return currentSelectionBoxes().list.map(row => ({ ...row, box: row.box.clone() })); },
     get selectionBoundsRevision() { return selectionBoundsRevision; },
@@ -960,19 +1008,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const sameMaterials = selectionStyle && JSON.stringify([selectionStyle.selected, selectionStyle.members, selectionStyle.room])
         === JSON.stringify([value.selected, value.members, value.room]);
       selectionStyle = value;
-      const focus = value.room || (value.selected?.kind === 'level' ? { building: value.selected.building, level: value.selected.id } : null);
-      const key = focus ? `${focus.building}:${focus.level}` : null;
-      if (key !== editableLevel) {
-        editableLevel = key;
-        view.rebuild(plan, { preserveYard: true }).catch(error => el.dispatchEvent(new CustomEvent('twinerror', { detail: error })));
-      } else if (sameMaterials) paintHover();
+      if (sameMaterials) paintHover();
       else paintSelection();
       return value.room ? [...(twin?.pieceBounds.values() || [])].filter(({ data }) =>
         data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId) && !value.room.allowed.includes(data.parentPieceId)).length : 0;
     },
     async setEditableLevel(key) {
       if (key === editableLevel) return;
-      editableLevel = key; await view.rebuild(plan, { preserveYard: true });
+      editableLevel = key;
     },
     floorAt(clientX, clientY, key, height = 0) {
       const frame = floorFrame(key); if (!frame) return null;
@@ -1330,8 +1373,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       // A drag preview is reversible. Its detached bake keeps the authored plan
       // and waits on the gesture; committing it calls syncBake below.
       if (!editor || keep) view.bake?.stop();
-      // Focused levels have per-piece meshes (R42); unfocused levels retain
-      // material batches. Both update only owned geometry, without changing focus.
+      // Live previews update owned ranges in material batches independently of focus.
       // Keep selection materials alive throughout a gesture. Replacing every
       // tinted/ghosted material per update churns the renderer's shader cache.
       const changedPieces = new Set();
@@ -1549,6 +1591,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
       pieceVisibility?.apply(scene);
+      focusStyle.refreshRanges(changedPieces);
       invalidateSelectionBounds();
       sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
@@ -1646,14 +1689,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopBake();
       pieceVisibility?.restore();
       let next;
-      try { next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, editableLevel, viewing: !editor, previous: force ? null : twin, timing }); }
+      try { next = buildTwin(nextPlan, kit, tier, { showAnchors: !!view.showAnchors, viewing: !editor, previous: force ? null : twin, timing }); }
       finally { pieceVisibility?.apply(scene); }
       const reuseYard = !!yardGroup && (preserveYard || yardGroup.userData.yardKey === yardKey(nextPlan, kit, tier, { viewing: !editor, stage:stageForPlan(nextPlan) }));
       if (timing) timing.yard_reused = reuseYard;
       const yardMaterials = reuseYard || yardGroup?.userData.yardMaterialKey === yardMaterialKey(nextPlan, kit, tier)
         ? yardGroup?.userData.materials : new Map(yardGroup?.userData.materials);
       const keepMaterials = new Set([...(yardMaterials?.values() || []), ...(twin?.materials.values() || [])]);
-      next.editableLevel = editableLevel;
+      next.editableLevel = null;
       const extras = new Map();
       try {
         // The generator's structural floors cover room polygons; unattached
@@ -1700,7 +1743,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           }
         }
         const stopBatch = editSpan(detail, 'batch');
-        for (const [parent, group] of extras) mergeStatic(group, { perPiece: !!editableLevel && parent.userData.levelKey === editableLevel });
+        for (const [parent, group] of extras) mergeStatic(group);
         stopBatch();
         if (!reuseYard && !yardLater) {
           const stopYard = editSpan(detail, 'yard');
@@ -1837,6 +1880,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       view.editorCamera?.dispose();
       clearSheet(); sheetSpec = null;
       restoreSelection();
+      focusStyle.dispose();
+      selectionWarm.geometry.dispose(); selectionWarm.material.dispose();
+      selectionBoxWarm.geometry.dispose(); selectionBoxWarm.material.dispose();
       restoreFloors();
       viewing?.dispose(); viewing = null;
       if (twin) { scene.remove(twin.root); release(twin); }
@@ -1867,6 +1913,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
         const selected = viewing?.snapshot().pinned;
         const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
+        // Reused yard parts still carry the old Focus presentation. Restore
+        // before adoption/disposal, then style the accepted group below.
+        restoreSelection();
         group.userData.adoptParts?.();
         twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
         freezeViewerMatrices(twin, {editor});
@@ -2146,6 +2195,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   resize();
   try {
     await view.rebuild(plan);
+    // Keep the outline program referenced, so the first room selection and
+    // reselecting after Clear never request a shader on the interaction frame.
+    if (editor && compileFor) await view.compileModelMaterials(new THREE.Group().add(selectionWarm, selectionBoxWarm));
     // The viewer warms the whole scene through viewing.warm(). The neutral
     // editor has no viewing layer: warm its hidden weather objects explicitly,
     // against the same picture target, before Live weather can reveal them.

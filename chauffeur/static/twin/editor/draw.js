@@ -1,3 +1,4 @@
+import { roomInQuestion } from './room_context.js';
 import { solarPlanes, solarUV } from '../twin_solar.js';
 import { report } from './api.js';
 import { snapTo } from './snap.js';
@@ -10,6 +11,10 @@ const drawingTools = ['draw-room', 'add-porch', 'draw-wall', 'split-room', 'add-
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint, dock, cancelOtherDrawing }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
+  const editingRoom = () => {
+    const floor = tools.floor(), context = roomInQuestion(getPlan(), tools.selection(), floor, { host: false });
+    return context?.building === floor?.building ? context?.room : null;
+  };
   let tool = null, points = [], press = null, anchorKind = 'light';
   let stair = null;
   let porchRoof = 'shed', porchOptions = null;
@@ -136,7 +141,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     if (!canEdit()) return;
     cancel();
     if (!tools.floor()) { panel.message('Add a floor before drawing.'); return; }
-    if (name === 'split-room' && !tools.selection().room) { panel.message('Select the room to split first.'); return; }
+    if (name === 'split-room' && !editingRoom()) { panel.message('Select the room to split first.'); return; }
     if (name === 'add-stair') {
       const { building, level } = tools.floor();
       const target = building.levels.filter(l => l.elevation > level.elevation).sort((a, b) => a.elevation - b.elevation)[0];
@@ -194,7 +199,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
     return { building: surface.building.id, level: level.id, point: surface.point.slice(0, 2) };
   }
   function splitPoint(p) {
-    const { building } = tools.floor(), room = building.rooms.find(r => r.id === tools.selection().room);
+    const room = editingRoom();
     if (!room) return null;
     const edges = room.polygon.map((from, i) => ({ from, to: room.polygon[(i + 1) % room.polygon.length] }));
     const boundary = wallAt(p, edges);
@@ -217,11 +222,11 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
       } else { points.push(snap(p, points.at(-1))); outline(points); }
     } else if (tool === 'draw-wall' || tool === 'split-room') {
       const point = tool === 'split-room' ? splitPoint(p) : snap(p, points.at(-1));
-      if (!point) { note('Click a wall of the focused room.'); return; }
+      if (!point) { note('Click a wall of this room.'); return; }
       if (!points.length) { points = [point]; outline(points); return; }
       const from = points[0];
       if (distance(from, point) < 1) return;
-      const splitting = tool === 'split-room', room = tools.selection().room;
+      const splitting = tool === 'split-room', room = editingRoom()?.id;
       points = splitting ? [] : [point]; outline(points);
       save({ op: splitting ? 'split_room' : 'add_wall', building: building.id, level: level.id,
         ...(splitting ? { room } : {}), from, to: point }, splitting).then(splitting ? done() : () => {}).catch(report);

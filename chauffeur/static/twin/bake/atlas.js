@@ -2,7 +2,7 @@
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { reachLights } from './reach.js';
 import { fingerprint, authoredGeometry, withoutSurfaceMaterials } from './geometry_key.js';
-import { bakeSource, bakeReceiverRoots } from './source.js';
+import { bakeSource, bakeReceiverRoots, withAuthoredMaterials } from './source.js';
 import { bindReceivers } from './bindings.js';
 export { fingerprint } from './geometry_key.js';
 
@@ -164,6 +164,8 @@ function prepare(mesh, data) {
   for (const a of attrs) { offsets.push(stride); stride += a.itemSize; }
   let capacity=old.index?.count ?? old.attributes.position.count, written=0;
   const buffers = attrs.map(a => new Float32Array(capacity*a.itemSize)), owners = [];
+  const sourceRanges = old.userData.snapRanges || mesh.userData.snapRanges, snapRanges = [];
+  let rangeIndex = 0, currentRange = null, previousRange = null;
   const oldGutterRanges = (old.userData.snapRanges || []).filter(r => r.surfaceKind === 'gutter');
   const gutterFlags = oldGutterRanges.length ? [] : null;
   let currentIsGutter = false;
@@ -192,6 +194,11 @@ function prepare(mesh, data) {
         written++;
       }
       owners.push(room);
+      if (currentRange) {
+        if (currentRange === previousRange) snapRanges.at(-1).count += 3;
+        else snapRanges.push({ ...currentRange, start: written - 3, count: 3 });
+        previousRange = currentRange;
+      } else previousRange = null;
       if (gutterFlags) gutterFlags.push(currentIsGutter ? 1 : 0);
     }
   };
@@ -214,6 +221,11 @@ function prepare(mesh, data) {
   };
   const count = (old.index?.count ?? old.attributes.position.count) / 3;
   for (let f = 0; f < count; f++) {
+    if (sourceRanges?.length) {
+      while (rangeIndex + 1 < sourceRanges.length && sourceRanges[rangeIndex].start + sourceRanges[rangeIndex].count <= f * 3) rangeIndex++;
+      const r = sourceRanges[rangeIndex];
+      currentRange = f * 3 >= r.start && f * 3 < r.start + r.count ? r : null;
+    }
     if (gutterFlags) {
       const v0 = f * 3;
       currentIsGutter = oldGutterRanges.some(r => v0 >= r.start && v0 < r.start + r.count);
@@ -272,6 +284,7 @@ function prepare(mesh, data) {
   names.forEach((name, i) => geometry.setAttribute(name, new THREE.BufferAttribute(buffers[i].slice(0,written*attrs[i].itemSize), attrs[i].itemSize)));
   geometry.name = old.name;
   geometry.userData = { ...old.userData };
+  if (sourceRanges) geometry.userData.snapRanges = mesh.userData.snapRanges = snapRanges;
   if (gutterFlags) {
     // Rebuild post-clip gutter ranges so chartsFor and diagnostics match the prepared triangle order.
     const ranges = [];
@@ -829,7 +842,10 @@ export function packBanks(layout, lights, o, assigned) {
   return banks;
 }
 
-export function buildAtlas(group, plan, { room } = {}) {
+export function buildAtlas(group, plan, settings = {}) {
+  return withAuthoredMaterials(group, () => buildAuthoredAtlas(group, plan, settings));
+}
+function buildAuthoredAtlas(group, plan, { room } = {}) {
   const source = bakeSource(group);
   if (source !== group) {
     const atlas = buildAtlas(source, plan, {room});

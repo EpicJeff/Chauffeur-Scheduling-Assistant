@@ -137,6 +137,8 @@ export function bindReceivers(atlas, meshes, pageSize) {
     const old=mesh.geometry,attrs=Object.entries(old.attributes).filter(([k])=>!['uv3','lmRoom','lmLightPage','uv2','lmSkyPage'].includes(k));
     const output=attrs.map(()=>[]),uv=[],rooms=[],pages=[],byChart=new Map(),inverse=mesh.matrixWorld.clone().invert();
     const bary=new THREE.Vector3(),world=new THREE.Vector3();let written=0;
+    const sourceRanges=old.userData.snapRanges||mesh.userData.snapRanges,snapRanges=[];
+    let rangeIndex=0,currentRange=null,previousRange=null;
     const emit=(points,record,original,indices)=>{
       const triangle=new THREE.Triangle(...original),target=record&&new THREE.Triangle(...record.points);
       for(let i=1;i+1<points.length;i++) {
@@ -156,9 +158,18 @@ export function bindReceivers(atlas, meshes, pageSize) {
           else uv.push(0,0);
           rooms.push(record?.chart.room??-1);pages.push(record?.chart.page??-1);written++;
         }
+        if(currentRange) {
+          if(currentRange===previousRange)snapRanges.at(-1).count+=3;
+          else snapRanges.push({...currentRange,start:written-3,count:3});
+          previousRange=currentRange;
+        } else previousRange=null;
       }
     };
     for(let f=0;f<old.attributes.position.count/3;f++) {
+      if(sourceRanges?.length) {
+        while(rangeIndex+1<sourceRanges.length&&sourceRanges[rangeIndex].start+sourceRanges[rangeIndex].count<=f*3)rangeIndex++;
+        const r=sourceRanges[rangeIndex];currentRange=f*3>=r.start&&f*3<r.start+r.count?r:null;
+      }
       const indices=[f*3,f*3+1,f*3+2],points=indices.map(i=>new THREE.Vector3().fromBufferAttribute(old.attributes.position,i).applyMatrix4(mesh.matrixWorld));
       const normal=new THREE.Triangle(...points).getNormal(new THREE.Vector3());
       const role=domain(mesh),alias=mesh.userData.yardPart&&domain(mesh,false);
@@ -182,7 +193,9 @@ export function bindReceivers(atlas, meshes, pageSize) {
     geometry.setAttribute('uv3',new THREE.Float32BufferAttribute(uv,2));
     geometry.setAttribute('lmRoom',new THREE.Float32BufferAttribute(rooms,1));
     geometry.setAttribute('lmLightPage',new THREE.Float32BufferAttribute(pages,1));
-    geometry.userData={...old.userData};mesh.geometry=geometry;old.dispose();
+    geometry.userData={...old.userData};
+    if(sourceRanges)geometry.userData.snapRanges=mesh.userData.snapRanges=snapRanges;
+    mesh.geometry=geometry;old.dispose();
     for(const [chart,groups] of byChart)for(const [kind,faces] of Object.entries(groups))if(faces.length)
       chart.receivers.push({mesh,faces,proxy:kind==='proxy'});
   }

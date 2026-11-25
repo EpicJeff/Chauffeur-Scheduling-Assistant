@@ -1,3 +1,4 @@
+import { roomInQuestion } from './room_context.js';
 import * as THREE from 'three';
 import { keepPlace } from './keep_place.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
@@ -329,8 +330,10 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
       if (found) { owner = b; binding = found; break; }
     }
     owner ||= getPlan().buildings?.find(b => b.id === state.building);
-    const roomId = state.room || binding?.host?.floor || binding?.host?.ceiling;
-    const room = owner?.rooms?.find(r => r.id === roomId || device.area_id && r.ha_area === device.area_id);
+    const context = roomInQuestion(getPlan(), state, owner && { building: owner, piece: binding });
+    const room = (context?.building === owner ? context?.room : null)
+      || roomInQuestion(getPlan(), {}, owner && { building: owner, piece: binding })?.room
+      || owner?.rooms?.find(r => device.area_id && r.ha_area === device.area_id);
     deviceAnchor = !!binding && !!owner?.anchors?.includes(binding); deviceParent = false;
     deviceReturn = binding && owner?.anchors?.includes(binding) ? { pieceId: binding.id, buildingId: owner.id }
       : room ? { pieceId: room.id, buildingId: owner.id } : tools.selected?.() || null;
