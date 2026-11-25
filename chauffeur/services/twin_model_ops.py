@@ -1684,7 +1684,7 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
             if 'downspouts' in op and op['downspouts'] is not None:
                 from services import twin_plan
                 if not twin_plan._downspout_fractions(op['downspouts']):
-                    raise Refused('Choose at most 8 downspout fractions from 0 to 1.')
+                    raise Refused('Choose at most 8 downspouts: numbers or {at: fraction}, from 0 to 1.')
             if 'setting' in op and setting == 'sloped' and any(o.get('gable') == {'roof': roof['id'], 'edge': index}
                                                 for o in building['openings']):
                 raise Refused('A window sits in that gable; move or delete it first.')

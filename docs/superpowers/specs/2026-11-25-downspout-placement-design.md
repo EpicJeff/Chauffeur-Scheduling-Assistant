@@ -75,3 +75,9 @@ On the owner's export with every gutter on: placement time cold and warm no wors
 - **Codex** (worktree `Chauffeur-downspouts`): parts 1 and 2, record, validation, placement, drawing of `mount: 'free'`, Argyle text, tests.
 - **Gemini** (worktree `Chauffeur-downspouts-ui`): editor half of part 3 and its tests, against this contract.
 - **Claude**: contract, reviews, browser checks and pictures, merge, landing.
+
+## Rulings after the first reviews (2026-11-25)
+
+- A run that had a result before this change keeps it exactly: the old rule runs first, and the new tiers open only when it finds nothing. A corner with an opening exactly 1.0 ft away is therefore not a snap target in a run that already had a corner; `{at}` covers it.
+- `{at: f}` is measured on the authored edge. `f` of exactly 0 or 1 is the true drip corner past that vertex.
+- Dragging onto a corner another entry already uses stores `{at}`. "Snap to a corner" offers only free corners.

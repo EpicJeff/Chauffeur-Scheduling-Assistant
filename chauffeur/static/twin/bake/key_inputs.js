@@ -1,10 +1,14 @@
 import { fingerprint } from './geometry_key.js';
+import { planHasGutters } from '../gutter_presence.js';
 
 // Shared with the exact atlas/cache keys. Advance the generator stamp whenever
 // generated receiving geometry changes (including changes outside atlas.js).
 export const ATLAS_VERSION = 'reach-atlas-13';
 export const ATLAS_WORKER_VERSION = 'atlas-worker-reach-13';
-export const BAKE_GENERATOR_VERSION = 'gutters-1';
+export const BAKE_GENERATOR_VERSION = 'gutters-3';
+
+// The freshness fast path can reuse a persisted bake before hashing geometry.
+// Invalidate guttered houses only; gutter-free stamps stay byte-identical.
 
 const hash = value => { const h = fingerprint(); h.add(JSON.stringify(value)); return h.key(); };
 export function keyInputs(view) {
@@ -16,7 +20,7 @@ export function keyInputs(view) {
       e.params?.opacity ?? null, e.params?.alpha_cutoff ?? null]);
   // Site (lat/lon/bearing) only drives sun and sky; it never feeds the atlas key.
   const stage = view.stage;
-  return { atlas: ATLAS_VERSION, worker: ATLAS_WORKER_VERSION, generator: BAKE_GENERATOR_VERSION,
+  return { atlas: ATLAS_VERSION, worker: ATLAS_WORKER_VERSION, generator: planHasGutters(plan) ? BAKE_GENERATOR_VERSION : 'gutters-1',
     planGenerator: plan?.generatorVersion ?? null, materials: hash(materials),
     stage: hash([stage?.centre ?? null, stage?.radius ?? null]) };
 }

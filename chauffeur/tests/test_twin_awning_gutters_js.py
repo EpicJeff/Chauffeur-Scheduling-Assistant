@@ -54,6 +54,10 @@ const oldSource=input.before.replace(/from '(\.[^']+)'/g,(_,path)=>`from '${new 
 const before=await import('data:text/javascript;base64,'+Buffer.from(oldSource).toString('base64'));
 for(const mount of ['wall','post','roof-post','hang'])for(const drop of [null,0])await test(`${mount} drop ${drop} keeps exact rain bytes`,()=>{
  const p=fixture(mount,drop),old=calc(before,p),now=calc(G,p);
+ // New additive override identity is required for numbers as well as {at}.
+ // Pin it explicitly, then retain every pre-change placement/geometry byte.
+ assert.deepEqual(now.spouts.map(s=>s.authoredIndex),[0]);
+ old.spouts=old.spouts.map(({flags,...spout})=>({...spout,authoredIndex:0,flags}));
  assert.equal(JSON.stringify(now),JSON.stringify(old),'gutters and spouts');
  const rain=g=>E.eaveInstances(p,new Map(),{},g);
  assert.equal(JSON.stringify(rain(now)),JSON.stringify(rain(old)),'streams, pours and catchment');

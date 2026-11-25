@@ -18,6 +18,8 @@ import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, suppo
 import { isSupported, supportPoints, supportGeometry, supportFrame, roofPoint } from './roof_supports.js';
 import { prepareUnderside, undersideGeometry } from './roof_underside.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
+import { allPorches } from './gutter_presence.js';
+export { allPorches } from './gutter_presence.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
 import { PORCH_SLAB_FT, POST_SLAB_FT, porchFoundation, porchOnGrade, porchSupportGeometry, porchPlinthGeometry } from './twin_porch_foundation.js';
@@ -54,20 +56,6 @@ export function roofOutlinePositions(slab, parts) {
   }
   return new Float32Array(positions);
 }
-// Keep in step with twin_plan.porches: ids win, polygon fallback for aliases
-// without an id. Return the original pieces, preferring collection entries.
-export function allPorches(building) {
-  const result = [];
-  const collection = building.porches || [];
-  for (const [index, porch] of [...collection, building.porch].entries()) {
-    if (!porch || result.some(p => p.id && porch.id ? p.id === porch.id
-      : JSON.stringify(p.polygon) === JSON.stringify(porch.polygon))) continue;
-    if (index === collection.length) result.unshift(porch);
-    else result.push(porch);
-  }
-  return result;
-}
-
 export function mergeStatic(group, { perPiece = false } = {}) {
   group.updateMatrixWorld(true);
   const inverse = group.matrixWorld.clone().invert(), buckets = new Map();
@@ -796,6 +784,7 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
     const wallOut = new THREE.Vector3(outArr[0], 0, outArr[2]).normalize();
     const wallAlong = new THREE.Vector3(-wallOut.z, 0, wallOut.x).normalize();
 
+    // Freestanding exact drops use this same closed sweep and normal elbow.
     const isHang = spout.mount === 'hang' || (spout.flags || []).includes('hang') || (spout.flags || []).includes('stub');
     if (isHang) {
       // Short vertical stub only: no wall drop and no kick-out.
@@ -907,6 +896,10 @@ function buildGutterGeometry(b, base, runs, spouts, resolveFinish) {
         pushQuad(r0[k], r0[n], r1[n], r1[k], [0, distAlong], [w, distAlong], [w, distAlong + segLen], [0, distAlong + segLen]);
       }
       distAlong += segLen;
+    }
+    if (spout.mount === 'free') {
+      const mouth = rings.at(-1);
+      pushQuad(mouth[0], mouth[1], mouth[2], mouth[3], [0, 0], [halfW * 2, 0], [halfW * 2, halfD * 2], [0, halfD * 2]);
     }
   }
 

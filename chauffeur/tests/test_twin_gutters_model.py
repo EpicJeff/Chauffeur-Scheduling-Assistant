@@ -35,9 +35,9 @@ def roof_of(model):
 class GutterModel(unittest.TestCase):
     def test_gutter_ack_validated_and_cleared_on_drainage_change(self):
         model, _ = ops.apply(house(), edge_op(gutter=True))
-        model, _ = ops.apply(model, edge_op(gutter_ack=['hang', 'stub']))
-        self.assertEqual(roof_of(model)['edges'][0]['gutter_ack'], ['hang', 'stub'])
-        self.assertEqual(roof_of(twin_model.normalize(model)[0])['edges'][0]['gutter_ack'], ['hang', 'stub'])
+        model, _ = ops.apply(model, edge_op(gutter_ack=['placed-off-corner', 'over-opening', 'no-support']))
+        self.assertEqual(roof_of(model)['edges'][0]['gutter_ack'], ['placed-off-corner', 'over-opening', 'no-support'])
+        self.assertEqual(roof_of(twin_model.normalize(model)[0])['edges'][0]['gutter_ack'], ['placed-off-corner', 'over-opening', 'no-support'])
         for bad in (True, ['unknown'], ['hang', 'hang'], [1]):
             with self.subTest(bad=bad), self.assertRaises(ops.Refused) as refused:
                 ops.apply(model, edge_op(gutter_ack=bad))
@@ -49,6 +49,44 @@ class GutterModel(unittest.TestCase):
         invalid = copy.deepcopy(model)
         roof_of(invalid)['edges'][0]['gutter_ack'] = ['unknown']
         self.assertIn('Roof r: invalid area, edges or dimensions.', twin_model.normalize(invalid)[1])
+
+    def test_exact_reads_both_schemas_and_invalid_entry_notes(self):
+        from services import twin_reads
+        for location in ('edges', 'downspouts'):
+            for entries, valid in (([0, {'at': .37}, 1], True), ([{'at': 1.2}], False),
+                                   ([{'at': True}], False), ([{'at': .5, 'extra': 0}], False),
+                                   ([{'at': .5}] * 9, False), ([{'at': float('nan')}], False)):
+                with self.subTest(location=location, entries=entries):
+                    section = roofs.to_sections(roof_of(house()))[0]
+                    section.pop('edges', None)
+                    if location == 'edges':
+                        section['edges'] = [{'setting': 'sloped', 'gutter': True, 'downspouts': entries}, {}, {}, {}]
+                    else:
+                        section['downspouts'] = {'y0': entries}
+                    parsed, notes = twin_reads.parse('draft_level', {'building': {'roof': {'sections': [section]}}, 'pages': []})
+                    got = parsed['building']['roof']['sections'][0]
+                    if valid:
+                        self.assertFalse(notes)
+                        self.assertEqual(got[location][0]['downspouts'] if location == 'edges' else got[location]['y0'], entries)
+                    else:
+                        self.assertTrue(notes)
+        flat = bridge.flatten(house())
+        section = flat['buildings'][0]['roof']['sections'][0]
+        section['downspouts'] = {'y0': [0, {'at': .5}], 'y1': [{'at': True}]}
+        cleaned, notes = twin_plan.normalize(flat)
+        self.assertEqual(cleaned['buildings'][0]['roof']['sections'][0]['downspouts'], {'y0': [0, {'at': .5}], 'y1': []})
+        self.assertTrue(any('downspouts' in n for n in notes))
+
+    def test_section_cleaner_drops_only_bad_entries_with_indexed_notes(self):
+        section = roofs.to_sections(roof_of(house()))[0]
+        values = [0, {'at': True}, {'at': .25}, {'at': 1.2}, .8, {'at': .9, 'extra': 1}]
+        section['downspouts'] = {'y0': values, 'y1': []}
+        notes = []
+        twin_plan._section_gutters(section, notes)
+        self.assertEqual(section['downspouts'], {'y0': [0, {'at': .25}, .8], 'y1': []})
+        self.assertEqual(len(notes), 3)
+        for index in (1, 3, 5):
+            self.assertTrue(any(f'[{index}]' in note for note in notes), notes)
 
     def test_gable_to_sloped_with_gutter_in_one_op(self):
         model = house()
@@ -116,11 +154,13 @@ class GutterModel(unittest.TestCase):
                     ops.apply(house(), edge_op(gutter=value))
 
     def test_downspouts_validated(self):
-        for value in ([], [0, .25, 1], [0] * 8):
+        for value in ([], [0, .25, 1], [0] * 8, [{'at': 0}, .5, {'at': 1}], [{'at': .4}] * 8):
             model, _ = ops.apply(house(), edge_op(downspouts=value))
             self.assertEqual(roof_of(model)['edges'][0]['downspouts'], value)
         for value in ([0] * 9, [-.01], [1.01], [True], ['.5'], [None],
-                      [float('nan')], [float('inf')], {}, '.5', (.2,)):
+                      [float('nan')], [float('inf')], {}, '.5', (.2,),
+                      [{'at': 1.2}], [{'at': True}], [{'at': .5, 'extra': 1}],
+                      [{'at': .5}] * 9, [{'at': float('nan')}], [{'at': float('inf')}], [{}]):
             with self.subTest(value=value):
                 with self.assertRaises(ops.Refused):
                     ops.apply(house(), edge_op(downspouts=value))
@@ -149,16 +189,16 @@ class GutterModel(unittest.TestCase):
     def test_sections_mirror_gutters_and_downspouts(self):
         model = house()
         roof = roof_of(model)
-        roof['edges'][0].update(gutter=True, downspouts=[.2, .9])
+        roof['edges'][0].update(gutter=True, downspouts=[.2, {'at': .9}])
         roof['edges'][2].update(gutter=True, downspouts=[])
         section = bridge.flatten(model)['buildings'][0]['roof']['sections'][0]
         self.assertEqual(section['gutters'], {'y0': True, 'y1': True})
-        self.assertEqual(section['downspouts'], {'y0': [.2, .9], 'y1': []})
+        self.assertEqual(section['downspouts'], {'y0': [.2, {'at': .9}], 'y1': []})
         flat, notes = twin_plan.normalize(bridge.flatten(model))
         self.assertEqual(flat['buildings'][0]['roof']['sections'][0]['gutters'], section['gutters'])
         self.assertEqual(flat['buildings'][0]['roof']['sections'][0]['downspouts'], section['downspouts'])
         section['downspouts']['y0'].append(.5)
-        self.assertEqual(roof['edges'][0]['downspouts'], [.2, .9])
+        self.assertEqual(roof['edges'][0]['downspouts'], [.2, {'at': .9}])
 
     def test_section_mapping_uses_largest_overlap_and_no_interior_sides(self):
         roof = roof_of(house())
@@ -183,7 +223,7 @@ class GutterModel(unittest.TestCase):
         cleaned, notes = twin_plan.normalize(flat)
         got = cleaned['buildings'][0]['roof']['sections'][0]
         self.assertEqual(got['gutters'], {'y0': True})
-        self.assertEqual(got['downspouts'], {'y0': []})
+        self.assertEqual(got['downspouts'], {'y0': [], 'x1': [], 'x0': []})
         self.assertTrue(notes)
         for field in ('gutters', 'downspouts'):
             section[field] = []
@@ -201,11 +241,11 @@ class GutterModel(unittest.TestCase):
         self.assertNotIn('gutters', got)  # y0 is interior, x1 is a clipped rake.
 
     def test_from_section_round_trip(self):
-        model, _ = ops.apply(house(), edge_op(gutter=True, downspouts=[.3]))
+        model, _ = ops.apply(house(), edge_op(gutter=True, downspouts=[.3, {'at': .6}]))
         section = roofs.to_sections(roof_of(model))[0]
         rebuilt = roofs.from_section(section)
         self.assertTrue(rebuilt['edges'][0]['gutter'])
-        self.assertEqual(rebuilt['edges'][0]['downspouts'], [.3])
+        self.assertEqual(rebuilt['edges'][0]['downspouts'], [.3, {'at': .6}])
         self.assertNotIn('gutters', rebuilt)
         self.assertNotIn('downspouts', rebuilt)
 
@@ -233,13 +273,13 @@ class GutterModel(unittest.TestCase):
             with self.subTest(operation=operation):
                 model = house()
                 roof_of(model)['plane_materials'] = {'0': {'id': 'standing_seam'}}
-                roof_of(model)['edges'][0].update(gutter=True, downspouts=[.3])
+                roof_of(model)['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
                 roof_of(model)['src'] = dict(sheet='sheet', page=1, step='draft')
                 result, _ = twin_edit.apply_model(model, dict(building='b', **operation))
                 roof = roof_of(result)
                 self.assertIn('0', roof['plane_materials'])
                 self.assertTrue(roof['edges'][0]['gutter'])
-                self.assertEqual(roof['edges'][0]['downspouts'], [.3])
+                self.assertEqual(roof['edges'][0]['downspouts'], [.3, {'at': .6}])
 
         # Legacy moves and form edits rebuild a canonical rectangle. The
         # section's plane_edges reindexes both material and drainage data.
@@ -250,12 +290,12 @@ class GutterModel(unittest.TestCase):
                 roof = roof_of(model)
                 roof['area'] = roof['area'][1:] + roof['area'][:1]
                 roof['plane_materials'] = {'0': {'id': 'standing_seam'}}
-                roof['edges'][0].update(gutter=True, downspouts=[.3])
+                roof['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
                 result, _ = twin_edit.apply_model(model, dict(building='b', **operation))
                 got = roof_of(result)
                 self.assertEqual(set(got['plane_materials']), {'1'})
                 self.assertEqual([i for i, e in enumerate(got['edges']) if e.get('gutter')], [1])
-                self.assertEqual(got['edges'][1]['downspouts'], [.3])
+                self.assertEqual(got['edges'][1]['downspouts'], [.3, {'at': .6}])
 
         # Wall graph edits keep edge indices, including split/merge of a wall
         # that carries a roof edge. There is no roof-vertex edit operation.
@@ -273,19 +313,19 @@ class GutterModel(unittest.TestCase):
                 roof['plane_materials'] = {'0': {'id': 'standing_seam'}}
                 for e, wall in zip(roof['edges'], ('s', 'e', 'n', 'w')):
                     e['wall'] = wall
-                roof['edges'][0].update(gutter=True, downspouts=[.3])
+                roof['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
                 result, _ = ops.apply(box(roofs=[roof]), dict(building='B1', **operation))
                 got = roof_of(result)
                 self.assertIn('0', got['plane_materials'])
                 self.assertTrue(got['edges'][0]['gutter'])
-                self.assertEqual(got['edges'][0]['downspouts'], [.3])
+                self.assertEqual(got['edges'][0]['downspouts'], [.3, {'at': .6}])
                 if operation['op'] == 'split_wall':
                     joint = next(j['id'] for j in result['buildings'][0]['joints'] if j['at'] == [5, 0])
                     result, _ = ops.apply(result, dict(op='delete', building='B1', id=joint))
                     got = roof_of(result)
                     self.assertIn('0', got['plane_materials'])
                     self.assertTrue(got['edges'][0]['gutter'])
-                    self.assertEqual(got['edges'][0]['downspouts'], [.3])
+                    self.assertEqual(got['edges'][0]['downspouts'], [.3, {'at': .6}])
 
         # Accepting a replacement uses the proposal's complete record; old
         # edge overrides are not inherited, just as old plane materials aren't.
@@ -294,7 +334,7 @@ class GutterModel(unittest.TestCase):
                 model = house()
                 roof = roof_of(model)
                 roof['plane_materials'] = {'0': {'id': 'standing_seam'}}
-                roof['edges'][0].update(gutter=True, downspouts=[.3])
+                roof['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
                 replacement = copy.deepcopy(roof if keep else roof_of(house()))
                 model['buildings'][0]['proposals'] = [dict(id='proposal', kind='roof',
                                                           against='r', piece=replacement)]
@@ -307,7 +347,7 @@ class GutterModel(unittest.TestCase):
         # Creating a roof and deleting the old one do not transfer edge data.
         model = house()
         roof_of(model)['plane_materials'] = {'0': {'id': 'standing_seam'}}
-        roof_of(model)['edges'][0].update(gutter=True, downspouts=[.3])
+        roof_of(model)['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
         model, _ = ops.apply(model, dict(op='draw_roof', building='b', area=[[50, 0], [60, 0], [60, 10], [50, 10]]))
         model, _ = ops.apply(model, dict(op='delete', building='b', id='r'))
         got = roof_of(model)
@@ -323,7 +363,7 @@ class GutterModel(unittest.TestCase):
                 old = roof_of(house())
                 old['area'] = [[0, 0], [10, 0], [10, 10], [0, 10]]
                 old['plane_materials'] = {'0': {'id': 'standing_seam'}}
-                old['edges'][0].update(gutter=True, downspouts=[.3])
+                old['edges'][0].update(gutter=True, downspouts=[.3, {'at': .6}])
                 result, _ = ops.apply(box(roofs=[old]), dict(building='B1', **operation))
                 fresh = [r for r in result['buildings'][0]['roofs'] if r['id'] != 'r']
                 self.assertTrue(fresh)
@@ -359,7 +399,7 @@ class GutterModel(unittest.TestCase):
         b['porches_detail'] = [dict(id='p', polygon=[[0, 0], [10, 0], [10, -6], [0, -6]],
                                     floor=0, columns=[])]
         b['extensions'] = [dict(id='a', kind='awning', section='r', x0=2, x1=10,
-                                depth=4, eave=8, pitch=3)]
+                                depth=4, eave=8, pitch=3, downspouts=[.2, {'at': .7}])]
         b['joints'] = [dict(id='j0', level='L1', at=[0, 0]), dict(id='j1', level='L1', at=[40, 0])]
         b['walls'] = [dict(id='front', level='L1', joints=['j0', 'j1'],
                            height=10, thickness=.5, exterior=True)]
@@ -373,7 +413,7 @@ class GutterModel(unittest.TestCase):
                 ops.apply(model, dict(op='set', building='b', id=pid, field='gutter', value=1))
         awning_op = dict(op='set_roof_edge', building='b', roof='a', edge=0)
         model, _ = ops.apply(model, dict(awning_op, gutter=True))
-        model, _ = ops.apply(model, dict(awning_op, gutter_ack=['hang', 'stub']))
+        model, _ = ops.apply(model, dict(awning_op, gutter_ack=['placed-off-corner', 'over-opening', 'no-support']))
         for invalid in ({'gutter_ack': ['unknown']}, {'gutter': 1}):
             with self.assertRaises(ops.Refused):
                 ops.apply(model, dict(awning_op, **invalid))
@@ -381,11 +421,13 @@ class GutterModel(unittest.TestCase):
         shade = next(s for s in b['roof']['sections'] if s['id'] == 'a')
         self.assertTrue(b['porches'][0]['gutter'])
         self.assertTrue(shade['edges'][0]['gutter'])
+        self.assertEqual(shade['edges'][0]['downspouts'], [.2, {'at': .7}])
         self.assertEqual(b['porches'][0]['gutter_ack'], ['hang', 'stub'])
-        self.assertEqual(shade['edges'][0]['gutter_ack'], ['hang', 'stub'])
+        self.assertEqual(shade['edges'][0]['gutter_ack'], ['placed-off-corner', 'over-opening', 'no-support'])
         roundtrip = bridge.assemble(twin_plan.normalize(dict(units='ft', buildings=[b], site={}))[0])[0]
         self.assertTrue(roundtrip['buildings'][0]['porches_detail'][0]['gutter'])
         self.assertTrue(next(r for r in roundtrip['buildings'][0]['roofs'] if r['id'] == 'a')['edges'][0]['gutter'])
+        self.assertEqual(next(r for r in roundtrip['buildings'][0]['roofs'] if r['id'] == 'a')['edges'][0]['downspouts'], [.2, {'at': .7}])
         self.assertTrue(model['buildings'][0]['porches_detail'][0]['src']['person'])
         self.assertTrue(next(r for r in model['buildings'][0]['roofs'] if r['id'] == 'a')['src']['person'])
         for pid in ('p',):
@@ -463,6 +505,27 @@ class GutterRoute(unittest.TestCase):
         response = self.client.post('/api/house/editor/op', headers=self.headers, json={'op': op})
         self.assertEqual(response.status_code, status, response.text)
         return response.json()
+
+    def test_exact_route_undo_redo_and_raw_building_edit(self):
+        self.load()
+        entries = [.2, {'at': .63}]
+        original = self.post(edge_op(gutter=True, downspouts=entries))['model']
+        before = self.store.current_id()
+        self.post(edge_op(downspouts=[{'at': .4}]))
+        changed = self.store.current_id()
+        self.store.revert(before)
+        self.assertEqual(roof_of(self.store.current_model())['edges'][0]['downspouts'], entries)
+        self.store.revert(changed)
+        self.assertEqual(roof_of(self.store.current_model())['edges'][0]['downspouts'], [{'at': .4}])
+        def rename(model):
+            model['buildings'][0]['name'] = 'Renamed'
+            return model
+        raw_before = self.store.current_model()
+        raw_id = self.store.current_id()
+        self.store.update_model(rename, building_fields={'b': ['name']})
+        self.assertEqual(roof_of(self.store.current_model()), roof_of(raw_before))
+        self.store.revert(raw_id)
+        self.assertEqual(roof_of(self.store.current_model()), roof_of(raw_before))
 
     def test_batch_all_eaves_is_one_round(self):
         original = self.load()

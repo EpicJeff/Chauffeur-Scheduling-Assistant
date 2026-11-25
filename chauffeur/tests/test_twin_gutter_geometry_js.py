@@ -14,7 +14,7 @@ const G = await import(file('static/twin/gutters.js'));
 const E = await import(file('static/twin/sky/eave_streams.js'));
 const { eaveRunoff } = await import(file('static/twin/sky/roof_water.js'));
 const { KINDS, kindRow } = await import(file('static/twin/surface_kinds.js'));
-const { BAKE_GENERATOR_VERSION } = await import(file('static/twin/bake/key_inputs.js'));
+const { BAKE_GENERATOR_VERSION, keyInputs } = await import(file('static/twin/bake/key_inputs.js'));
 const { buildAtlas } = await import(file('static/twin/bake/atlas.js'));
 const { releaseBakeSource } = await import(file('static/twin/bake/source.js'));
 
@@ -125,6 +125,31 @@ const EXPECTED_HOUSEHOLD_TRIS = 67978;
 const EXPECTED_HOUSEHOLD_HASH = '110f5efa058d773ba2b752dd1ecc7df738dcc60f5907fc113288880fc19bb612';
 const EXPECTED_STREAM_COUNT = 1088;
 const EXPECTED_STREAM_HASH = '2b02e0aacdb8dc31f2ffc5d59bbe32771e087fa41dea365a1679a69bc2869535';
+
+await test('test_free_pipe_drawn_closed_finite_in_existing_trim_batch', async () => {
+ const p=house(),b=p.buildings[0];b.walls=[];b.levels[0].outline=rect(100,100,130,120);
+ b.roofs[0].edges[0].downspouts=[{at:.5}];b.roof.sections[0].downspouts={y0:[{at:.5}]};
+ const twin=buildTwin(p,input.kit,'high');await twin.ready;
+ try {
+  const sp=twin.gutters.spouts.find(s=>s.exact);assert.ok(sp);assert.equal(sp.mount,'free');
+  const {tris,taggedMeshes}=gutterTriangles(twin.root);assert.ok(tris.flat(2).every(Number.isFinite));
+  assert.equal(taggedMeshes.length,1);assert.equal(taggedMeshes[0].material,twin.materials.get('trim'));
+  const vertical=tris.filter(t=>t.every(v=>v[1]<8*FT)&&t.some(v=>v[1]<2*FT));
+  assert.ok(vertical.length>=16,'vertical tube and curved elbow drawn');
+  const quant=v=>v.map(x=>Math.round(x*1e5)).join(',');
+  const pipe=tris.filter(t=>t.every(v=>Math.abs(v[0]-sp.top[0])<.2&&v[1]<=sp.top[1]+1e-5));
+  const edges=new Map();for(const t of pipe)for(let k=0;k<3;k++){
+   const key=[quant(t[k]),quant(t[(k+1)%3])].sort().join('|');edges.set(key,(edges.get(key)||0)+1);
+  }
+  assert.ok(pipe.length>=32,'full pipe sweep isolated from gutter shell');
+  assert.ok([...edges.values()].every(count=>count===2),'every pipe edge is paired: closed tube and caps');
+  // Both the gutter joint and the elbow mouth are capped by the ordinary sweep.
+  const mouth=tris.filter(t=>t.every(v=>Math.hypot(v[0]-sp.outlet.at[0],v[2]-sp.outlet.at[2])<.15&&Math.abs(v[1]-sp.outlet.at[1])<.15));
+  assert.ok(mouth.length>=2,'closed mouth');
+  const pours=E.eaveInstances(p,twin.roofSurfaces,input.kit,twin.gutters).pours;
+  const pour=pours.find(v=>v.spout.id===sp.id);assert.ok(pour);assert.ok(pour.top[1]>pour.bottom);
+ } finally {disposeTwin(twin);}
+});
 
 await test('test_no_gutters_identical_geometry', async () => {
   const twin = buildTwin(clone(input.plan), input.kit, 'high');
@@ -503,7 +528,9 @@ await test('test_drains_to_runs_get_no_pour', async () => {
 });
 
 await test('test_generator_version_bumped', async () => {
-  assert.equal(BAKE_GENERATOR_VERSION, 'gutters-1');
+  assert.equal(BAKE_GENERATOR_VERSION, 'gutters-3');
+  assert.equal(keyInputs({plan:house()}).generator,'gutters-3');
+  assert.equal(keyInputs({plan:input.plan}).generator,'gutters-1');
 });
 
 await test('test_two_building_garage_under_eave_pipe_and_pour_agree', async () => {

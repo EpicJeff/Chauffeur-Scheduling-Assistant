@@ -75,12 +75,22 @@ def _numeric_fields(item, names):
 
 
 def _downspout_fractions(value):
+    """Numbers snap to corners; an exact {at: fraction} stays authored."""
     return (isinstance(value, list) and len(value) <= 8
-            and all(_number(v) and 0 <= v <= 1 for v in value))
+            and all(_downspout_entry(v) for v in value))
+
+
+def _downspout_entry(value):
+    if isinstance(value, dict):
+        if set(value) != {'at'}:
+            return False
+        value = value['at']
+    return _number(value) and 0 <= value <= 1
 
 
 GUTTER_FLAGS = frozenset(('no-outside-corner', 'hang', 'stub', 'inner-end', 'clipped-end',
-                          'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override'))
+                          'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override',
+                          'placed-off-corner', 'over-opening', 'no-support'))
 
 
 def _gutter_ack(value):
@@ -117,6 +127,16 @@ def _section_gutters(section, notes):
                         or section['kind'] in ('hip', 'gable')
                         and (side[0:1] != section['ridge']
                              or section.get('ends', {}).get(side, section['kind']) == 'hip'))
+                if (field == 'downspouts' and side in sides and boundary
+                        and isinstance(value, list) and len(value) <= 8):
+                    cleaned = []
+                    for index, entry in enumerate(value):
+                        if _downspout_entry(entry):
+                            cleaned.append(deepcopy(entry))
+                        else:
+                            notes.append(f'Roof section {section["id"]}: dropped invalid downspouts on {side}[{index}].')
+                    kept[side] = cleaned
+                    continue
                 valid = (value is True and eave if field == 'gutters'
                          else _downspout_fractions(value))
                 if side in sides and boundary and valid:

@@ -1,6 +1,7 @@
 """Pure gutter runs and corner-only downspouts, executed under Node."""
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 from twin_editor_dom import PRELUDE, run_node
@@ -68,6 +69,20 @@ function roof(p,id,bounds,kind='hip',extra={}){
  p.buildings[0].roofs.push(r);p.buildings[0].roof.sections.push(s);return s;
 }
 const calc=p=>{const runs=G.gutterRuns(p);return {runs,spouts:G.downspouts(p,runs)};};
+const oldSource=input.mainGutters.replace(/from '(\.[^']+)'/g,(_,path)=>`from '${new URL(path,file('static/twin/gutters.js')).href}'`);
+const MAIN=await import(data(oldSource));
+const mainCalc=p=>{const runs=MAIN.gutterRuns(p);return {runs,spouts:MAIN.downspouts(p,runs)};};
+const priorFields=value=>{const v=clone(value);for(const s of v.spouts)delete s.authoredIndex;return v;};
+function overhang(p,feet){p.buildings[0].roofs[0].overhang=feet;p.buildings[0].roof.sections[0].overhang=feet;return p;}
+const fullDrop=s=>{assert.ok(s, 'outlet exists');assert.ok(!s.flags.includes('stub')&&!s.flags.includes('hang'));
+ assert.ok(s.top[1]-s.path.at(-2)[1]>5*FT,'full vertical drop');};
+function openingEnds(clearance,length=30){
+ const p=house(length),b=p.buildings[0];
+ b.openings=[{id:'left',wall:'w0',at:clearance+1,width:2,sill:3,head:7,kind:'window'},
+  {id:'right',wall:'w0',at:length-1-clearance,width:2,sill:3,head:7,kind:'window'},
+  {id:'sideR',wall:'w1',at:clearance+1,width:2,sill:3,head:7,kind:'window'},
+  {id:'sideL',wall:'w3',at:19-clearance,width:2,sill:3,head:7,kind:'window'}];return p;
+}
 // Migration changes ownership, not these recorded numeric placement checks.
 // Map only legacy awning identities to their ordinary roof edge. Their edge
 // normals now use the section's canonical frame, rather than an attachment's
@@ -145,12 +160,145 @@ function dropPoint(s){
   .sort((a,b)=>(b.above[1]-b.at[1])-(a.above[1]-a.at[1]));
  return vertical[0]?.above||s.top;
 }
+await test('test_garage_exactly_one_foot_clear_gets_full_drop',()=>{
+ const p=openingEnds(1);p.buildings[0].openings[0].kind='garage';override(p,0,[0]);
+ const s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);near(s.edge.fraction,0);
+});
+await test('test_blocked_corner_tries_other_face_and_pipe_uses_it',()=>{
+ const p=house(),b=p.buildings[0];b.openings=[{id:'window',wall:'w0',at:1.8,width:2,sill:3,head:7,kind:'window'},
+  {id:'other-end',wall:'w0',at:28.2,width:2,sill:3,head:7,kind:'window'}];
+ override(p,0,[0]);const s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);near(s.edge.fraction,0);
+ const bottom=s.path.at(-2);assert.ok(bottom[0]/FT<-.25,'pipe uses west face');near(bottom[2],0);
+});
+await test('test_half_foot_tier_only_without_one_foot_result',()=>{
+ const p=openingEnds(.5);override(p,0,[0]);let s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);near(s.edge.fraction,0);
+ const blocked=openingEnds(.4);assert.ok(calc(blocked).spouts.filter(s=>s.edge.edge===0).every(s=>s.flags.includes('stub')));
+ const keep=openingEnds(.6,40);keep.buildings[0].openings[0].at=3;keep.buildings[0].openings[3].at=16;
+ const before=calc(keep).spouts.filter(s=>s.edge.edge===0);assert.equal(before.length,1);near(before[0].edge.fraction,0);
+ fullDrop(before[0]);
+});
+await test('test_exact_midwall_fraction_and_only_off_corner_flag',()=>{
+ const p=house();override(p,0,[{at:.37}]);const s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);
+ near(s.edge.fraction,.37);near(s.authoredFraction,.37);assert.equal(s.authoredIndex,0);assert.equal(s.exact,true);
+ assert.equal(s.source,'override');assert.deepEqual(s.flags,['placed-off-corner']);
+});
+await test('test_exact_unsupported_free_pipe_full_drop_outward',()=>{
+ const p=house();p.buildings[0].walls=[];p.buildings[0].levels[0].outline=rect(100,100,130,120);override(p,0,[{at:.5}]);
+ const s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);assert.equal(s.mount,'free');
+ assert.deepEqual(s.flags,['placed-off-corner','no-support']);
+ near(s.path.at(-2)[0],s.top[0]);near(s.path.at(-2)[2],s.top[2]);assert.ok(s.outlet.dir[2]>.99);
+ assert.ok(s.outlet.at[2]>s.top[2]);
+});
+await test('test_exact_over_window_warns_and_keeps_full_drop',()=>{
+ const p=house();p.buildings[0].openings=[{id:'window',wall:'w0',at:15,width:5,sill:3,head:7,kind:'window'}];
+ override(p,0,[{at:.5}]);const s=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(s);
+ assert.deepEqual(s.flags,['placed-off-corner','over-opening']);
+});
+await test('test_exact_half_foot_opening_warning_is_inclusive',()=>{
+ const p=house();p.buildings[0].openings=[{id:'window',wall:'w0',at:16.5,width:2,sill:3,head:7,kind:'window'}];
+ override(p,0,[{at:.5}]);const s=calc(p).spouts.find(s=>s.exact);fullDrop(s);assert.ok(s.flags.includes('over-opening'));
+});
+await test('test_exact_outlet_blocked_only_short_spill_without_hang_stub',()=>{
+ const p=house(),b=p.buildings[0];override(p,0,[{at:.5}]);
+ roof(p,'receiver',[-4,-4,34,0],'flat',{plate:9.5,overhang:0});
+ b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};
+ const s=calc(p).spouts.find(s=>s.exact);assert.ok(s);assert.ok(s.flags.includes('outlet-blocked'));
+ assert.ok(!s.flags.includes('hang')&&!s.flags.includes('stub'));assert.ok(s.top[1]-s.outlet.at[1]<FT);
+});
+await test('test_exact_hidden_piece_nearest_exposed_point',()=>{
+ const p=house();p.buildings[0].levels.push({id:'block',elevation:0,ceiling:20,outline:rect(10,-2,20,.1)});
+ override(p,0,[{at:.45}]);const ss=calc(p).spouts.filter(s=>s.source==='override');assert.equal(ss.length,1);
+ near(ss[0].authoredFraction,.45);near(ss[0].edge.fraction,1/3,.002);assert.equal(ss[0].exact,true);
+});
+await test('test_exact_excludes_nearby_automatic_corner_across_edges',()=>{
+ const p=house(30,'hip');override(p,0,[{at:.01}]);const {runs,spouts}=calc(p),exact=spouts.find(s=>s.exact);
+ assert.ok(exact);assert.ok(spouts.filter(s=>s.source==='auto').every(s=>Math.hypot(s.top[0]-exact.top[0],s.top[2]-exact.top[2])>=FT-.01));
+ assert.ok(runs.every(r=>spouts.some(s=>s.run===r.id)||r.drainsTo));
+});
+await test('test_exact_replaces_only_stub_on_run',()=>{
+ const p=openingEnds(.4);assert.ok(calc(p).spouts.find(s=>s.edge.edge===0).flags.includes('stub'));
+ override(p,0,[{at:.5}]);const ss=calc(p).spouts.filter(s=>s.edge.edge===0);assert.equal(ss.length,1);fullDrop(ss[0]);
+});
+await test('test_mixed_overrides_authored_indices_no_merging_and_eight_cap',()=>{
+ const p=house();override(p,0,[.01,{at:.3},{at:.3},.99,{at:.5},{at:.6},{at:.7},{at:.8},{at:.9}]);
+ const ss=calc(p).spouts.filter(s=>s.edge.edge===0);assert.equal(ss.length,8);
+ assert.deepEqual(ss.map(s=>s.authoredIndex),[0,1,2,3,4,5,6,7]);
+ assert.ok(ss.filter(s=>s.exact).every(s=>!s.merged&&!s.flags.includes('merged-override')));
+ near(ss[0].edge.fraction,0);near(ss[3].edge.fraction,1);assert.ok(!('exact' in ss[0]));
+});
+for(const oh of [1,2])for(const kind of ['gable','hip','split','clipped'])for(const f of [0,.1,.25,.5,.9,1])
+await test(`test_exact_authored_projection_${kind}_overhang_${oh}_fraction_${f}_ten_round_trips`,()=>{
+ const p=overhang(house(30,kind==='hip'?'hip':'gable'),oh),b=p.buildings[0];
+ if(kind==='split'||kind==='clipped')b.levels.push({id:'block',elevation:0,ceiling:20,
+  outline:kind==='split'?rect(10,-oh-1,20,1):rect(-5,-oh-1,7,1)});
+ const pieces=G.gutterRuns(p).flatMap(r=>r.segments).filter(s=>s.roof==='r'&&s.edge===0)
+  .map(s=>[Math.min(s.a[0],s.b[0])/FT,Math.max(s.a[0],s.b[0])/FT]);
+ assert.ok(pieces.length);const x=30*f,lo=Math.min(...pieces.map(v=>v[0])),hi=Math.max(...pieces.map(v=>v[1]));
+ const target=f===0&&lo<0?lo:f===1&&hi>30?hi:x;
+ const expected=pieces.map(([a,b])=>Math.max(a,Math.min(b,target))).sort((a,b)=>Math.abs(a-target)-Math.abs(b-target)||a-b)[0];
+ const exposed=pieces.some(([a,b])=>x>=a-1e-6&&x<=b+1e-6);
+ let stored=f,position=null;
+ for(let n=0;n<10;n++){
+  override(p,0,[{at:stored}]);const s=calc(p).spouts.find(s=>s.exact);assert.ok(s);
+  near(s.top[0]/FT,expected,1e-5);if(exposed)near(s.edge.fraction,f,1e-6);
+  if(position)for(let k=0;k<3;k++)near(s.top[k],position[k],1e-6);
+  position=s.top;stored=s.edge.fraction;
+ }
+});
+for(const oh of [1,2])await test(`test_exact_corner_warning_uses_authored_feet_overhang_${oh}`,()=>{
+ const p=overhang(house(),oh);
+ for(const f of [0,.01,.025,.04,.975,.99,1]){
+  override(p,0,[{at:f}]);const s=calc(p).spouts.find(s=>s.exact);
+  assert.equal(s.flags.includes('placed-off-corner'),Math.min(f,1-f)*30>1+1e-6,`fraction ${f}`);
+ }
+});
+for(const oh of [1,2])for(const length of [30,80])for(const at of [2,1.8])for(const values of [null,[0]])
+await test(`test_legacy_tier_keeps_main_${length}_overhang_${oh}_window_${at}_${values}`,()=>{
+ const p=overhang(house(length),oh);p.buildings[0].openings=[{id:'window',wall:'w0',at,width:2,sill:3,head:7,kind:'window'}];
+ if(values)override(p,0,values);
+ const old=mainCalc(p),now=calc(p);assert.deepEqual(priorFields(now),old,'every main placement field is preserved');
+ const front=old.spouts.filter(s=>s.edge.edge===0);assert.equal(front.length,1);near(front[0].edge.fraction,1);
+});
+for(const oh of [1,2])for(const stub of [false,true])await test(`test_clamped_door_avoidance_matches_main_overhang_${oh}_stub_${stub}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];
+ b.openings=[{id:'door',wall:'w3',at:13.2,width:2,sill:0,head:7,kind:'door'}];
+ if(stub){roof(p,'low',[-5,-5,35,25],'flat',{plate:9.2});b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};}
+ assert.deepEqual(priorFields(calc(p)),mainCalc(p));
+});
+for(const oh of [1,2])for(const next of [false,true])await test(`test_exact_mount_side_receiver_tries_next_then_free_overhang_${oh}_next_${next}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];override(p,0,[{at:next?0:.5}]);
+ roof(p,'low',[next?-.1:-5,-.4,35,10],'flat',{plate:10-oh*.5-.5});
+ b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};
+ const s=calc(p).spouts.find(s=>s.exact);fullDrop(s);assert.ok(!s.flags.includes('outlet-blocked'));
+ assert.equal(s.mount,next?'wall':'free');if(next)assert.ok(s.path.at(-2)[0]<0,'next wall face is used');
+});
+for(const oh of [1,2])await test(`test_exact_wall_drop_excludes_other_face_and_marks_occupied_overhang_${oh}`,()=>{
+ const p=overhang(house(30,'hip'),oh);override(p,0,[{at:.01}]);
+ const {spouts}=G.gutterPlacement(p),exact=spouts.find(s=>s.exact),drop=exact.path.at(-2);
+ for(const s of spouts.filter(s=>s.source==='auto'))if(Math.abs(s.top[1]-exact.top[1])<.25*FT){
+  const q=s.path.at(-2);assert.ok(Math.hypot(q[0]-drop[0],q[2]-drop[2])>=FT-1e-6,'wall drops separated by one foot');
+ }
+ const candidates=G.gutterCandidates(p).filter(c=>c.roof==='r'&&c.edge===0&&c.fraction===0);
+ assert.ok(candidates.length);assert.ok(candidates.every(c=>c.occupied),'nearby exact drop occupies safe corner');
+});
+
 function attachedPorch(kind){
  const p=house(),b=p.buildings[0];b.roofs[0].edges.forEach(e=>e.gutter=false);b.roof.sections[0].gutters={};
  const s=roof(p,'porchroof',[5,-8,25,0],kind,{ridge:'y',plate:8,pitch:3,overhang:1});
  s.gutters={};b.roofs.at(-1).edges.forEach(e=>e.gutter=false);
  b.porches=[{id:'p',gutter:true,polygon:rect(5,-8,25,0),floor:0,columns:[{at:[5,-8]},{at:[25,-8]}]}];return p;
 }
+await test('test_leaf_presence_shared_by_placement_and_bake_with_legacy_porch_dedup',async()=>{
+ const leaf=await import(file('static/twin/gutter_presence.js'));
+ const {keyInputs,BAKE_GENERATOR_VERSION}=await import(file('static/twin/bake/key_inputs.js'));
+ assert.equal(leaf.buildingHasGutters,G.buildingHasGutters);assert.equal(leaf.allPorches,allPorches);
+ const buildings=[{roof:{sections:[{gutters:{y0:true}}]}},{roofs:[{edges:[{gutter:true}]}]},
+  {porch:{id:'p',gutter:true}},{porches:[{id:'p',gutter:true,state:'ghost'}]},
+  {porches:[{id:'p',gutter:false}],porch:{id:'p',gutter:true}}];
+ for(const b of buildings){const p={buildings:[b]},enabled=leaf.buildingHasGutters(b);
+  assert.equal(leaf.planHasGutters(p),enabled);assert.equal(keyInputs({plan:p}).generator,enabled?BAKE_GENERATOR_VERSION:'gutters-1');}
+ assert.equal(leaf.buildingHasGutters(buildings[3]),false);assert.equal(leaf.buildingHasGutters(buildings[4]),false);
+});
 await test('test_downspouts_reuse_meshes_and_sampler_and_invalidate_on_edit',()=>{
  const p=house(),runs=G.gutterRuns(p),built=clone(globalThis.placementBuilds),spouts=G.downspouts(p,runs);
  assert.deepEqual(globalThis.placementBuilds,built,'downspouts must reuse the runs context');
@@ -475,7 +623,7 @@ await test('test_colliding_authored_overrides_record_the_merged_request',()=>{
  assert.deepEqual(p.buildings[0].roofs[0].edges[3].downspouts,[.85]);
 });
 await test('test_shared_contract_and_units',()=>{
- assert.deepEqual(G.GUTTER,{runJoinFt:.3,runJoinHeightIn:2,spanFt:35,maxOverhangFt:4,openingClearFt:1,doorAvoidFt:6,elbowFt:.5,profileIn:5,spoutIn:[2,3],fasciaFt:.35,fasciaProudFt:.01,soffitClearIn:1});
+ assert.deepEqual(G.GUTTER,{runJoinFt:.3,runJoinHeightIn:2,spanFt:35,maxOverhangFt:4,openingClearFt:1,openingClearMinFt:.5,doorAvoidFt:6,elbowFt:.5,profileIn:5,spoutIn:[2,3],fasciaFt:.35,fasciaProudFt:.01,soffitClearIn:1});
  const p=house(),{runs,spouts}=calc(p);
  for(const r of runs){assert.deepEqual(Object.keys(r).sort(),['id','building','segments','length','corners'].sort());near(r.length,30);
   for(const s of r.segments)assert.deepEqual(Object.keys(s).sort(),['roof','edge','porch','a','b','outward'].sort());
@@ -500,6 +648,13 @@ await test('test_L_house_inner_corner_never_used',()=>{
  b.roof.sections=[];b.roofs=[];roof(p,'a',[0,0,40,20]);roof(p,'b',[0,0,20,40]);
  const {runs,spouts}=calc(p);assert.ok(runs.flatMap(r=>r.corners).some(c=>!c.convex));assert.equal(spouts.length,5);
  assert.ok(spouts.every(s=>atCorner(p,s)&&Math.hypot(local(p,s.top)[0]-20,local(p,s.top)[1]-20)>.5));
+});
+await test('test_exact_inner_corner_allowed_number_never_uses_it',()=>{
+ const poly=[[0,0],[40,0],[40,20],[20,20],[20,40],[0,40]],p=house(40,'hip',poly),b=p.buildings[0];
+ b.roof.sections=[];b.roofs=[];roof(p,'a',[0,0,40,20]);roof(p,'b',[0,0,20,40]);
+ override(p,2,[{at:.5}]);let s=calc(p).spouts.find(s=>s.exact);assert.ok(s);near(s.edge.fraction,.5);fullDrop(s);
+ assert.ok(s.flags.includes('placed-off-corner'));override(p,2,[.5]);
+ s=calc(p).spouts.find(s=>s.source==='override');assert.ok(s);assert.ok(Math.abs(s.edge.fraction-.5)>.1);
 });
 await test('test_run_with_no_outside_corner_uses_non_inner_end_and_flags',()=>{
  const p=house(40),b=p.buildings[0];b.roof.sections=[];b.roofs=[];roof(p,'short',[10,0,20,8],'shed',{low_side:'y0'});
@@ -824,7 +979,7 @@ if __name__ == '__main__':
     from services.twin_model_bridge import assemble, flatten
     from twin_awning_test_fixtures import migrated_awning_house
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'awningPlan': migrated_awning_house(False), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'awningPlan': migrated_awning_house(False), 'mainGutters': subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/gutters.js'], cwd=ROOT).decode('utf-8'), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
     print(output)
     for line in output.splitlines():
         if line.startswith('HOUSEHOLD_GUTTERS '):

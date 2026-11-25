@@ -296,7 +296,8 @@ ROOF
   and 0 is a cantilever with no visible supports. A normal lean-to
   carried by walls is another ordinary shed section without support. Do not
   emit roof extensions. Optional edges[i].overhang_ft overrides the uniform
-  overhang; gutters:{y0:true} and downspouts:{y0:[0,1]} use section side names.
+  overhang; gutters:{y0:true} and downspouts:{y0:[0,{"at":0.5},1]} use section side names.
+  Downspouts: at most 8 numbers 0..1 (snap to a corner) or {"at":f} (exact fraction, no other key).
 
 PORCH, STAIRS AND PHOTOS
 - porches: [{id, polygon, floor, columns:[{at:[x,y],size}], screened}] for
@@ -532,6 +533,18 @@ def _parse_draft(kind, answer, v, context=None):
             return None
         return value
 
+    def downspouts(value, path):
+        from services.twin_plan import _downspout_entry
+        def entry(value, path):
+            if not _downspout_entry(value):
+                v.bad(path, 'expected 0..1 or {at: 0..1} with no other key')
+                return None
+            return deepcopy(value)
+        if isinstance(value, list) and len(value) > 8:
+            v.bad(path, 'expected at most 8 downspouts')
+            return None
+        return v.items(value, path, entry)
+
     def integer(value, path):
         if type(value) is not int or value < 0:
             v.bad(path, 'expected a nonnegative integer')
@@ -608,11 +621,10 @@ def _parse_draft(kind, answer, v, context=None):
                 'setting': lambda x, p: v.choice(x, p, ('sloped', 'gable', 'clip')),
                 'pitch': lambda x, p: v.numeric(x, p, maximum=24),
                 'overhang_ft': lambda x, p: v.numeric(x, p, maximum=6),
-                'gutter': boolean, 'downspouts': lambda x, p: v.items(x, p, lambda n, q: v.numeric(n, q, maximum=1)),
+                'gutter': boolean, 'downspouts': downspouts,
                 'wall': v.text, 'wall_offset': signed, 'wall_along_offset': signed})),
             'gutters': lambda x, p: v.fields(x, p, {}, {side: boolean for side in ('x0', 'x1', 'y0', 'y1')}),
-            'downspouts': lambda x, p: v.fields(x, p, {}, {side: lambda x, p: v.items(
-                x, p, lambda n, q: v.numeric(n, q, maximum=1)) for side in ('x0', 'x1', 'y0', 'y1')}),
+            'downspouts': lambda x, p: v.fields(x, p, {}, {side: downspouts for side in ('x0', 'x1', 'y0', 'y1')}),
             'pitch_source': lambda x, p: v.choice(x, p, ('drawn', 'photos', 'person', 'card', 'default')),
             'pitches': lambda x, p: v.fields(x, p, {}, {
                 side: lambda x, p: v.numeric(x, p, maximum=24) for side in ('x0', 'x1', 'y0', 'y1')})})

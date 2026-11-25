@@ -1,6 +1,6 @@
 // Rebuild-only plan geometry. No renderer, DOM, HA state, clocks or randomness.
 // Contract: gutterRuns -> {id,building,segments,length,corners,drainsTo?}; downspouts ->
-// {id,run,edge,top,mount,path,outlet,share,source,flags,authoredFraction?,merged?}. Plan distances are ft;
+// {id,run,edge,top,mount,path,outlet,share,source,flags,authoredFraction?,authoredIndex?,exact?,merged?}. Plan distances are ft;
 // segment/corner/path positions are world metres; segment.outward is local XY.
 // top is the outlet at the gutter bottom, centred half the profile width
 // outward of the fascia face; path[0] equals top. A vertical outlet drop
@@ -38,12 +38,23 @@
 // Corner claims group a building's plan vertex and eave height within 3 in.
 // Each group uses one receiving-floor band: the lowest surface over its faces.
 // Stacked eaves at different heights stay distinct. Authored overrides precede
-// automatic claims. Colliding overrides keep one spout, flagged 'merged-override',
+// automatic claims. Colliding numeric overrides keep one spout, flagged 'merged-override',
 // with merged: [{run, fraction, roof, edge, porch}] recording each dropped run,
 // authored fraction and owning edge/attachment.
 // Override records also carry authoredFraction: the stored request before it
-// snaps to edge.fraction. Editors use it to move/remove the winning request
-// without deleting another override that snaps to the same corner.
+// snaps to edge.fraction, and authoredIndex (the stored list index).
+// {at:f} entries have exact:true: nearest exposed point of that edge, never
+// claimed/merged/target-limited. They suppress automatic outlets within 1 ft.
+// Fractions use the authored A--B line; exactly 0/1 name exposed drip tips.
+// Off-corner distance uses authored feet, counting each tip as its vertex.
+// Main's first-face/clamped/<=1 ft corner tier wins unchanged when non-empty;
+// only empty tiers open the new corner/clearance and free-end fallbacks.
+// Door avoidance always uses the original clamped wall distance.
+// Exact drops warn placed-off-corner, over-opening (0.5 ft), no-support (free).
+// mount:'free' is a full vertical pipe below the outlet with the normal outward
+// elbow, drawn in the existing trim batch. Exact drops never flag hang/stub;
+// only a receiver under the gutter can block one. High mount-side receivers
+// try another support, then free. Numbers keep corner snapping.
 // Corners use the union of footprints below the eave and above the receiving
 // roof (when a drop ends on one), sampled at local (+/-0.3, +/-0.3) ft:
 // one occupied quadrant is outside, three inner. Filled inner vertices vanish.
@@ -54,7 +65,8 @@ import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSam
 import { roofMeshGroups, supportedRoofAbove, supportedRoofCutters, roofBounds, endKind, heightAt, sectionHeight, authoredRoofShape } from './twin_roof.js';
 import { prepareUnderside } from './roof_underside.js';
 import { isSupported, roofPoint, supportPoints } from './roof_supports.js';
-import { allPorches } from './twin_generator.js';
+import { allPorches, buildingHasGutters, planHasGutters } from './gutter_presence.js';
+export { buildingHasGutters } from './gutter_presence.js';
 import { FASCIA, ROOF_THICKNESS } from './trim_dims.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { buildingBase, inPolygon, edgeDistance } from './twin_ground.js';
@@ -62,7 +74,7 @@ import { pathOutline, pathSurfacePolygons } from './path_shapes.js';
 import { paverSettings } from './paver_layout.js';
 
 export const GUTTER = { runJoinFt: 0.3, runJoinHeightIn: 2, spanFt: 35, maxOverhangFt: 4,
-  openingClearFt: 1, doorAvoidFt: 6, elbowFt: 0.5, profileIn: 5, spoutIn: [2, 3],
+  openingClearFt: 1, openingClearMinFt: 0.5, doorAvoidFt: 6, elbowFt: 0.5, profileIn: 5, spoutIn: [2, 3],
   fasciaFt: FASCIA.depthFt, fasciaProudFt: FASCIA.proudFt, soffitClearIn: 1 };
 
 const GUTTER_BUILDING_FIELDS = ['id', 'position', 'rotation', 'base', 'foundation', 'levels', 'rooms', 'walls', 'joints', 'openings', 'stairs', 'roof', 'roofs', 'porch', 'porches'];
@@ -79,17 +91,6 @@ export const _gutterPlacementStats = {
   reset() { this.calls = 0; this.hits = 0; this.lastPlacementMs = 0; this.lastGeometryMs = 0; },
   clearCache() { gutterPlacementCache.clear(); objectKeys = new WeakMap(); this.reset(); },
 };
-
-export function buildingHasGutters(b, sections) {
-  return (b.roofs || []).some(r => (r.edges || []).some(e => e?.gutter === true))
-    || sections.some(s => s.gutters && Object.values(s.gutters).some(v => v === true))
-    || allPorches(b).some(p => p?.gutter === true && p.state !== 'ghost' && p.state !== 'proposal')
-;
-}
-
-function planHasGutters(plan) {
-  return (plan?.buildings || []).some(b => buildingHasGutters(b, b.roof?.sections || []));
-}
 
 function gutterInputKey(plan) {
   const clean = withoutSurfaceMaterials(plan || {});
@@ -550,7 +551,7 @@ function rimExitDistance(poly,origin,dir,maxDist,backDist){
   }
   return maxT;
 }
-function mountAt(ctx,segment,top,corner){
+function mountAt(ctx,segment,top,corner,all=false,nearest=false){
   const p=ctx.f.local(top),oh=segmentInfo(ctx,segment).overhang,postClear=GUTTER.spoutIn[0]/24+.02;
   const roof=ctx.hasSupported&&segment.roof!=null
     ?ctx.b.roofs?.find(r=>r.id===segment.roof)||ctx.sections.find(s=>(s.roof||s.id)===segment.roof):null;
@@ -584,13 +585,23 @@ function mountAt(ctx,segment,top,corner){
       &&Math.max(...sub(w.at,p.slice(0,2)).map(Math.abs))<=w.reach+1+EPS)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||b.floor-a.floor
       ||dot(b.normal,segment.outward)-dot(a.normal,segment.outward)||compare(a.w.id,b.w.id));
+  const mounts=[];
+  if(nearest){
+    const choices=[...posts.map(c=>({kind:'post',at:add(c.at,mul(segment.outward,c.size/2+postClear)),normal:segment.outward,porch:c.porch,gap:dist(c.at,p.slice(0,2))})),
+      ...candidates.map(w=>({kind:'wall',at:add(w.at,mul(w.normal,(w.w.thickness||.5)/2+.08)),normal:w.normal,gap:dist(w.at,p.slice(0,2))}))]
+      .sort((a,b)=>a.gap-b.gap);
+    if(!choices.length)choices.push({kind:'hang',at:p.slice(0,2),normal:segment.outward});
+    return all?choices:choices[0];
+  }
   if(posts.length&&(segment.porch!==null||!candidates.length||dist(posts[0].at,p.slice(0,2))<=dist(candidates[0].at,p.slice(0,2))+.1))
-    return {kind:'post',at:add(posts[0].at,mul(segment.outward,posts[0].size/2+postClear)),normal:segment.outward,porch:posts[0].porch};
-  if(candidates.length){const w=candidates[0],at=corner?.at||w.at;
-    return {kind:'wall',at:add(at,mul(w.normal,(w.w.thickness||.5)/2+.08)),normal:w.normal};}
-  return {kind:'hang',at:p.slice(0,2),normal:segment.outward};
+    mounts.push({kind:'post',at:add(posts[0].at,mul(segment.outward,posts[0].size/2+postClear)),normal:segment.outward,porch:posts[0].porch});
+  for(const w of candidates){const at=corner?.at||w.at;
+    mounts.push({kind:'wall',at:add(at,mul(w.normal,(w.w.thickness||.5)/2+.08)),normal:w.normal});
+    if(!all)break;}
+  if(!mounts.length)mounts.push({kind:'hang',at:p.slice(0,2),normal:segment.outward});
+  return all?mounts:mounts[0];
 }
-function openingCheck(ctx,mount,top,bottom){
+function openingCheck(ctx,mount,top,bottom,clearance=GUTTER.openingClearFt,inclusive=false,legacy=true){
   let door=false;const low=bottom/FT-ctx.f.base,high=top[1]/FT-ctx.f.base;
   for(const w of ctx.openingWalls){const v=sub(w.to,w.from),length=Math.hypot(...v),q=projection(mount.at,w.from,w.to);
     if(dist(q.at,mount.at)>(w.thickness||.5)/2+.25)continue;
@@ -598,15 +609,28 @@ function openingCheck(ctx,mount,top,bottom){
     for(const o of w.openings){
       const z0=floor+(o.sill||0)+(o.floor_reference_ft||0),z1=floor+(o.head??7)+(o.floor_reference_ft||0);
       if(z0>high)continue;
-      const distance=Math.abs(q.t*length-o.at)-(o.width||0)/2;
-      if(z1>=low&&distance<=GUTTER.openingClearFt+EPS)return {blocked:true,door};
-      if(['door','slider','bifold','garage'].includes(o.kind)&&distance<=GUTTER.doorAvoidFt)door=true;
+      const clamped=Math.abs(q.t*length-o.at)-(o.width||0)/2;
+      const along=dot(sub(mount.at,w.from),v)/length;
+      const distance=legacy?clamped:Math.abs(along-o.at)-(o.width||0)/2;
+      if(z1>=low&&(legacy||inclusive?distance<=clearance+EPS:distance<clearance-EPS))return {blocked:true,door};
+      if(['door','slider','bifold','garage'].includes(o.kind)&&clamped<=GUTTER.doorAvoidFt)door=true;
     }
   }
   return {blocked:false,door};
 }
-function candidate(ctx,segment,top,corner,flags=[]){
-  const p=ctx.f.local(top),mount=mountAt(ctx,segment,top,corner),n=mount.normal;
+function candidate(ctx,segment,top,corner,flags=[],clearance=GUTTER.openingClearFt,attempt=null,legacy=false){
+  let mounts=attempt?.mounts;
+  if(!mounts){mounts=!legacy&&corner?mountAt(ctx,segment,top,corner,true):[mountAt(ctx,segment,top,corner)];
+    if(attempt?.skipFirst)mounts=mounts.slice(1);}
+  if(attempt){attempt.mounts=mounts;attempt.opening=false;}
+  for(const mount of mounts){
+    const value=mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,false,attempt,legacy);
+    if(value)return value;
+  }
+  return null;
+}
+function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=false,attempt=null,legacy=false){
+  const p=ctx.f.local(top),n=mount.normal;
   if(mount.kind==='hang')return null;
   let dropShift=0,deckH=null;
   if(mount.kind==='post'&&mount.porch?.polygon?.length>=3){
@@ -625,7 +649,7 @@ function candidate(ctx,segment,top,corner,flags=[]){
   // Preserve the vertical corner position. If the straight elbow mouth lands on
   // a walkway/path/step/stair, swivel the elbow up to 90 degrees along the wall.
   const initial=landing(ctx,probe),tangent=[-n[1],n[0]];
-  if(!initial.allowed)for(const deg of [15,30,45,60,75,90])for(const sign of [1,-1]){
+  if(!initial.allowed&&mount.kind!=='free')for(const deg of [15,30,45,60,75,90])for(const sign of [1,-1]){
     const rad=deg*Math.PI/180,dir=add(mul(n,Math.cos(rad)),mul(tangent,Math.sin(rad)*sign));
     choices.push({end:add(dropAt,mul(dir,GUTTER.elbowFt)),dir,swiveled:true});
   }
@@ -638,14 +662,18 @@ function candidate(ctx,segment,top,corner,flags=[]){
   chosen??=paved;
   // Landing is independent of mounting and opening clearance. Preserve a real
   // outside-corner drop even when every receiving surface needs attention.
-  if(!chosen){if(!corner?.convex)return null;chosen={...choices[0],sample:initial};}
-  const surface=Math.max(support.height,chosen.sample.height),bottom=surface+.5*FT;
-  const openMount=openingCheck(ctx,mount,top,bottom);
-  const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom):openMount;
+  if(!chosen){if(!exact&&!corner?.convex)return null;chosen={...choices[0],sample:initial};}
+  const surface=mount.kind==='free'?support.height:Math.max(support.height,chosen.sample.height),outletTop=gutterBottom(ctx,segment,top);
+  // Only the receiver under the gutter can block an exact outlet. A high
+  // mount-side receiver rejects this support so another face/free can be tried.
+  if(exact&&outletTop[1]<=surface+2/12*FT)return null;
+  const bottom=surface+(exact?Math.min(.5*FT,Math.max(0,(outletTop[1]-surface)*.4)):.5*FT);
+  const openMount=openingCheck(ctx,mount,top,bottom,clearance,exact,legacy);
+  const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom,clearance,exact,legacy):openMount;
   const opening={blocked:openMount.blocked||openDrop.blocked,door:openMount.door||openDrop.door};
-  if(opening.blocked)return null;
-  if(top[1]-.04*FT<=bottom+.1*FT)return null;
-  const outletTop=gutterBottom(ctx,segment,top),under=[...outletTop];
+  if(opening.blocked&&!exact){if(attempt)attempt.opening=true;return null;}
+  if(top[1]-.04*FT<=bottom+.1*FT&&!exact)return null;
+  const under=[...outletTop];
   under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
   // A dropped flat ceiling closes the eave face below the old soffit. Keep
   // the vertical outlet outside that face until the same 1-inch clearance
@@ -657,7 +685,7 @@ function candidate(ctx,segment,top,corner,flags=[]){
     const ceiling=low-(section.thickness_ft??ROOF_THICKNESS)-section.underside.drop_ft;
     under[1]=Math.min(under[1],(ctx.f.base+ceiling)*FT-GUTTER.soffitClearIn/12*FT);
   }
-  if(under[1]<=bottom+.1*FT)return null;
+  if(under[1]<=bottom+.1*FT){if(!exact)return null;under[1]=outletTop[1];}
   const rimBotY=deckH!==null?Math.max(deckH+.06*FT,bottom+.35*FT):null;
   const rimTopY=rimBotY!==null?rimBotY+dropShift*FT:null;
   let upperAt=dropAt,useJog=false;
@@ -671,14 +699,14 @@ function candidate(ctx,segment,top,corner,flags=[]){
   const first=add(under,mul(toward,elbow));first[1]-=elbow;
   const leader=[wallXY[0]-toward[0]*elbow,first[1],wallXY[2]-toward[2]*elbow];
   const wallTop=[wallXY[0],under[1]-2*elbow,wallXY[2]],wallBottom=ctx.f.world([...dropAt,bottom/FT-ctx.f.base]);
-  const outlet=ctx.f.world([...chosen.end,(surface+4/12*FT)/FT-ctx.f.base]);
+  const outlet=ctx.f.world([...chosen.end,(surface+(exact?Math.min(4/12*FT,(bottom-surface)*2/3):4/12*FT))/FT-ctx.f.base]);
   const path=[outletTop,under];if(elbow>EPS)path.push(first);if(horizontal>2*elbow+EPS)path.push(leader);
   path.push(wallTop);
   if(useJog)path.push(ctx.f.world([...mount.at,rimTopY/FT-ctx.f.base]),ctx.f.world([...dropAt,rimBotY/FT-ctx.f.base]));
   path.push(wallBottom,outlet);
   const dirLocal=chosen.dir,origin=ctx.f.world([0,0,0]),tip=ctx.f.world([...dirLocal,0]);
   return {top:outletTop,mount:mount.kind,path,outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:chosen.sample.lands},
-    flags:[...flags,...(!chosen.sample.allowed?['no-safe-landing']:[])],door:opening.door,
+    flags:[...flags,...(exact&&opening.blocked?['over-opening']:[]),...(!chosen.sample.allowed?['no-safe-landing']:[])],door:opening.door,
     rank:!chosen.sample.allowed?2:['driveway','hard','deck'].includes(chosen.sample.lands)?1:0};
 }
 function gutterBottom(ctx,segment,at){
@@ -704,16 +732,38 @@ function hangingEnd(ctx,c,flags){
   return {top,mount:'hang',path:[top,outlet],outlet:{at:outlet,dir:unit([tip[0]-origin[0],0,tip[2]-origin[2]]),lands:hit.lands},
     flags:[...flags,'hang','stub',...(blocked?['outlet-blocked']:[]),...(!diagnostic.allowed?['no-safe-landing']:[])],door:opening.door,rank:diagnostic.lands==='driveway'?1:0};
 }
-function edgeFraction(ctx,segment,top){
-  const r=ctx.b.roofs?.find(r=>r.id===segment.roof),area=r?.area,p=ctx.f.local(top).slice(0,2);
-  if(area&&Number.isInteger(segment.edge))return projection(p,roofPoint(r,area[segment.edge]),roofPoint(r,area[(segment.edge+1)%area.length])).t;
+function exactBlocked(ctx,c,flags,mount){
+  const value=hangingEnd(ctx,c,flags);
+  value.mount=mount.kind;value.flags=value.flags.filter(f=>f!=='hang'&&f!=='stub');
+  if(!value.flags.includes('outlet-blocked'))value.flags.push('outlet-blocked');
+  return value;
+}
+function exactCandidate(ctx,c,flags){
+  const {segment,at}=c,top=gutterBottom(ctx,segment,at);
+  const mounts=mountAt(ctx,segment,at,null,true,true);
+  const hit=landing(ctx,[top[0],at[1],top[2]]);
+  const free={kind:'free',at:ctx.f.local(top).slice(0,2),normal:segment.outward};
+  if(top[1]<=hit.height+2/12*FT){const mount=mounts.find(m=>m.kind!=='hang')||free;
+    return exactBlocked(ctx,c,mount.kind==='free'?[...flags,'no-support']:flags,mount);}
+  for(const mount of mounts){if(mount.kind==='hang')continue;
+    const value=mountedCandidate(ctx,segment,at,null,flags,GUTTER.openingClearMinFt,mount,true);
+    if(value)return value;
+  }
+  return mountedCandidate(ctx,segment,at,null,[...flags,'no-support'],GUTTER.openingClearMinFt,free,true);
+}
+function edgeLine(ctx,segment){
+  const r=ctx.b.roofs?.find(r=>r.id===segment.roof),area=r?.area;
+  if(area&&Number.isInteger(segment.edge))return [roofPoint(r,area[segment.edge]),roofPoint(r,area[(segment.edge+1)%area.length])];
   if(segment.roof!==null){const s=ctx.b.roof?.sections?.find(s=>(s.roof||s.id)===segment.roof),side=s&&SIDES.find(side=>source(ctx.b,s,side).edge===segment.edge);
-    if(s&&side){const [x0,y0,x1,y1]=s.rect,a=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]],i=SIDES.indexOf(side);return projection(p,roofPoint(s,a[i]),roofPoint(s,a[(i+1)%4])).t;}}
+    if(s&&side){const [x0,y0,x1,y1]=s.rect,a=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]],i=SIDES.indexOf(side);return [roofPoint(s,a[i]),roofPoint(s,a[(i+1)%4])];}}
   const porch=ctx.porches.find(v=>v.id===segment.porch),poly=porch?.polygon||[];
   if(poly.length){const mid=ctx.f.local(mul(add(segment.a,segment.b),.5)).slice(0,2);
     const edges=poly.map((a,i)=>({a,b:poly[(i+1)%poly.length]})).sort((a,b)=>edgeDistance(mid,a.a,a.b)-edgeDistance(mid,b.a,b.b));
-    return projection(p,edges[0].a,edges[0].b).t;}
-  return projection(top,segment.a,segment.b).t;
+    return [edges[0].a,edges[0].b];}
+  return [ctx.f.local(segment.a).slice(0,2),ctx.f.local(segment.b).slice(0,2)];
+}
+function edgeFraction(ctx,segment,top){
+  return projection(ctx.f.local(top).slice(0,2),...edgeLine(ctx,segment)).t;
 }
 function overrides(ctx,segment){
   if(segment.roof===null)return null;
@@ -721,6 +771,14 @@ function overrides(ctx,segment){
   if(edge)return edge.gutter===true&&edge.setting==='sloped'&&Array.isArray(edge.downspouts)?edge.downspouts:null;
   const s=ctx.b.roof?.sections?.find(s=>(s.roof||s.id)===segment.roof),side=s&&SIDES.find(side=>source(ctx.b,s,side).edge===segment.edge);
   return s&&eaveSide(s,side)&&s.gutters?.[side]===true&&Array.isArray(s.downspouts?.[side])?s.downspouts[side]:null;
+}
+
+// Measure exact-drop warnings along the authored edge, identifying tips with vertices.
+function nearRunCorner(ctx,segment,at,c){
+  const [a,b]=edgeLine(ctx,segment),same=c.segment.roof===segment.roof&&c.segment.edge===segment.edge&&c.segment.porch===segment.porch;
+  if(!same&&(!c.corner||edgeDistance(c.corner.at,a,b)>.05))return false;
+  // Clamping identifies the overhanging tip with its authored corner.
+  return Math.abs(edgeFraction(ctx,segment,at)-edgeFraction(ctx,segment,c.at))*dist(a,b)<=1+EPS;
 }
 
 export function downspouts(plan={},runs=[]){
@@ -779,9 +837,37 @@ export function downspouts(plan={},runs=[]){
   }
   for(const state of compiled){
     const {ctx,all}=state,convex=all.filter(c=>c.convex&&!c.inner);
-    let valid=convex.map(c=>({...c,value:candidate(ctx,c.segment,c.at,c.corner)})).filter(c=>c.value&&c.value.mount!=='hang');
-    if(!valid.length)valid=all.filter(c=>c.end&&!c.inner&&!c.cut())
-      .map(c=>({...c,value:candidate(ctx,c.segment,c.at,c.corner,['no-outside-corner'])})).filter(c=>c.value&&c.value.mount!=='hang');
+    const attempts=new Map(),legacyFailures=new Map();
+    const checked=(c,flags,clearance)=>{
+      let attempt=attempts.get(c);
+      if(attempt?.failed?.has(clearance))return null;
+      // Less opening clearance cannot repair a missing support or short drop.
+      if(clearance===GUTTER.openingClearMinFt&&!attempt?.opening)return null;
+      if(!attempt){attempt={skipFirst:legacyFailures.has(c)&&!legacyFailures.get(c).opening};attempts.set(c,attempt);}
+      const value=candidate(ctx,c.segment,c.at,c.corner,flags,clearance,attempt);
+      if(!value)(attempt.failed??=new Set()).add(clearance);
+      return value;
+    };
+    // Tier 0 is main's original first-face/clamped/inclusive rule verbatim.
+    // Its non-empty result is final for this run; new tiers cannot expand it.
+    const legacy=(pool,flags)=>pool.map(c=>{
+      if(legacyFailures.has(c))return {...c,value:null};
+      const attempt={},value=candidate(ctx,c.segment,c.at,c.corner,flags,GUTTER.openingClearFt,attempt,true);
+      if(!value)legacyFailures.set(c,attempt);
+      return {...c,value};})
+      .filter(c=>c.value&&c.value.mount!=='hang');
+    let valid=legacy(convex,[]);
+    for(const clearance of valid.length?[]:[GUTTER.openingClearFt,GUTTER.openingClearMinFt]){
+      valid=convex.map(c=>({...c,value:checked(c,[],clearance)})).filter(c=>c.value&&c.value.mount!=='hang');
+      if(valid.length)break;
+    }
+    const ends=()=>all.filter(c=>c.end&&!c.inner&&!c.cut());
+    if(!valid.length)valid=legacy(ends(),['no-outside-corner']);
+    if(!valid.length)for(const clearance of [GUTTER.openingClearFt,GUTTER.openingClearMinFt]){
+      valid=ends()
+        .map(c=>({...c,value:checked(c,['no-outside-corner'],clearance)})).filter(c=>c.value&&c.value.mount!=='hang');
+      if(valid.length)break;
+    }
     if(!valid.length&&all.length){
       const ends=all.some(c=>c.end)?all.filter(c=>c.end):all;
       const safe=ends.filter(c=>!c.inner&&!c.cut()),nonInner=ends.filter(c=>!c.inner);
@@ -803,19 +889,46 @@ export function downspouts(plan={},runs=[]){
   for(const state of compiled)for(const segment of state.active){
     const values=overrides(state.ctx,segment);if(values!==null)overrideEdges.set(`${state.run.building}:${segmentKey(segment)}`,values);
   }
-  for(const [id,values] of overrideEdges)for(const fraction of values.slice(0,8)){
+  for(const [id,values] of overrideEdges)for(const [authoredIndex,entry] of values.slice(0,8).entries()){
+    const exact=entry&&typeof entry==='object'&&!Array.isArray(entry)&&Object.keys(entry).length===1&&'at' in entry;
+    const fraction=exact?entry.at:entry;
     if(typeof fraction!=='number'||!Number.isFinite(fraction)||fraction<0||fraction>1)continue;
+    if(exact){
+      const choices=compiled.flatMap(state=>state.active.filter(segment=>`${state.run.building}:${segmentKey(segment)}`===id).map(segment=>{
+        const [a,b]=edgeLine(state.ctx,segment),v=sub(b,a),p=add(a,mul(v,fraction));
+        const localA=state.ctx.f.local(segment.a).slice(0,2),localB=state.ctx.f.local(segment.b).slice(0,2);
+        const q=projection(p,localA,localB),at=add(segment.a,mul(sub(segment.b,segment.a),q.t));
+        const tips=[segment.a,segment.b].map(at=>({at,u:dot(sub(state.ctx.f.local(at).slice(0,2),a),v)/(dot(v,v)||1)}))
+          .filter(t=>fraction===0&&t.u<0||fraction===1&&t.u>1).sort((a,b)=>fraction===0?a.u-b.u:b.u-a.u);
+        return {state,segment,at,gap:dist(p,q.at),tip:tips[0]};
+      })).sort((a,b)=>(Math.abs(a.gap-b.gap)>EPS?a.gap-b.gap:0)||compare(a.state.run.id,b.state.run.id)||compare(key(a.at),key(b.at)));
+      const tips=choices.filter(c=>c.tip).sort((a,b)=>(fraction===0?a.tip.u-b.tip.u:b.tip.u-a.tip.u)||compare(a.state.run.id,b.state.run.id));
+      const chosen=tips[0]||choices[0];if(!chosen)continue;
+      if(chosen.tip)chosen.at=chosen.tip.at;
+      const {state,segment,at}=chosen;
+      const nearCorner=state.valid.some(c=>c.convex&&!c.inner&&c.value.mount!=='hang'
+        &&!c.value.flags.some(f=>['no-safe-landing','outlet-blocked'].includes(f))&&nearRunCorner(state.ctx,segment,at,c));
+      const flags=nearCorner?[]:['placed-off-corner'];
+      const c={segment,at,key:`exact:${id}:${authoredIndex}`,exact:true,source:'override',overrideFraction:fraction,authoredIndex};
+      c.value=exactCandidate(state.ctx,c,flags);state.selected.push(c);continue;
+    }
     const choices=compiled.flatMap(state=>state.valid.filter(c=>`${state.run.building}:${segmentKey(c.segment)}`===id)
       .map(c=>({state,c,gap:Math.abs(edgeFraction(state.ctx,c.segment,c.at)-fraction)})))
       .sort((a,b)=>a.gap-b.gap||compare(a.state.run.id,b.state.run.id)||compare(key(a.c.at),key(b.c.at)));
     const chosen=choices[0];if(chosen&&!chosen.state.used.has(chosen.c.key)){
-      chosen.state.selected.push({...chosen.c,source:'override',overrideFraction:fraction});chosen.state.used.add(chosen.c.key);}
+      chosen.state.selected.push({...chosen.c,source:'override',overrideFraction:fraction,authoredIndex});chosen.state.used.add(chosen.c.key);}
   }
+  const exacts=compiled.flatMap(state=>state.selected.filter(c=>c.exact).map(c=>({state,c})));
+  const dropPoint=c=>c.value.path.at(-2)||c.value.top;
+  const nearExact=(state,c)=>exacts.some(v=>v.state.run.building===state.run.building
+    &&(dist(v.c.at,c.at)<=FT+EPS||Math.abs(v.c.at[1]-c.at[1])<=3/12*FT+EPS
+      &&Math.hypot(dropPoint(v.c)[0]-dropPoint(c)[0],dropPoint(v.c)[2]-dropPoint(c)[2])<FT+EPS));
   compiled.sort((a,b)=>compare(a.run.id,b.run.id));
-  for(const {run,valid,selected,used} of compiled){
+  for(const state of compiled){const {run,valid,selected,used}=state;
     const target=Math.ceil(run.length/GUTTER.spanFt);
     for(const c of valid){if(selected.length>=target)break;
-      if(used.has(c.key)||overrideEdges.has(`${run.building}:${segmentKey(c.segment)}`))continue;
+      if(used.has(c.key)||overrideEdges.has(`${run.building}:${segmentKey(c.segment)}`)||nearExact(state,c)
+        ||selected.some(s=>s.exact)&&c.value.flags.includes('stub'))continue;
       selected.push({...c,source:'auto'});used.add(c.key);}
   }
   // Resolve corner ownership across the building and receiving-floor band:
@@ -834,7 +947,8 @@ export function downspouts(plan={},runs=[]){
     state.selected=state.selected.filter(c=>claimed.get(globalKey(state,c))?.c===c);
     for(const c of state.valid){if(state.selected.length>=desired)break;
       const id=globalKey(state,c);
-      if(claimed.has(id)||overrideEdges.has(`${state.run.building}:${segmentKey(c.segment)}`))continue;
+      if(claimed.has(id)||overrideEdges.has(`${state.run.building}:${segmentKey(c.segment)}`)||nearExact(state,c)
+        ||state.selected.some(s=>s.exact)&&c.value.flags.includes('stub'))continue;
       state.selected.push({...c,source:'auto'});claimed.set(id,{state,c});}
   }
   for(const building of contexts.keys()){
@@ -848,7 +962,7 @@ export function downspouts(plan={},runs=[]){
     selected.forEach((c,k)=>{const {value,segment}=c;
       output.push({id:`${run.id}:${k}`,run:run.id,edge:{roof:segment.roof,edge:segment.edge,porch:segment.porch,fraction:edgeFraction(ctx,segment,c.at)},
         top:value.top,mount:value.mount,path:value.path,outlet:value.outlet,share:1/selected.length,source:c.source,
-        ...(c.source==='override'?{authoredFraction:c.overrideFraction}:{}),
+        ...(c.source==='override'?{authoredFraction:c.overrideFraction,authoredIndex:c.authoredIndex,...(c.exact?{exact:true}:{})}:{}),
         flags:[...value.flags,...(c.merged?.length?['merged-override']:[])],
         ...(c.merged?.length?{merged:c.merged.sort((a,b)=>compare(a.run,b.run)||a.fraction-b.fraction)}:{})});});
   }
@@ -875,7 +989,7 @@ export function downspouts(plan={},runs=[]){
   candidateSets.set(runs, compiled.flatMap(state => state.valid.filter(c => c.value.mount !== 'hang'
     && !c.value.flags.some(f => ['no-safe-landing', 'outlet-blocked'].includes(f))).map(c => ({
       building: state.run.building, roof: c.segment.roof, edge: c.segment.edge, porch: c.segment.porch,
-      fraction: edgeFraction(state.ctx, c.segment, c.at), occupied: claimed.has(globalKey(state, c)),
+      fraction: edgeFraction(state.ctx, c.segment, c.at), occupied: claimed.has(globalKey(state, c))||nearExact(state,c),
     }))));
   return output;
 }
