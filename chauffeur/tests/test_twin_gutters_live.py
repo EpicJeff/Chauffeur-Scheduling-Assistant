@@ -23,7 +23,7 @@ NOON = '2026-06-21T12:00:00Z'
 SHOTS_DIR = Path(r'E:\repositories\Chauffeur-gutters-g\.gemini-tmp\shots\elbow')
 
 
-from tools.demo_seed import synthetic_plan, GUTTER_OUTLET_CAMERA  # shared synthetic fixture
+from tools.demo_seed import GUTTER_OUTLET_CAMERA, synthetic_plan as demo_plan  # shared synthetic fixture
 
 
 def seed_plan(plan):
@@ -32,6 +32,15 @@ def seed_plan(plan):
     norm, _ = twin_plan.normalize(copy.deepcopy(plan))
     model, _ = assemble(norm)
     twin_store.update_model(lambda _: copy.deepcopy(model), kind='build')
+
+
+def synthetic_plan(gutters_on=True):
+    """The demo awning has no gutter; its eave would stream in both states."""
+    plan = demo_plan(gutters_on=gutters_on)
+    main = plan['buildings'][0]
+    main['roofs'] = [r for r in main['roofs'] if r['id'] != 'demo-awning']
+    main['roof']['sections'] = [s for s in main['roof']['sections'] if s['id'] != 'demo-awning']
+    return plan
 
 
 def set_pouring():
