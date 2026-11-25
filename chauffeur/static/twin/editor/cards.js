@@ -55,7 +55,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   }
   const host = document.getElementById('piece-card');
   let selection = null, pending = Promise.resolve(), inputs = new Map(), headingNode = null, acceptButton = null, pitchNote = null, layout = null;
-  let edgeIndex = null, edgePlan = null, cardMembers = [], setCard = null, setCache = null, lastPostKey = null;
+  let edgeIndex = null, edgePlan = null, cardMembers = [], setCard = null, setCache = null;
   let haSection = null;
   const slots = [];
   const ownSlot = row => slots.push(row);
@@ -102,11 +102,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
   function draw(next = selection) {
     const members = selectionStore?.members() || (next ? [next] : []);
     const resolved = members.map(ref => ref.kind ? ref : { ...ref, kind: findPiece(getPlan(), ref.pieceId, ref.buildingId)?.kind });
-    const singlePost = resolved.length === 1 && resolved[0].kind === 'porch_post' ? findPiece(getPlan(), resolved[0].pieceId, resolved[0].buildingId) : null;
-    const postKey = singlePost?.kind === 'porch_post' ? JSON.stringify([singlePost.building.id, singlePost.porchId, singlePost.index]) : null;
-    const same = sameSelectionSubject(cardMembers, resolved) || !!(postKey && postKey === lastPostKey);
+    const same = sameSelectionSubject(cardMembers, resolved);
     cardMembers = resolved;
-    lastPostKey = postKey;
     return same ? keepPlace(host, () => drawCard(next)) : drawCard(next);
   }
   function drawCard(next = selection) {
@@ -158,11 +155,11 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const porchLayout = isPorch
       ? JSON.stringify([record.piece.foundation, record.kind === 'room' ? porchShelfOnGrade(getPlan(), record.building, record.piece) : null,
         porchDetail?.columns, record.building.roofs?.map(r => [r.id, r.support, r.state, r.area]), canEdit()])
-      : record?.kind === 'porch_post' ? JSON.stringify([record.porchId, record.index, canEdit()]) : '';
+      : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
     const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
-      roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, roof.ends, roof.underside, record.building.walls], record && [record.piece.gutter, record.kind === 'porch_post' ? null : record.building?.porches?.map(p => [p.id, p.gutter, p.columns])]]);
+      roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, roof.ends, roof.underside, record.building.walls], record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -172,7 +169,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
-      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.gutterDisabled !== undefined || b.dataset.fixtureLocked !== undefined || b.dataset.postDisabled !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
+      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.gutterDisabled !== undefined || b.dataset.fixtureLocked !== undefined || b.dataset.postDisabled !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined && b.dataset.selectPorch === undefined && b.getAttribute('aria-label') !== 'Close piece card'; });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
         const { input } = state;
@@ -229,7 +226,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
           run: () => queue(() => canEdit() && op({ op: 'set_material', building: building.id, target: material.reset.target, material: null })) } : null });
       ownSlot(row); host.append(row.element);
     }
-    if (kind === 'porch_post') drawPorchPostFooter(host, record, { canEdit, select });
+    if (kind === 'porch_post') drawPorchPostFooter(host, record, { select });
     if (kind === 'roof') {
       pitchNote = document.createElement('p'); pitchNote.textContent = 'Estimated from photos';
       pitchNote.hidden = piece.pitch_source !== 'photos'; host.append(pitchNote);
@@ -442,13 +439,17 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const { kind, piece, building } = record;
       if (!canEdit()) return;
       const count = kind === 'yard_rooms' ? (getPlan().site?.devices || []).filter(d => d.host?.yard_room === piece.id).length : 0;
-      if (!await window.promptConfirm(`Delete ${getLabel(selection)}?`, kind === 'yard_rooms'
+      const askTitle = kind === 'porch_post' ? 'Delete this post?' : `Delete ${getLabel(selection)}?`;
+      const askBody = kind === 'yard_rooms'
         ? `${count} device${count === 1 ? '' : 's'} will be unplaced and remain in Home Assistant. Undo restores the room and its placements.`
-        : 'Attached doors or windows may also be removed. The timeline keeps the earlier house.', 'Delete', 'Cancel')) return;
+        : kind === 'porch_post' ? 'Undo restores the post.'
+          : 'Attached doors or windows may also be removed. The timeline keeps the earlier house.';
+      const deleted = selection;
+      if (!await window.promptConfirm(askTitle, askBody, 'Delete', 'Cancel')) return;
       await pending;
-      const operation = deleteOperation(getPlan(), selection, getModel?.());
+      const operation = deleteOperation(getPlan(), deleted, getModel?.());
       await (operation.piece || !op ? edit : op)(operation);
-      select(kind === 'porch_post' ? { pieceId: record.porchId, buildingId: building.id } : null);
+      select(kind === 'porch_post' ? { pieceId: record.porchId, buildingId: building.id, fallbackFrom: [deleted] } : null);
 
   }
   function drawEdge(next, record, roof) {

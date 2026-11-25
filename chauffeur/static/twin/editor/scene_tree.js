@@ -46,12 +46,12 @@ export function sceneRows(plan) {
     const porchRows = new Map();
     for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[allPorches(b),'porch']])
       // A porch is also a room of the same id (its floor, walls and openings hang there); list it once.
-      for (const p of collection || []) if (!(kind === 'porch' && rooms.has(p.id))) {
+      for (const p of collection || []) if (!(kind === 'porch' && (!p.id || rooms.has(p.id)))) {
         const row = add(p, kind, levels.get(p.level) || building, b.id,
           kind === 'roof' && isSupported(p) && !p.name ? `Awning ${awnings.indexOf(p)+1}` : label(p, kind));
         if (kind === 'porch') porchRows.set(p.id, row);
       }
-    for (const post of porchPosts(b)) {
+    for (const post of porchPosts(b)) if (post.porchId) {
       const parent = rooms.get(post.porchId) || porchRows.get(post.porchId) || levels.get(post.porch.level) || building;
       add({ ...post.piece, id: post.id }, 'porch_post', parent, b.id, `Post ${post.index + 1}`, {
         piece: post.piece, porchId: post.porchId, postIndex: post.index,

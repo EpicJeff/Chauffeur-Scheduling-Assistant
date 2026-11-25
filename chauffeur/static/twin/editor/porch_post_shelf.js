@@ -1,11 +1,16 @@
 import { allPorches } from '../gutter_presence.js';
 import { POST_SIZE, postRef, findPost } from '../porch_posts.js';
-import { drawPostsAction, postRoofChoices, postRoofReason } from './posts_action.js';
+import { drawPostsAction, postRoofDisabledReason } from './posts_action.js';
 import { parseLength } from './selection_fields.js';
 import { snapValue } from './snap.js';
 
+export { postRoofDisabledReason };
+
 const EPS = 1e-8;
 const SNAP_REACH_FT = 0.5;
+const POS_LIMIT_FT = 1e5;
+const SIZE_REFUSAL = `Choose a post size from ${POST_SIZE.min} to ${POST_SIZE.max} feet.`;
+const POS_REFUSAL = 'Choose a finite post position.';
 const fmt = value => String(Number(Number(value).toFixed(4)));
 
 export function porchName(building, porch) {
@@ -15,31 +20,6 @@ export function porchName(building, porch) {
 
 export function porchPostTitle(record) {
   return `Post ${record.index + 1} \u00b7 ${porchName(record.building, record.porch)}`;
-}
-
-// Rank reasons from postRoofReason so an overlapping roof's specific mismatch
-// (e.g. mixed sizes or post outside roof) beats an unrelated roof's non-overlap.
-const REASON_RANK = [
-  'No roof overlaps this porch on its floor.',
-  'Choose a settled roof; ghost and proposal roofs cannot receive posts.',
-  'This roof already has supports.',
-  'Choose a shed roof; this walled roof is not a shed.',
-  'The roof needs at most 40 columns of the same size, from 0.05 to 3 feet.',
-  'A post would be outside the roof.',
-  'Choose a settled porch; ghost and proposal porches cannot move posts.',
-];
-
-export function postRoofDisabledReason(building, porch) {
-  const candidates = building?.roofs?.length ? building.roofs : building?.roof?.sections || [];
-  if (!candidates.length) return postRoofReason(building, porch, null);
-  let best = null, bestRank = -1;
-  for (const roof of candidates) {
-    const reason = postRoofReason(building, porch, roof);
-    if (reason === null) return null;
-    const rank = REASON_RANK.indexOf(reason);
-    if (best === null || rank > bestRank) { best = reason; bestRank = rank; }
-  }
-  return best || postRoofReason(building, porch, null);
 }
 
 // Compute inset polygon edges, inset corners and other posts' alignment lines
@@ -187,14 +167,9 @@ function parsePostNumber(text, { min = -Infinity, max = Infinity, message }) {
   return value;
 }
 
-function currentPost(plan, buildingId, postId, porchId, index) {
+function currentPost(plan, buildingId, postId) {
   const b = plan?.buildings?.find(x => x.id === buildingId);
-  if (!b) return null;
-  const direct = findPost(b, postId);
-  if (direct) return direct;
-  const porch = allPorches(b).find(p => p.id === porchId);
-  if (!porch?.columns?.[index]) return null;
-  return { kind: 'porch_post', id: postRef(porch, index), porchId: porch.id, buildingId: b.id, index, piece: porch.columns[index], porch };
+  return b ? findPost(b, postId) : null;
 }
 
 // Single-post Properties fields (Position X, Position Y, Size) with in-place refresh.
@@ -205,8 +180,7 @@ export function drawPorchPostShelf(host, record, { getPlan, canEdit, queue, op, 
   section.dataset.porchPostFields = '';
   host.append(section);
 
-  const buildingId = record.building.id, porchId = record.porchId, index = record.index;
-  let currentId = record.piece.id;
+  const buildingId = record.building.id, postId = record.piece.id;
   const states = new Map();
 
   function addField(key, labelText, getValue, parse, buildChange) {
@@ -235,15 +209,12 @@ export function drawPorchPostShelf(host, record, { getPlan, canEdit, queue, op, 
       ++state.queued;
       Promise.resolve(queue(async () => {
         if (!canEdit()) return;
-        const fresh = currentPost(getPlan(), buildingId, currentId, porchId, index);
+        const fresh = currentPost(getPlan(), buildingId, postId);
         if (!fresh) throw new Error('That post is missing.');
-        currentId = fresh.id;
         const change = buildChange(fresh, parsed);
-        if (!change) { state.baseline = submitted; return; }
+        if (!change) { if (input.value === submitted) state.baseline = submitted; return; }
         await op({ op: 'update_porch_post', building: buildingId, porch: fresh.porchId, post: fresh.id, ...change });
-        const after = currentPost(getPlan(), buildingId, currentId, porchId, index);
-        if (after) currentId = after.id;
-        state.baseline = submitted;
+        if (input.value === submitted) state.baseline = submitted;
         onSaved?.();
       })).catch(fail).finally(() => { --state.queued; });
     };
@@ -252,18 +223,17 @@ export function drawPorchPostShelf(host, record, { getPlan, canEdit, queue, op, 
   }
 
   addField('x', 'Position X (ft)', r => r.piece.at[0],
-    text => parsePostNumber(text, { message: 'Use a finite X position in feet.' }),
+    text => parsePostNumber(text, { min: -POS_LIMIT_FT, max: POS_LIMIT_FT, message: POS_REFUSAL }),
     (fresh, x) => Math.abs(fresh.piece.at[0] - x) > EPS ? { at: [x, fresh.piece.at[1]] } : null);
   addField('y', 'Position Y (ft)', r => r.piece.at[1],
-    text => parsePostNumber(text, { message: 'Use a finite Y position in feet.' }),
+    text => parsePostNumber(text, { min: -POS_LIMIT_FT, max: POS_LIMIT_FT, message: POS_REFUSAL }),
     (fresh, y) => Math.abs(fresh.piece.at[1] - y) > EPS ? { at: [fresh.piece.at[0], y] } : null);
   addField('size', 'Size (ft)', r => r.piece.size ?? POST_SIZE.fallback,
-    text => parsePostNumber(text, { min: POST_SIZE.min, max: POST_SIZE.max, message: `Post size must be from ${POST_SIZE.min} to ${POST_SIZE.max} ft.` }),
+    text => parsePostNumber(text, { min: POST_SIZE.min, max: POST_SIZE.max, message: SIZE_REFUSAL }),
     (fresh, size) => Math.abs((fresh.piece.size ?? POST_SIZE.fallback) - size) > EPS ? { size } : null);
 
   const refresh = () => {
-    const fresh = currentPost(getPlan(), buildingId, currentId, porchId, index);
-    if (fresh) currentId = fresh.id;
+    const fresh = currentPost(getPlan(), buildingId, postId);
     for (const state of states.values()) {
       state.input.disabled = !canEdit();
       if (fresh && document.activeElement !== state.input && state.input.value === state.baseline && !state.queued) {
@@ -277,7 +247,7 @@ export function drawPorchPostShelf(host, record, { getPlan, canEdit, queue, op, 
 }
 
 // Appended right after the porch's Columns material row on a porch_post card.
-export function drawPorchPostFooter(host, record, { canEdit, select }) {
+export function drawPorchPostFooter(host, record, { select }) {
   if (record?.kind !== 'porch_post') return;
   const note = document.createElement('p');
   note.className = 'editor-downspout-note';
@@ -288,10 +258,7 @@ export function drawPorchPostFooter(host, record, { canEdit, select }) {
   go.type = 'button';
   go.dataset.selectPorch = '';
   go.textContent = 'Select the porch';
-  go.disabled = !canEdit();
-  go.addEventListener('click', () => {
-    if (canEdit()) select({ pieceId: record.porchId, buildingId: record.building.id });
-  });
+  go.addEventListener('click', () => select({ pieceId: record.porchId, buildingId: record.building.id }));
   host.append(go);
 }
 
@@ -318,7 +285,7 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
   add.textContent = 'Add post';
   const atLimit = count >= POST_SIZE.limit;
   add.disabled = !canEdit() || atLimit;
-  if (atLimit) { add.dataset.postDisabled = ''; add.title = `At most ${POST_SIZE.limit} posts per porch.`; }
+  if (atLimit) { add.dataset.postDisabled = ''; add.title = `A porch can have at most ${POST_SIZE.limit} posts.`; }
   add.addEventListener('click', () => Promise.resolve(queue(async () => {
     if (!canEdit()) return;
     const bNow = getPlan().buildings.find(b => b.id === buildingId);
@@ -331,7 +298,7 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
     const afterCols = pAfter?.columns || [];
     if (afterCols.length > beforeCount) {
       const newIndex = afterCols.length - 1;
-      select({ kind: 'porch_post', pieceId: postRef(pAfter, newIndex), buildingId, porchId });
+      select({ pieceId: postRef(pAfter, newIndex), buildingId });
     } else {
       onSaved?.();
     }
@@ -361,12 +328,12 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
       error.textContent = ''; input.setAttribute('aria-invalid', 'false');
       if (!input.value.trim()) {
         if (!uniform) return;
-        fail(new Error(`Post size must be from ${POST_SIZE.min} to ${POST_SIZE.max} ft.`));
+        fail(new Error(SIZE_REFUSAL));
         return;
       }
       if (uniform && input.value === baseline) return;
       let size;
-      try { size = parsePostNumber(input.value, { min: POST_SIZE.min, max: POST_SIZE.max, message: `Post size must be from ${POST_SIZE.min} to ${POST_SIZE.max} ft.` }); }
+      try { size = parsePostNumber(input.value, { min: POST_SIZE.min, max: POST_SIZE.max, message: SIZE_REFUSAL }); }
       catch (err) { fail(err); return; }
       Promise.resolve(queue(async () => {
         if (!canEdit()) return;
@@ -386,31 +353,7 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
     input.addEventListener('change', saveAll);
     input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); saveAll(); } });
 
-    const choices = postRoofChoices(building, porchId);
-    if (choices.length) {
-      drawPostsAction(section, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved });
-    } else {
-      const reason = postRoofDisabledReason(building, porch);
-      const row = document.createElement('div'); row.className = 'editor-material-actions editor-card-row';
-      const moveBtn = document.createElement('button');
-      moveBtn.type = 'button';
-      moveBtn.textContent = 'Move posts to the roof';
-      moveBtn.disabled = true;
-      moveBtn.dataset.postDisabled = '';
-      if (reason) moveBtn.title = reason;
-      row.append(moveBtn);
-      section.append(row);
-      if (reason) {
-        const note = document.createElement('p');
-        note.className = 'editor-downspout-note';
-        note.dataset.postRoofReason = '';
-        const noteId = `post-roof-reason-${buildingId}-${porchId}`;
-        note.id = noteId;
-        note.textContent = reason;
-        moveBtn.setAttribute('aria-describedby', noteId);
-        section.append(note);
-      }
-    }
+    drawPostsAction(section, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved });
   }
 
   host.append(section);

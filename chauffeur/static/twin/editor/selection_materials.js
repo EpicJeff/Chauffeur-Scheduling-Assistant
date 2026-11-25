@@ -126,8 +126,16 @@ export function sharedMaterialRows(plan, refs, kit = {}, allSlots = refs.map(ref
     return [...rows.values()].map(row => ({ ...row, label: `${row.label} (${new Set(row.matches.map(match => ownerKey(match.owner))).size} of ${refs.length} walls)` }));
   }
   return (allSlots[0] || []).flatMap(slot => {
-    const matches = allSlots.map((slots, index) => ({ owner: refs[index], slot: slots.find(candidate => candidate.key === slot.key) }));
-    return matches.every(match => match.slot) ? [{ key: slot.key, label: slot.label, matches }] : [];
+    const raw = allSlots.map((slots, index) => ({ owner: refs[index], slot: slots.find(candidate => candidate.key === slot.key) }));
+    if (!raw.every(match => match.slot)) return [];
+    const seenTargets = new Set();
+    const matches = raw.filter(match => {
+      if (!match.slot.target) return true;
+      const targetKey = JSON.stringify([buildingId(match.owner) || null, match.slot.target]);
+      if (seenTargets.has(targetKey)) return false;
+      seenTargets.add(targetKey); return true;
+    });
+    return [{ key: slot.key, label: slot.label, matches }];
   });
 }
 
@@ -142,7 +150,8 @@ export function materialsInSelection(plan, refs, kit = {}, slotsByOwner = null) 
   const groups = new Map(), seen = new Set();
   for (const [index, owner] of (refs || []).entries()) {
     for (const slot of countedSlots(plan, owner, kit, slotsByOwner?.[index])) {
-      const key = JSON.stringify([ownerKey(canonicalOwner(plan, owner)), slot.key]);
+      const key = slot.target ? JSON.stringify([buildingId(owner) || null, slot.target])
+        : JSON.stringify([ownerKey(canonicalOwner(plan, owner)), slot.key]);
       if (seen.has(key)) continue;
       seen.add(key);
       const id = slot.current?.id || effectiveId(slot.resolved, kit);

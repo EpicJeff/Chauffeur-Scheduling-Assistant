@@ -226,7 +226,7 @@ export function selectionFields(plan, refs, { getModel = () => null, getFieldLab
         { type: 'text', format: v => String(Number(Number(v).toFixed(4))), parse: input => {
           const value = parseLength(input);
           if (!Number.isFinite(value) || value < POST_SIZE.min || value > POST_SIZE.max)
-            throw new Error(`Post size must be from ${POST_SIZE.min} to ${POST_SIZE.max} ft.`);
+            throw new Error(`Choose a post size from ${POST_SIZE.min} to ${POST_SIZE.max} feet.`);
           return value;
         } });
     }

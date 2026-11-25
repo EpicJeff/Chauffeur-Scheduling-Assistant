@@ -456,10 +456,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       return piece && { kind, piece, role: 'water', target: { [kind]: piece.id, part: 'water' }, label: `${piece.name || (kind === 'spa' ? 'Spa' : 'Pool')} water` };
     }
     if (kind === 'porch_post') {
-      const porch = [...allPorches(building || {}), ...(building?.porches_detail || [])].find(p => p.id === (picked.parentPieceId || picked.porchId));
+      const porchId = picked.parentPieceId || picked.porchId || findPiece(getPlan(), id, building?.id)?.porchId;
+      const porch = porchId && [...allPorches(building || {}), ...(building?.porches_detail || [])].find(p => p.id === porchId);
+      const name = building?.rooms?.find(r => r.id === porch?.id)?.name || porch?.name || 'porch';
       if (porch) return { building, kind: 'porch', piece: porch, role: 'column', target: { porch: porch.id, part: 'column' },
         level: porch.level, point: picked.point && local(building, new THREE.Vector3(...picked.point)).toArray(),
-        label: `${porch.name || 'porch'} column` };
+        label: `${name} column` };
     }
     const targetKind = kind === 'fixture' ? 'item' : kind;
     if (picked.part && ITEM_PARTS[targetKind === 'item' ? 'fixture' : targetKind]?.includes(picked.part)) {
@@ -517,6 +519,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       if (!target) return true;
       const id = target.id || target.pieceId, bid = target.building || target.buildingId;
       if (target.kind === 'building') return surface.building?.id === (bid || id);
+      if (target.kind === 'porch_post' && surface.kind === 'porch') {
+        const porchId = target.parentPieceId || target.porchId || findPiece(getPlan(), id, bid)?.porchId;
+        return surface.piece.id === porchId && (surface.building?.id || null) === (bid || null);
+      }
       return (surface.piece.id === id || surface.piece.roof === id)
         && (surface.building?.id || null) === (bid || null);
     };

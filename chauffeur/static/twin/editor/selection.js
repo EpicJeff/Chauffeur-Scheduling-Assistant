@@ -307,14 +307,14 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
     return current();
   }
 
-  function refresh(silent = false) {
+  function refresh() {
     if (room) {
       const context = roomContext(room);
       if (!context) { clear(); return; }
       walls = context.walls; allowed = context.allowed;
       if (selected && !inside(selected)) selected = { ...room };
     }
-    if (!silent) changed(false);
+    changed(false);
   }
 
   return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, back, refresh };

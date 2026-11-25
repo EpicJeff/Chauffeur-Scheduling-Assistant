@@ -27,8 +27,7 @@ import { deleteOperations, groupTransform, transformOperations } from './group_t
 import { createClipboard, clipboardKey } from './clipboard.js';
 import { dialogOpen } from './dialog.js';
 import { contextPoint } from './library.js';
-import { allPorches } from '../gutter_presence.js';
-import { findPost, postRef } from '../porch_posts.js';
+import { findPost } from '../porch_posts.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
@@ -199,22 +198,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     drawDimensions(getPlan(), state);
     if (!refreshingSelection || changed) sceneTree?.reveal(state.id, state.building);
   }
-  const postCounts = new Map(), postPositions = new Map();
-  function snapshotPostState(plan) {
-    postCounts.clear();
-    for (const b of plan?.buildings || []) {
-      for (const p of allPorches(b)) {
-        const cols = p.columns || [];
-        postCounts.set(`${b.id}:${p.id}`, cols.length);
-        cols.forEach((_, index) => {
-          postPositions.set(JSON.stringify([b.id, postRef(p, index)]), { buildingId: b.id, porchId: p.id, index });
-        });
-      }
-    }
-  }
+  let rememberedPosts = null, fallingBack = false;
   const selectionStore = createSelection({
     onChange(members) {
-      snapshotPostState(getPlan());
+      if (!fallingBack && !refreshingSelection) rememberedPosts = null;
       if (syncingStore) return;
       const primaryRef = members.length ? members[members.length - 1] : null;
       // Clear room focus here (caller), not inside the pure member store (Ruling 1).
@@ -376,11 +363,19 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       || (record.porchId && record.building.rooms?.find(r => r.id === record.porchId)?.level)
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
     if (['roof', 'dormer', 'solar_zone', 'building', 'level'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
-    snapshotPostState(getPlan());
-    roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level, ...(record.porchId ? { porchId: record.porchId } : {}) });
+    const nextPick = { kind: record.kind, id: record.piece.id, building: record.building.id, level, ...(record.porchId ? { porchId: record.porchId } : {}) };
+    if (item.fallbackFrom) {
+      fallingBack = true;
+      try {
+        roomSelection.select(nextPick);
+        rememberedPosts = { refs: item.fallbackFrom, porch: { pieceId: record.piece.id, buildingId: record.building.id } };
+      } finally { fallingBack = false; }
+      return;
+    }
+    roomSelection.select(nextPick);
   }
   let contextPicking = false;
-  function sceneCandidate(item, postParents = null) {
+  function sceneCandidate(item) {
     if (item?.kind === 'roof') {
       const building = getPlan()?.buildings.find(b => b.id === item.building);
       const section = building?.roof?.sections.find(s => s.id === item.id);
@@ -392,46 +387,23 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const markedRoof = record && (record.piece.state === 'ghost' || record.piece.block
       && record.building.roof.flags?.some(flag => flag.block_rect?.length === 4
         && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)));
-    const underPost = postParents?.has(JSON.stringify([item?.building ?? null, item?.id ?? null]));
     // Existing needs-checking markers still open their own correction card.
-    if (!contextPicking && item?.building && !['solar_zone', 'anchor', 'porch_post'].includes(item.kind) && !underPost && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
+    if (!contextPicking && item?.building && !['solar_zone', 'anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
       return { ...item, kind: 'building', id: item.building, pieceId: item.building, level: null };
     return item;
   }
   const picker = createPicker({ isPickable, sources: [
     (x, y) => { const item = delegate?.pick?.(x, y); return item ? [item] : []; },
     (x, y) => {
-      const plan = getPlan();
-      const raw = view.pickAll(x, y).filter(Boolean).map(item => {
-        const id = item.id ?? item.pieceId;
-        let building = item.building ?? item.buildingId ?? null;
-        if (!building && item.kind === 'porch_post' && id) {
-          building = plan?.buildings?.find(b => findPost(b, id) || allPorches(b).some(p => p.id === (item.parentPieceId ?? item.porchId)))?.id ?? null;
-        }
-        const norm = { ...item, id, pieceId: id, building, buildingId: building };
+      let floorDist = -Infinity;
+      return view.pickAll(x, y).filter(Boolean).map(item => {
+        const id = item.id ?? item.pieceId, building = item.building ?? item.buildingId ?? null;
+        const distance = Number.isFinite(item.distance) ? Math.max(floorDist, item.distance) : item.distance;
+        if (Number.isFinite(distance)) floorDist = distance;
+        const norm = { ...item, id, pieceId: id, building, buildingId: building, distance };
         if (norm.kind === 'porch_post' && (norm.parentPieceId || norm.porchId)) norm.porchId = norm.porchId ?? norm.parentPieceId;
         return norm;
-      }).filter(isPickable);
-      const postParents = new Map();
-      for (const item of raw) {
-        if (item.kind !== 'porch_post') continue;
-        const pid = item.parentPieceId ?? item.porchId ?? findPiece(plan, item.id, item.building)?.porchId;
-        if (!pid) continue;
-        const k = JSON.stringify([item.building ?? null, pid]);
-        if (!postParents.has(k)) postParents.set(k, []);
-        postParents.get(k).push(item);
-      }
-      for (const item of raw) {
-        if (item.kind === 'porch_post') continue;
-        const posts = postParents.get(JSON.stringify([item.building ?? null, item.id]));
-        if (!posts) continue;
-        for (const post of posts) {
-          if (Number.isFinite(item.distance) && (!Number.isFinite(post.distance) || post.distance >= item.distance)) {
-            post.distance = item.distance - 1e-4;
-          }
-        }
-      }
-      return raw.map(item => sceneCandidate(item, postParents));
+      }).filter(isPickable).map(sceneCandidate);
     },
     (x, y) => siteHits ? siteHits(x, y) : [pickSite?.(x, y)].filter(Boolean),
     (x, y) => padHits?.(x, y) || [],
@@ -457,10 +429,18 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   function lockedHint(x, y, picked) {
     const status = document.getElementById('editor-status');
     if (!status || !visibility?.isLocked) return;
-    const nearest = (view.pickAll?.(x, y) || []).find(hit => !visibility.isHidden?.(hit.id ?? hit.pieceId, hit.kind));
+    const nearest = (view.pickAll?.(x, y) || []).find(hit => {
+      const id = hit.id ?? hit.pieceId, parent = hit.parentPieceId ?? hit.porchId;
+      return !visibility.isHidden?.(id, hit.kind) && (!parent || !visibility.isHidden?.(parent));
+    });
     const nearestId = nearest?.id ?? nearest?.pieceId;
-    const parentLocked = nearest?.parentPieceId && visibility.isLocked(nearest.parentPieceId);
-    if (!nearest || !visibility.isLocked(nearestId, nearest.kind) && !parentLocked) { delete status.dataset.lockedHint; return; }
+    const parentId = nearest?.parentPieceId ?? nearest?.porchId
+      ?? (nearest?.kind === 'porch_post' ? findPiece(getPlan(), nearestId, nearest.building ?? nearest.buildingId)?.porchId : null);
+    const locked = nearest && (visibility.isLocked(nearestId, nearest.kind)
+      || !!(parentId && visibility.isLocked(parentId))
+      || !!(nearest.building && visibility.isLocked(nearest.building))
+      || !!(nearest.level && visibility.isLocked(nearest.level)));
+    if (!locked) { delete status.dataset.lockedHint; return; }
     if (picked && (picked.id ?? picked.pieceId) === nearestId) return;
     status.textContent = `${LOCKED_WORDS[nearest.kind] || 'This piece'} is locked. Unlock it in Layers or the Scene tree to select it here.`;
     status.dataset.lockedHint = nearestId;
@@ -588,8 +568,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!canEdit()) return;
     const refs = selectionStore.members();
     if (refs.length < 2) return cards.remove();
-    if (!await window.promptConfirm(`Delete ${refs.length} selected pieces?`, 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
-    const postPorches = refs.every(r => r.kind === 'porch_post')
+    const allPosts = refs.every(r => r.kind === 'porch_post');
+    if (!await window.promptConfirm(`Delete ${refs.length} selected ${allPosts ? 'posts' : 'pieces'}?`,
+      allPosts ? 'Undo restores the whole selection.' : 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
+    const postPorches = allPosts
       ? new Set(refs.map(r => JSON.stringify([r.buildingId ?? null, r.porchId ?? findPiece(getPlan(), r.pieceId, r.buildingId)?.porchId ?? null])))
       : null;
     return cards.queue(async () => {
@@ -597,7 +579,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       await applyBatch(deleteOperations(getPlan(), refs, getModel?.()));
       if (postPorches?.size === 1) {
         const [bid, pid] = JSON.parse([...postPorches][0]);
-        if (pid && findPiece(getPlan(), pid, bid)) { select({ pieceId: pid, buildingId: bid }); return; }
+        if (pid && findPiece(getPlan(), pid, bid)) { select({ pieceId: pid, buildingId: bid, fallbackFrom: refs }); return; }
       }
       selectionStore.clear();
     });
@@ -848,7 +830,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const hit = (event.ctrlKey || event.metaKey) ? null : handleHit(event);
     if (hit) {
       const enabled = view.controls.enabled, started = hit.source.begin(event, hit.handle);
-      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, started, enabled };
+      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, handle: hit.handle, started, enabled };
       ownsGesture = true; onInteract?.(); view.controls.enabled = false;
       canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
     }
@@ -1007,7 +989,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       if (g.source !== handles && g.started) g.source.pointerUp?.(event, cancel);
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      if (g.source === handles && g.started) handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report);
+      if (g.source === handles && g.started) {
+        handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report);
+        // A click (no drag) on a post's handle cycles picking to the piece behind it (e.g. its porch).
+        if (!cancel && !g.moved && g.handle?.kind === 'porch_post') {
+          roofRooms.clear();
+          const picked = picker.click(event.clientX, event.clientY);
+          lockedHint(event.clientX, event.clientY, picked);
+          if (picked && !delegate?.selectPick?.(picked)) roomSelection.select(picked);
+        }
+      }
       return;
     }
     if (g.selecting) {
@@ -1016,12 +1007,13 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         onInteract?.();
         if (g.addRoom) {
           contextPicking = true;
-          let pickedPost = null;
-          try { pickedPost = picker.at(event.clientX, event.clientY).find(p => p.kind === 'porch_post') || null; }
+          let nearest = null;
+          try { nearest = picker.at(event.clientX, event.clientY)[0] || null; }
           finally { contextPicking = false; }
-          if (pickedPost) {
+          lockedHint(event.clientX, event.clientY, nearest);
+          if (nearest?.kind === 'porch_post') {
             roofRooms.clear();
-            const ref = toSelectionRef(pickedPost);
+            const ref = toSelectionRef(nearest);
             if (ref) selectionStore.toggle(ref);
           } else {
             const target = floor(), p = target && view.floorAt(event.clientX, event.clientY, target.key);
@@ -1106,15 +1098,15 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (record.kind === 'porch_post' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
       const by = [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0];
-      const target = { building: record.building.id, porch: record.porchId, post: record.piece.id, index: record.index };
+      const target = { building: record.building.id, post: record.piece.id };
       cards.queue(() => {
         if (!canEdit()) return;
         const b = getPlan()?.buildings?.find(x => x.id === target.building);
-        const p = b && allPorches(b).find(x => x.id === target.porch);
-        const current = b && (findPost(b, target.post) || (p?.columns?.[target.index] && findPost(b, postRef(p, target.index))));
+        const current = b && findPost(b, target.post);
         if (!current) return;
+        const localBy = rotatePoint(by, -(b.rotation || 0));
         return op({ op: 'update_porch_post', building: target.building, porch: current.porchId, post: current.id,
-          at: [current.piece.at[0] + by[0], current.piece.at[1] + by[1]] });
+          at: [current.piece.at[0] + localBy[0], current.piece.at[1] + localBy[1]] });
       }).catch(report); return;
     }
     if (!record.building && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
@@ -1243,58 +1235,35 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       drawFloors();
       const plan = getPlan();
       const currentMembers = selectionStore.members();
-      const nextMembers = [], deletedPorches = new Set();
-      let changed = false;
-      for (const ref of currentMembers) {
-        if (pieceExists(plan, ref)) { nextMembers.push(ref); continue; }
-        changed = true;
-        if (ref.kind === 'porch_post' || String(ref.pieceId || '').startsWith('post:')) {
-          const remembered = postPositions.get(JSON.stringify([ref.buildingId ?? null, ref.pieceId]));
-          const derived = !remembered && typeof ref.pieceId === 'string' && ref.pieceId.match(/^post:(.+):(\d+)$/);
-          const buildingId = remembered?.buildingId ?? ref.buildingId ?? null;
-          const porchId = remembered?.porchId ?? ref.porchId ?? (derived ? derived[1] : null);
-          const index = remembered?.index ?? (derived ? Number(derived[2]) : null);
-          const b = plan?.buildings?.find(x => x.id === buildingId);
-          const p = b && porchId && allPorches(b).find(x => x.id === porchId);
-          const prevCount = buildingId && porchId ? postCounts.get(`${buildingId}:${porchId}`) : undefined;
-          const nextCount = p?.columns?.length ?? 0;
-          if (p && Number.isInteger(index) && index >= 0 && index < nextCount && (prevCount === undefined || nextCount >= prevCount)) {
-            const minted = postRef(p, index);
-            nextMembers.push({ ...ref, kind: 'porch_post', pieceId: minted, buildingId: b.id, porchId: p.id });
-            continue;
-          }
-          if (buildingId && porchId) deletedPorches.add(JSON.stringify([buildingId, porchId]));
-        }
-      }
-      snapshotPostState(plan);
-      if (changed) {
-        if (!nextMembers.length) {
-          if (deletedPorches.size === 1 && currentMembers.every(m => m.kind === 'porch_post')) {
-            const [bid, pid] = JSON.parse([...deletedPorches][0]);
-            if (findPiece(plan, pid, bid)) { select({ pieceId: pid, buildingId: bid }); return; }
+      const surviving = currentMembers.filter(ref => pieceExists(plan, ref));
+      if (surviving.length !== currentMembers.length) {
+        if (!surviving.length) {
+          const postPorches = currentMembers.every(r => r.kind === 'porch_post')
+            ? new Set(currentMembers.map(r => JSON.stringify([r.buildingId ?? null, r.porchId ?? null])))
+            : null;
+          if (postPorches?.size === 1) {
+            const [bid, pid] = JSON.parse([...postPorches][0]);
+            if (pid && findPiece(plan, pid, bid)) { select({ pieceId: pid, buildingId: bid, fallbackFrom: currentMembers }); return; }
           }
           select(null);
         } else {
           refreshingSelection = true;
-          try {
-            if (roomSelection.current().room) roomSelection.refresh(true);
-            selectionStore.set(nextMembers);
-          } finally { refreshingSelection = false; }
+          try { selectionStore.set(surviving); } finally { refreshingSelection = false; }
         }
+      } else if (rememberedPosts && currentMembers.length === 1
+        && currentMembers[0].pieceId === rememberedPosts.porch.pieceId
+        && (currentMembers[0].buildingId ?? null) === (rememberedPosts.porch.buildingId ?? null)
+        && rememberedPosts.refs.every(ref => pieceExists(plan, ref))) {
+        const restore = rememberedPosts.refs;
+        rememberedPosts = null;
+        if (restore.length === 1) select(restore[0]);
+        else selectionStore.set(restore);
       } else {
         refreshingSelection = true;
         try { roomSelection.refresh(); } finally { refreshingSelection = false; }
       }
     },
-    refreshCard() {
-      const plan = getPlan();
-      const currentMembers = selectionStore.members();
-      if (currentMembers.some(ref => (ref.kind === 'porch_post' || String(ref.pieceId || '').startsWith('post:')) && !pieceExists(plan, ref))) {
-        this.refresh();
-        return;
-      }
-      cards.draw(selection);
-    },
+    refreshCard() { cards.draw(selection); },
     // The card's area section redraws once the link answers; the scene never waits on it.
     // The link is read when the house changed, while a room, building or anchor card
     // is open, and otherwise once per idle interval: never on every build poll.

@@ -1,12 +1,10 @@
-"""Live Chromium check for porch posts editor UI.
+"""Live Chromium check for porch posts editor UI against the REAL server.
 
-Selects a post from Scene, inspects the porch Posts section and post card,
-drags the post handle, adds a post and deletes a post, intercepting and
-asserting every operation sent to /editor/op.
+Selects a post in Scene, verifies post card Close button clearance, drags the
+post handle, selects two posts with the Move gizmo, adds a post and deletes a
+post — asserting saved results in the real backend model after every edit.
 """
 from contextlib import contextmanager
-import copy
-import json
 import os
 from pathlib import Path
 import sys
@@ -54,7 +52,6 @@ def tree_row(page, bid, level_id, pid):
 
 
 def find_porch_with_posts(plan):
-    # Prefer pool-house porch if it has posts (nice clean framing), else first porch with >= 2 posts.
     for prefer in ('pool-house', None):
         for b in plan.get('buildings') or []:
             if prefer and b['id'] != prefer:
@@ -63,6 +60,27 @@ def find_porch_with_posts(plan):
                 if len(p.get('columns') or []) >= 2:
                     return b['id'], p
     raise AssertionError('No porch with at least 2 posts found in household fixture')
+
+
+def saved_columns(bid, porch_id):
+    from services import twin_store
+    twin_store._invalidate_reads()
+    model = twin_store.current_model()
+    b = next(x for x in model['buildings'] if x['id'] == bid)
+    detail = next(p for p in b.get('porches_detail') or [] if p['id'] == porch_id)
+    return detail.get('columns') or []
+
+
+def wait_saved(page, rounds_before, timeout=20000):
+    page.wait_for_function(
+        """(n) => {
+            const state = document.getElementById('editor-save-state')?.textContent?.trim();
+            return state === 'Saved' && window.__editor?.roundCount?.() > n;
+        }""",
+        arg=rounds_before,
+        timeout=timeout,
+    )
+    H.settle(page, 3)
 
 
 @contextmanager
@@ -93,150 +111,127 @@ def frame_post(page, bid, at, z):
     H.settle(page, 4)
 
 
-def scenario_porch_posts_scene_drag_add_delete():
+def frame_two_posts(page, bid, p0, p1, z):
+    mx, my = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    span = max(8.0, ((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2) ** 0.5 * 1.4)
+    H.look_at(page, bid, [mx + span * 0.65, my - span * 0.85, z + span * 0.7], [mx, my, z + 2.5])
+    H.settle(page, 4)
+
+
+def scenario_porch_posts_real_server_live():
     SHOTS.mkdir(parents=True, exist_ok=True)
     with editor() as page:
         plan = page.evaluate('window.__twin.plan')
         bid, porch = find_porch_with_posts(plan)
         porch_id = porch['id']
         level_id = porch.get('level') or 'L1'
+        initial_count = len(porch['columns'])
         H.choose_floor(page, f'{bid}:{level_id}')
         page.locator('#scene-floor-actions').get_by_role('button', name='All floors', exact=True).click()
         page.wait_for_function("window.__twin.ready && window.__twin.state.view === 'ext'")
 
-        # Intercept /editor/op for the three new post operations (server half is on the other branch).
-        sent = []
-        round_counter = [100]
-        live_plan = [copy.deepcopy(page.evaluate('window.__twin.plan'))]
+        # 1. Expand porch in Scene, verify Post 1..N and porch card Posts section.
+        host = page.locator('#scene-tree')
+        porch_row = tree_row(page, bid, level_id, porch_id)
+        porch_row.locator('[data-scene-select]').click()
+        disc = porch_row.locator('[data-row-disclosure]')
+        if disc.get_attribute('aria-expanded') != 'true':
+            disc.click()
+        H.settle(page, 2)
+        post0_ref = f'post:{porch_id}:0'
+        post1_ref = f'post:{porch_id}:1'
+        post0_row = mount_row(page, host, host.locator(f'[data-scene-id="{post0_ref}"]'), post0_ref)
+        post1_row = mount_row(page, host, host.locator(f'[data-scene-id="{post1_ref}"]'), post1_ref)
+        H.settle(page, 2)
+        assert post0_row.is_visible() and post1_row.is_visible()
 
-        def apply_mock_post_op(op_data):
-            p = copy.deepcopy(live_plan[0])
-            b = next(x for x in p['buildings'] if x['id'] == op_data['building'])
-            po = next(x for x in b['porches'] if x['id'] == op_data['porch'])
-            cols = po.setdefault('columns', [])
-            # Mint ids on first post operation (same contract as spec).
-            if any('id' not in c for c in cols):
-                for idx, c in enumerate(cols):
-                    c.setdefault('id', f'post:live{idx}')
-            def find_col(ref):
-                for idx, c in enumerate(cols):
-                    if c.get('id') == ref or f'post:{po["id"]}:{idx}' == ref:
-                        return idx
-                return -1
-            kind = op_data['op']
-            if kind == 'update_porch_post':
-                idx = find_col(op_data['post'])
-                if idx >= 0:
-                    if 'at' in op_data:
-                        cols[idx]['at'] = op_data['at']
-                    if 'size' in op_data:
-                        cols[idx]['size'] = op_data['size']
-            elif kind == 'add_porch_post':
-                cols.append({'id': f'post:live{len(cols)}', 'at': list(cols[0]['at']), 'size': cols[0].get('size', 0.5)})
-            elif kind == 'delete_porch_post':
-                idx = find_col(op_data['post'])
-                if idx >= 0:
-                    cols.pop(idx)
-            live_plan[0] = p
-            round_counter[0] += 1
-            return {'round': round_counter[0], 'plan': p, 'model': p, 'words': f'Applied {kind}.'}
+        card = page.locator('#piece-card')
+        posts_section = card.locator('[data-porch-posts]')
+        posts_section.wait_for(state='visible')
+        assert f'{initial_count} posts' in posts_section.locator('[data-porch-posts-count]').inner_text()
+        page.screenshot(path=str(SHOTS / 'scene-tree-posts.png'))
+        posts_section.scroll_into_view_if_needed()
+        H.settle(page, 2)
+        page.screenshot(path=str(SHOTS / 'porch-card-posts.png'))
 
-        def handle_op(route):
-            if route.request.method == 'POST':
-                body = route.request.post_data_json
-                op_data = body.get('op') if isinstance(body.get('op'), dict) else body
-                if op_data.get('op') in ('update_porch_post', 'add_porch_post', 'delete_porch_post'):
-                    sent.append(op_data)
-                    payload = apply_mock_post_op(op_data)
-                    route.fulfill(status=200, content_type='application/json', body=json.dumps(payload))
-                    return
-            route.continue_()
+        # 2. Select Post 2 from Scene, verify Close button is NOT overlapped by Position X, capture post-card.png.
+        post1_row.locator('[data-scene-select]').click()
+        H.settle(page, 3)
+        assert 'Post 2' in card.locator('h3').inner_text()
+        assert '> Post 2' in page.locator('#properties-crumbs').inner_text()
+        close_btn = card.locator('button[aria-label="Close piece card"]')
+        x_input = card.locator('input[aria-label="Position X (ft)"]')
+        assert close_btn.is_visible() and x_input.is_visible()
+        close_box = close_btn.bounding_box()
+        x_box = x_input.bounding_box()
+        assert close_box and x_box, (close_box, x_box)
+        assert close_box['y'] + close_box['height'] <= x_box['y'] + 1, (
+            f'Close button ({close_box}) overlaps Position X ({x_box})'
+        )
+        page.screenshot(path=str(SHOTS / 'post-card.png'))
 
-        page.route('**/editor/op', handle_op)
-        try:
-            # 1. Select porch in Scene, expand it to see Post 1..N, capture Scene + Porch Posts section.
-            host = page.locator('#scene-tree')
-            porch_row = tree_row(page, bid, level_id, porch_id)
-            porch_row.locator('[data-scene-select]').click()
-            disc = porch_row.locator('[data-row-disclosure]')
-            if disc.get_attribute('aria-expanded') != 'true':
-                disc.click()
-            H.settle(page, 2)
-            post0_ref = f'post:{porch_id}:0'
-            post1_ref = f'post:{porch_id}:1'
-            post0_row = mount_row(page, host, host.locator(f'[data-scene-id="{post0_ref}"]'), post0_ref)
-            post1_row = mount_row(page, host, host.locator(f'[data-scene-id="{post1_ref}"]'), post1_ref)
-            H.settle(page, 2)
-            assert post0_row.is_visible()
-            assert post1_row.is_visible()
+        # 3. Frame Post 2 close up, capture handle closeup, then drag it and assert REAL server saved it!
+        handle = page.evaluate("window.__twinEditor.handles().find(h => h.kind === 'porch_post')")
+        assert handle, 'selected porch_post must expose a porch_post handle'
+        frame_post(page, bid, handle['at'][:2], handle['at'][2])
+        page.locator('.editor-handle-porch_post').wait_for(state='visible')
+        page.screenshot(path=str(SHOTS / 'post-handle-closeup.png'))
 
-            card = page.locator('#piece-card')
-            posts_section = card.locator('[data-porch-posts]')
-            posts_section.wait_for(state='visible')
-            assert f'{len(porch["columns"])} posts' in posts_section.locator('[data-porch-posts-count]').inner_text()
-            page.screenshot(path=str(SHOTS / 'scene-tree-posts.png'))
-            posts_section.scroll_into_view_if_needed()
-            H.settle(page, 2)
-            page.screenshot(path=str(SHOTS / 'porch-card-posts.png'))
+        rounds = page.evaluate('window.__editor.roundCount()')
+        x, y, z = handle['at']
+        start = H.screen_of_world(page, x, y, z, bid)
+        end = H.screen_of_world(page, x + 2.0, y, z, bid)
+        H._on_canvas(page, *start)
+        page.mouse.move(*start)
+        page.mouse.down()
+        page.mouse.move(*end, steps=10)
+        page.mouse.up()
+        wait_saved(page, rounds)
+        cols_after_drag = saved_columns(bid, porch_id)
+        assert len(cols_after_drag) == initial_count
+        assert cols_after_drag[1]['id'] == post1_ref
+        assert abs(cols_after_drag[1]['at'][0] - x) > 0.5, cols_after_drag[1]
 
-            # 2. Select Post 2 from Scene tree, verify card & breadcrumb, capture post card.
-            post1_row.locator('[data-scene-select]').click()
-            H.settle(page, 3)
-            assert 'Post 2' in card.locator('h3').inner_text()
-            assert '> Post 2' in page.locator('#properties-crumbs').inner_text()
-            assert card.locator('input[aria-label="Position X (ft)"]').is_visible()
-            assert card.locator('input[aria-label="Position Y (ft)"]').is_visible()
-            assert card.locator('input[aria-label="Size (ft)"]').is_visible()
-            assert card.locator('[data-post-material-note]').is_visible()
-            page.screenshot(path=str(SHOTS / 'post-card.png'))
+        # 4. Multi-select Post 1 and Post 2 with Move gizmo visible, capture two-posts-gizmo.png!
+        post0_row = mount_row(page, host, host.locator(f'[data-scene-id="{post0_ref}"]'), post0_ref)
+        post0_row.locator('[data-scene-select]').click(modifiers=['Control'])
+        H.settle(page, 2)
+        members = page.evaluate('window.__twinEditor.members()')
+        assert len(members) == 2 and all(m['kind'] == 'porch_post' for m in members), members
+        assert '2 posts' in card.locator('[data-selection-summary]').inner_text()
+        page.click('#rail-move')
+        frame_two_posts(page, bid, cols_after_drag[0]['at'], cols_after_drag[1]['at'], z)
+        gizmo_handles = page.evaluate("window.__twinEditor.handles().filter(h => h.kind && h.kind.startsWith('gizmo_'))")
+        assert len(gizmo_handles) >= 2, gizmo_handles
+        page.screenshot(path=str(SHOTS / 'two-posts-gizmo.png'))
+        page.click('#rail-select')
 
-            # 3. Frame the selected post close up, verify handle is visible, capture close-up shot.
-            handle = page.evaluate("window.__twinEditor.handles().find(h => h.kind === 'porch_post')")
-            assert handle, 'selected porch_post must expose a porch_post handle'
-            frame_post(page, bid, handle['at'][:2], handle['at'][2])
-            handle_node = page.locator('.editor-handle-porch_post')
-            handle_node.wait_for(state='visible')
-            page.screenshot(path=str(SHOTS / 'post-handle-closeup.png'))
+        # 5. Select the porch, click Add post -> assert REAL server added a column and editor selected it!
+        porch_row = mount_row(page, host, host.locator(f'[data-scene-id="{porch_id}"]'), porch_id)
+        porch_row.locator('[data-scene-select]').click()
+        H.settle(page, 2)
+        rounds = page.evaluate('window.__editor.roundCount()')
+        card.locator('[data-porch-posts]').get_by_role('button', name='Add post', exact=True).click()
+        wait_saved(page, rounds)
+        cols_after_add = saved_columns(bid, porch_id)
+        assert len(cols_after_add) == initial_count + 1, cols_after_add
+        added_id = cols_after_add[-1]['id']
+        assert page.evaluate('window.__twinEditor.selection().id') == added_id
 
-            # 4. Drag the post handle -> assert one update_porch_post sent!
-            x, y, z = handle['at']
-            start = H.screen_of_world(page, x, y, z, bid)
-            end = H.screen_of_world(page, x + 2.0, y, z, bid)
-            H._on_canvas(page, *start)
-            page.mouse.move(*start)
-            page.mouse.down()
-            page.mouse.move(*end, steps=10)
-            page.mouse.up()
-            page.wait_for_function('() => true')
-            H.settle(page, 4)
-            assert len(sent) == 1, f'expected 1 op after drag, got {sent}'
-            assert sent[0]['op'] == 'update_porch_post', sent[0]
-            assert sent[0]['building'] == bid and sent[0]['porch'] == porch_id and sent[0]['post'] == post1_ref, sent[0]
-            assert abs(sent[0]['at'][0] - x) > 0.5, sent[0]
-
-            # 5. Select the porch, click Add post -> assert add_porch_post sent!
-            card.locator('[data-select-porch]').click()
-            H.settle(page, 2)
-            card.locator('[data-porch-posts]').get_by_role('button', name='Add post', exact=True).click()
-            H.settle(page, 4)
-            assert len(sent) == 2, f'expected 2 ops after add, got {sent}'
-            assert sent[1] == {'op': 'add_porch_post', 'building': bid, 'porch': porch_id}, sent[1]
-
-            # 6. Delete the selected post -> assert delete_porch_post sent!
-            card.get_by_role('button', name='Delete', exact=True).click()
-            confirm = page.locator('#cc-confirm-modal')
-            confirm.wait_for(state='visible')
-            confirm.get_by_role('button', name='Delete', exact=True).click()
-            H.settle(page, 4)
-            assert len(sent) == 3, f'expected 3 ops after delete, got {sent}'
-            assert sent[2]['op'] == 'delete_porch_post', sent[2]
-            assert sent[2]['building'] == bid and sent[2]['porch'] == porch_id, sent[2]
-            assert sent[2]['post'], sent[2]
-            assert not page.locator('#cc-alert-modal').is_visible(), 'Delete raised an error alert'
-        finally:
-            page.unroute('**/editor/op', handle_op)
+        # 6. Delete the added post -> assert "Delete this post?" prompt, REAL server removed it, porch selected!
+        rounds = page.evaluate('window.__editor.roundCount()')
+        card.get_by_role('button', name='Delete', exact=True).click()
+        confirm = page.locator('#cc-confirm-modal')
+        confirm.wait_for(state='visible')
+        assert 'Delete this post?' in confirm.inner_text()
+        confirm.get_by_role('button', name='Delete', exact=True).click()
+        wait_saved(page, rounds)
+        cols_after_del = saved_columns(bid, porch_id)
+        assert len(cols_after_del) == initial_count, cols_after_del
+        assert page.evaluate('window.__twinEditor.selection().id') == porch_id
+        assert not page.locator('#cc-alert-modal').is_visible(), 'Delete raised an error alert'
 
 
 if __name__ == '__main__':
     print(f'screenshots: {SHOTS}')
-    H.run([scenario_porch_posts_scene_drag_add_delete])
+    H.run([scenario_porch_posts_real_server_live])

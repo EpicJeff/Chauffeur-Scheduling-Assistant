@@ -365,8 +365,13 @@ if (input.mode === 'materials') {
   assert.ok([...document.getElementById('piece-card').querySelectorAll('button')].some(n=>n.textContent==='Move posts to the roof'),'real porch card mounts action');
   cards.dispose();
   roof.support={kind:'post',count:0}; assert.equal(choices().length,0);
-  lifecycle.refresh(); assert.equal(host.querySelector('button'),null,'poll removes ineligible action');
-  delete roof.support; lifecycle.refresh(); assert.ok(host.querySelector('button'));
+  lifecycle.refresh();
+  const disabledBtn = host.querySelector('button');
+  assert.ok(disabledBtn && disabledBtn.disabled, 'poll disables ineligible action with reason');
+  assert.equal(host.querySelector('[data-post-roof-reason]')?.textContent, 'This roof already has supports.');
+  delete roof.support; lifecycle.refresh();
+  assert.ok(host.querySelector('button') && !host.querySelector('button').disabled);
+  assert.equal(host.querySelector('[data-post-roof-reason]'), null);
   window.promptConfirm=async()=>{roof.support={kind:'post',count:0};return true;};
   click(host.querySelector('button')); await new Promise(r=>setTimeout(r,0)); assert.equal(sent.length,1,'recheck after confirmation');
   delete roof.support;

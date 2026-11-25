@@ -111,9 +111,9 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #piece-card, #pause-card, :is(#review-card, #check-card) { position: fixed; z-index: 4; width: 280px; padding: 14px; border: 1px solid var(--editor-accent); border-radius: 16px; background: var(--editor-panel); backdrop-filter: blur(16px); max-height: calc(100dvh - 260px); overflow-y: auto; }
 /* Dock over the panel's scroll area, leaving Argyle's replies and composer free. */
 #piece-card, :is(#review-card, #check-card) { right: 14px; top: calc(var(--editor-floor-height) + 88px); width: var(--editor-side); max-height: calc(100dvh - var(--editor-floor-height) - 314px); }
-#piece-card h3, :is(#review-card, #check-card) h3 { padding-right: 50px; margin-bottom: 12px; }
+#piece-card h3, :is(#review-card, #check-card) h3 { min-height: 44px; display: flex; align-items: center; padding-right: 76px; margin-bottom: 12px; }
 #check-card[data-check-kind="gutter"] > header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
-#check-card[data-check-kind="gutter"] > header h3 { flex: 1; min-width: 0; padding-right: 0; margin-bottom: 0; overflow-wrap: anywhere; }
+#check-card[data-check-kind="gutter"] > header h3 { flex: 1; min-width: 0; min-height: 0; padding-right: 0; margin-bottom: 0; overflow-wrap: anywhere; }
 #check-card[data-check-kind="gutter"] > header button { flex: 0 0 auto; }
 #piece-card > button[aria-label], :is(#review-card, #check-card) > button[aria-label] { position: absolute; right: 8px; top: 8px; }
 .editor-shell[data-reviewing] #piece-card { display: none !important; }
@@ -538,6 +538,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 #properties-content :is(#piece-card, #pause-card, #check-card, #terrain-card, .editor-lot-card) {
   position: relative; inset: auto !important; width: 100%; max-height: none; overflow: visible;
   padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
+#properties-content :is(#piece-card, #pause-card, #check-card) > button[aria-label] { top: 0; right: 0; }
 #properties-content > section { margin-bottom: 8px; }
 #properties-content label { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; margin: 8px 0; }
 #properties-content input:not([type="checkbox"]), #properties-content select { max-width: 100%; min-width: 0; }
