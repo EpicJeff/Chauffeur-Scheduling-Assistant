@@ -1,6 +1,41 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.998 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1000 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1000 (2026-11-24, NOT device-verified): renaming a building, changing its kind and refitting its footprint no longer shift the rest of the house.**
+
+These three operations saved through the older whole-plan route. On the owner's house each use changed 42 existing records, added 1 and reordered 8 lists.
+
+- They now publish through `twin_store.update_model` with `building_fields`, which writes only that building's name and kind, or its position and rotation, on the raw stored house. Any other difference, list order included, is refused and nothing is saved. The stored house is never normalised by these operations.
+- On the owner's export each operation changes 1 record: the building itself. No records are added or removed and no lists are reordered.
+- Rounds made this way carry `raw_building_edit`. Undo and redo restore the stored house exactly and take the building's name and kind back with it, including jumps over several rounds. A restored building missing from the place list is added back.
+- Undo still does not rewind setup's confirmed footprint and plot registration, as before.
+
+**Costs.** No rendering change.
+
+**Open.** The whole-plan save (`PUT /api/house/twin/plan`), the draft route and build publication still use the older route.
+
+Tests: `test_twin_house_save_stable` (with `--owner-export`), `test_twin_store`, `test_twin_yard_protect`, `test_twin_director_connected`, `test_twin_model_ops_more`. `test_twin_store_model` keeps its one failure from main; `test_twin_model_bridge` fails only its 300 ms timing check.
+
+**v2.499.999 (2026-11-24, NOT device-verified): automatic generation no longer damages a finished yard.**
+
+The owner ran the art director on a finished yard and it removed their plant beds and plants.
+
+**Art director.** A round never changes anything that already exists.
+- It may only add plants, beds, edge planting and furniture (at most 25 a round), checked like hand-placed pieces and stored with the same person mark, and change material roles as before.
+- Anything it wants changed or removed is reported as a suggestion in its notes. Applying those with approval is a later change (owner decision: ask first).
+- It publishes through `twin_store.update_model` by grafting the additions onto the raw stored house. Existing records are asserted equal before anything is saved, so a house that is not in its normal form is not rewritten. Undo restores the house exactly.
+- A refused material role keeps the household's stored choice, including `water` and the pool roles.
+
+**Builds.** "Plants and beds" lays out the yard only when no person has touched it: person marks, hand-placed pieces and stored overrides count as touched, and director history does not. An occupied yard keeps its planting, beds and edges, and the build says so. Lot-first and chained builds and single buildings behave as before on an untouched yard.
+
+**Re-running that step** (API and Argyle) needs an explicit confirmation on a touched yard; Argyle asks first. The approval belongs to one running attempt and is dropped at every exit.
+
+**Costs.** No rendering change.
+
+**Open.** Renaming a building, changing its kind, and refitting its footprint still use the older save route, which shifts about 25 records of the owner's house per use. Explicit confirmed re-laying has no hand control yet (API and Argyle only).
+
+Tests: `test_twin_director`, `test_twin_director_connected`, `test_twin_director_loop`, `test_twin_yard_protect` (and `_fix4`, `_fix5`), `test_twin_compose`, the `test_twin_build*` files, `test_twin_model_ops_more`, `test_twin_sheets`, `test_twin_history_retention`. `test_twin_store_model` keeps its one failure from main.
 
 **v2.499.998 (2026-11-24, Chromium, NOT device-verified): every quality tier shares one lighting bake, so Low panels show baked lighting.**
 

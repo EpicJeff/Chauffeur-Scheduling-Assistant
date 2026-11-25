@@ -7773,6 +7773,7 @@ class HouseDesignTool(BaseModel):
         "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base. "
         "set_porch_foundation (building,id:porch,foundation:{type:posts|enclosed|solid,lip_in:0..4=1,post_in:4..16=6,post_shape:square|round,spacing_ft:4..12=8,materials:{posts?,skirt?,solid?}}); slots:null|{id,color?} Library/kit; skirt defaults to lattice material; default posts."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
+    confirm: bool = Field(False, strict=True, description='Compose re-read: ask first; true requires explicit approval to re-lay plants and beds.')
     piece: Optional[str] = Field(None, description="Piece id to describe.")
     building: Optional[str] = Field(None, description=(
         "Target building id or name (case-insensitive) for set_building or remove_building; "
@@ -9839,7 +9840,10 @@ def handle_house_design(args: dict, actor=None) -> dict:
                 raise ValueError('The step still needs an answer. Check it in the editor.')
             summary = f'Accepted {step}.'
         else:
-            twin_build.reread(current['build'], params.step)
+            if params.step == 'compose' and twin_build.yard_occupied() and not params.confirm:
+                return {'status': 'confirmation_required', 'changed': False,
+                        'message': 'Re-laying plants and beds may change your finished yard. Do you want me to go ahead?'}
+            twin_build.reread(current['build'], params.step, confirm=params.confirm)
             summary = f'Requested a fresh read of {params.step}.'
         return {'status': 'ok', 'changed': True, 'summary': summary}
     except ValidationError:

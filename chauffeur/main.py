@@ -8954,7 +8954,7 @@ def house_editor_build_answer(build_id: str, body: dict = Body(default={})):
 @app.post('/api/house/editor/build/{build_id}/reread')
 def house_editor_build_reread(build_id: str, body: dict = Body(default={})):
     from services import twin_build
-    return _house_editor_call(twin_build.reread, build_id, body.get('step'), lookup=True)
+    return _house_editor_call(twin_build.reread, build_id, body.get('step'), confirm=body.get('confirm') is True, lookup=True)
 
 
 @app.post('/api/house/editor/build/{build_id}/stop')

@@ -136,6 +136,11 @@ def _get(bid):
     if build['generation'] != twin_store.generation():
         _BUILDS.pop(bid, None)
         raise twin_store.StaleGeneration('The house was started over.')
+    # Old versions persisted consent. A loaded marker has no live attempt.
+    if any('recompose' in step for step in build['steps']):
+        for step in build['steps']:
+            step.pop('recompose', None)
+        _save(build)
     return build
 
 
@@ -435,10 +440,26 @@ def _chain_failed(build):
     _save(build)
 
 
+def _clear_recompose(build, ticket=None):
+    runtime = _WORKERS.get(build['id'], {})
+    if ticket is not None and runtime.get('ticket') != ticket:
+        return
+    runtime.pop('recompose', None)
+    for step in build['steps']:
+        step.pop('recompose', None)
+
+
+def _recompose_allowed(build, step):
+    runtime = _WORKERS.get(build['id'], {})
+    return bool(build.get('state') == 'running' and runtime.get('busy')
+                and runtime.get('recompose') == (step['id'], runtime.get('ticket')))
+
+
 def stop(build_id):
     cancels = []
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
+        _clear_recompose(build)
         if build['state'] != 'done':
             build['state'] = 'stopped'
             _save(build)
@@ -468,11 +489,12 @@ def stop(build_id):
     return status(build_id)
 
 
-def resume(build_id, *, reader=None, inline=None):
+def resume(build_id, *, reader=None, inline=None, _recompose_step=None):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         if build['state'] in ('running', 'done'):
             return status(build_id)
+        _clear_recompose(build)
         if any(b['id'] != build_id and b['state'] in _ACTIVE for b in _BUILDS.values()):
             raise ValueError('A build is already running.')
         runtime = _WORKERS.get(build_id, {})
@@ -481,7 +503,18 @@ def resume(build_id, *, reader=None, inline=None):
         reader = reader or runtime.get('reader') or twin_reads.read
         inline = runtime.get('inline', False) if inline is None else inline
         ticket = _launch(build, reader, inline)
-    _dispatch(build, ticket, reader, inline)
+        if _recompose_step is not None:
+            _WORKERS[build_id]['recompose'] = (_recompose_step, ticket)
+    try:
+        _dispatch(build, ticket, reader, inline)
+    except Exception:
+        with twin_store.LIFECYCLE, _LOCK:
+            _clear_recompose(build, ticket)
+            _idle(build, ticket)
+            if _WORKERS.get(build_id, {}).get('ticket') == ticket and build['state'] == 'running':
+                build['state'] = 'stopped'
+                _save(build)
+        raise
     return status(build_id)
 
 
@@ -491,6 +524,7 @@ def recover():
         for path in (Path(twin_store.DATA_DIR) / 'builds').glob('*/state.json'):
             try:
                 build = _get(path.parent.name)
+                _clear_recompose(build)
                 if (build['id'] != path.parent.name or build['state'] not in (*_ACTIVE, 'stopped', 'done', 'failed')
                         or not isinstance(build['steps'], list) or not isinstance(build['events'], list)
                         or not isinstance(build['inputs'].get('part') or build['inputs'].get('building', {}).get('id'), str)
@@ -2604,10 +2638,33 @@ def _expand(build, step, result):
     step['expanded'] = True
 
 
+def yard_occupied(plan=None):
+    """Only authored work blocks automatic layout; untouched reads may reflow."""
+    site = (plan if plan is not None else twin_store.current() or {}).get('site', {})
+    if any(bool(value) for value in site.get('compose_overrides', {}).values()):
+        return True
+    for name in ('planting', 'beds', 'edges'):
+        for piece in site.get(name, []):
+            if piece.get('state') in ('ghost', 'proposal'):
+                continue
+            source = piece.get('src') or {}
+            if source.get('person'):
+                return True
+            if piece.get('by') == 'compose':
+                continue
+            if source.get('step') == 'site' and not piece.get('by'):
+                continue
+            return True
+    return False
+
+
 def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
+    recompose = kind == 'compose' and _recompose_allowed(build, step)
+    if kind == 'compose':
+        _clear_recompose(build)
     def from_step(piece):
         source = piece.get('src', {}).get('step')
         return source == step['id'] or (kind == 'draft' and source == 'roof_blocks')
@@ -2682,6 +2739,9 @@ def _settle(build, step, result, decision=None):
 
     def mutate(current):
         nonlocal draft_tombstones
+        # Inspect states before _base normalizes the legacy read format (which
+        # does not retain proposal state). Neither ghosts nor proposals fill a yard.
+        keep_yard = kind == 'compose' and not recompose and yard_occupied(current or {})
         if kind == 'draft':
             draft_tombstones = twin_store.tombstones()
         plan = _base(current, build, lot_outline)
@@ -2903,11 +2963,17 @@ def _settle(build, step, result, decision=None):
                                      if not (isinstance(target_materials.get(k), dict)
                                              and target_materials[k].get('src', {}).get('person'))})
         elif kind == 'compose':
+            yard = {name: deepcopy(plan['site'][name]) for name in ('beds', 'planting', 'edges')}
             protected = {name: [p for p in plan['site'][name] if p.get('src', {}).get('person')]
                          for name in ('beds', 'planting', 'edges')}
             plan, compose_notes = twin_compose.compose(plan, twin_library.kit('modern_farmhouse'), seed=1)
-            notes.extend(compose_notes)
-            for name, people in protected.items():
+            if keep_yard:
+                plan['site'].update(yard)
+                notes.append('Kept your yard. Plants and beds are laid out only in an empty yard.')
+                notes.extend(n for n in compose_notes if n.startswith('Foundations were skipped'))
+            else:
+                notes.extend(compose_notes)
+            for name, people in (() if keep_yard else protected.items()):
                 for piece in plan['site'][name]:
                     if piece.get('by') == 'compose' and not piece.get('src', {}).get('person'):
                         piece['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
@@ -3015,6 +3081,7 @@ def _settle(build, step, result, decision=None):
     if kind in ('outline', 'registration'):
         _expand(build, step, result)
     step.pop('reread', None)
+    step.pop('recompose', None)
     step.pop('replay', None)
     step.pop('removed_steps', None)
     for note in notes:
@@ -3084,7 +3151,7 @@ def answer(build_id, step_id, decision):
     return status(build_id)
 
 
-def reread(build_id, step_id, *, reader=None, inline=None):
+def reread(build_id, step_id, *, reader=None, inline=None, confirm=False):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         step = next((s for s in build['steps'] if s['id'] == step_id), None)
@@ -3094,6 +3161,8 @@ def reread(build_id, step_id, *, reader=None, inline=None):
             raise ValueError('Stop the build before rereading a step.')
         if _WORKERS.get(build_id, {}).get('busy'):
             raise ValueError('The build is still stopping; wait for its read to return.')
+        if step['kind'] == 'compose' and yard_occupied() and confirm is not True:
+            raise ValueError('Re-laying plants and beds may change your yard. Send confirm: true only after you approve it.')
         step['reread'] = True
         if step['kind'] == 'draft':
             # Rooms use this exact settled geometry, and placement uses its
@@ -3116,7 +3185,8 @@ def reread(build_id, step_id, *, reader=None, inline=None):
         build['pause'] = None
         build['state'] = 'stopped'
         _save(build)
-    return resume(build_id, reader=reader, inline=inline)
+    return resume(build_id, reader=reader, inline=inline,
+                  _recompose_step=step_id if step['kind'] == 'compose' and confirm is True else None)
 
 
 def _idle(build, ticket):
@@ -3189,6 +3259,7 @@ def _run(build, ticket, reader):
     except twin_cost.CheckpointReached as exc:
         with twin_store.LIFECYCLE, _LOCK:
             if _live(build, ticket):
+                _clear_recompose(build, ticket)
                 _spend(build)
                 build['state'] = 'checkpoint'
                 step['status'] = 'pending'
@@ -3198,6 +3269,7 @@ def _run(build, ticket, reader):
     except Exception as exc:
         with twin_store.LIFECYCLE, _LOCK:
             if _live(build, ticket):
+                _clear_recompose(build, ticket)
                 _spend(build)
                 cached = _cache_path(build, step).is_file()
                 retryable = cached or isinstance(exc, _ReadError)
@@ -3229,6 +3301,13 @@ def _run(build, ticket, reader):
     finally:
         with twin_store.LIFECYCLE, _LOCK:
             try:
+                if (_BUILDS.get(build['id']) is build
+                        and _WORKERS.get(build['id'], {}).get('ticket') == ticket
+                        and (_WORKERS[build['id']].get('recompose')
+                             or any(s.get('recompose') for s in build['steps']))):
+                    _clear_recompose(build, ticket)
+                    if build['generation'] == twin_store.generation():
+                        _save(build)
                 if (step is not None and step['status'] != 'done' and build['state'] == 'stopped'
                         and _BUILDS.get(build['id']) is build
                         and _WORKERS.get(build['id'], {}).get('ticket') == ticket
