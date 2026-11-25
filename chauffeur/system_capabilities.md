@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.999 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1000 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1000 (2026-11-24, NOT device-verified): renaming a building, changing its kind and refitting its footprint no longer shift the rest of the house.**
+
+These three operations saved through the older whole-plan route. On the owner's house each use changed 42 existing records, added 1 and reordered 8 lists.
+
+- They now publish through `twin_store.update_model` with `building_fields`, which writes only that building's name and kind, or its position and rotation, on the raw stored house. Any other difference, list order included, is refused and nothing is saved. The stored house is never normalised by these operations.
+- On the owner's export each operation changes 1 record: the building itself. No records are added or removed and no lists are reordered.
+- Rounds made this way carry `raw_building_edit`. Undo and redo restore the stored house exactly and take the building's name and kind back with it, including jumps over several rounds. A restored building missing from the place list is added back.
+- Undo still does not rewind setup's confirmed footprint and plot registration, as before.
+
+**Costs.** No rendering change.
+
+**Open.** The whole-plan save (`PUT /api/house/twin/plan`), the draft route and build publication still use the older route.
+
+Tests: `test_twin_house_save_stable` (with `--owner-export`), `test_twin_store`, `test_twin_yard_protect`, `test_twin_director_connected`, `test_twin_model_ops_more`. `test_twin_store_model` keeps its one failure from main; `test_twin_model_bridge` fails only its 300 ms timing check.
 
 **v2.499.999 (2026-11-24, NOT device-verified): automatic generation no longer damages a finished yard.**
 
