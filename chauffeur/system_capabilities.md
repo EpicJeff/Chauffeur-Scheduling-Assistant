@@ -1,6 +1,30 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1000 (2026-11-24).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1001 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1001 (2026-11-25, NOT device-verified): awnings are roofs with supports.**
+
+An awning is an ordinary roof with a support setting. Every choice is available by hand and to the agent, through the same operations and validation.
+
+**Record.** Optional fields on a roof: `support {kind, count 0 to 40, inset_ft, size_ft, style, at}`, `host {wall, edge}`, `thickness_ft`, `fascia`, `ends {edge: closed}`, `underside {kind: flat, drop_ft 0 to 3}`, `roof_frame`, `gable_beam`, `wall_attachments` and per-edge `overhang_ft`. Kinds: walls (every ordinary roof), bracket, corbel (scroll, stepped), brace (straight, arched), cable, post.
+
+**Independence.** A supported roof never changes walls, gables, trim, ceilings, storeys, joints, re-reads or solar saves. Porch posts, screens, lamps and gutter posts stop at the lower surface above them: the slab, or the flat ceiling. Walled roofs draw byte-identically.
+
+**Old awnings** (`extensions` of kind awning, `shed_continuation`) become supported roofs on every load with their ids, look, gutters and streams. They follow the building roof finish unless a level finish would have changed their look. The drawing reader and drafts emit the new shape.
+
+**Closed-in box.** Closed ends (framed, recessed panel on sheds), a flat ceiling and the front face down to it. Downspouts stay outside a dropped face until below its edge.
+
+**Editor.** Roof card: what holds it up, count, inset, size, style, ends, ceiling, thickness, fascia, host wall, positions. Handles for edges, height and each support; whole-roof gizmo on awnings only. Scene label "Awning". Invalid values are refused with a message and no saved step. Walls on a walled roof saves nothing; returning to walls restores the earlier attachments.
+
+**Materials.** Surface kinds `support` (inherits trim; posts inherit columns) and `underside` (inherits soffit), per roof, per building and house-wide.
+
+**Patio.** The porch card and the agent offer "Move posts to the roof" when a shed roof covers every column. The porch keeps its floor; one undo step.
+
+**Costs.** Owner's house: 0 new programs or samplers, same triangles, 4 more draws on Low (two awnings, one batch per building, level and material). Triangles per support: bracket 12, corbel 92 or 32, brace 36, arched 108, cable 24, post 24; closed shed end 22. A box awning adds no draws over a plain one with the default siding. **One lighting rebake is needed.**
+
+**Open.** Truss ends, exposed rafters, hung devices, slats, the Awning placing tool, copying, keyboard nudge and mixed-selection moves. `spacing_ft` is stored but not offered.
+
+Tests: `test_twin_awning_*` (golden with `--owner-export`), `test_twin_bake_editor_keys_js`, `test_twin_gutters_js`, `test_twin_eave_streams_js`, `test_twin_joints_js`, `test_twin_roof_attachments`, `test_twin_yard_protect`, `test_twin_house_save_stable`. `test_twin_handles_js`, `test_twin_roof_tools_js` and one `test_twin_draft` case fail on main too.
 
 **v2.499.1000 (2026-11-24, NOT device-verified): renaming a building, changing its kind and refitting its footprint no longer shift the rest of the house.**
 
