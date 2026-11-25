@@ -320,6 +320,57 @@ await test('editor_and_viewer_generation_matches_main_high_and_low_with_viewer_o
  }
 });
 
+
+
+await test('opaque_pane_sync_atlas_matches_main_and_neutral_meshes_are_not_captured',async()=>{
+ const {buildTwin}=await import(file('static/twin/twin_generator.js')),baseline=await import('baseline-generator');
+ const {bakeAuthoredMaterial}=await import(file('static/twin/bake/source.js'));
+ const plan={buildings:[building('b')],site:{},materials:{}};plan.buildings[0].materials={pane:{id:'opaque-pane'}};
+ const kit={materials:{},manifest:{'opaque-pane':{household:true,kind:'material',revision:1,params:{alpha_mode:'opaque',color:'#123456'},maps:{}}}};
+ const reference=baseline.buildTwin(structuredClone(plan),kit,'low'),current=buildTwin(structuredClone(plan),kit,'low');
+ await Promise.all([reference.ready,current.ready]);
+ const layout={room:{density:1,page:256,gutter:2}},a=buildAtlas(reference.root,plan,layout),b=buildAtlas(current.root,plan,layout);
+ assert.equal(b.key,a.key);assert.equal(b.room.charts.length,a.room.charts.length);console.log('  opaque pane sync key='+b.key+' charts='+b.room.charts.length);
+ const neutral=buildTwin(structuredClone(plan),kit,'low',{bakeSource:true});await neutral.ready;let meshes=0;
+ neutral.root.traverse(o=>{if(o.isMesh){meshes++;assert.equal(bakeAuthoredMaterial(neutral.root,o),undefined);}});assert.ok(meshes);
+});
+
+await test('focused_yard_settle_ghosts_replaced_and_reused_parts',async()=>{
+ const {view:v,controller:s}=await setup(p=>{p.site={lot:[[-5,-5],[60,-5],[60,30],[-5,30]],hardscape:[{id:'patio',polygon:[[15,0],[25,0],[25,8],[15,8]],material:'concrete'}]};});try{
+  s.focusRoom('r','b');await v.selectionReady;
+  const old=v.scene.getObjectByName('yard'),next=structuredClone(v.plan);next.site.hardscape[0].polygon[1][0]++;
+  assert.equal((await v.settle(next)).path,'deform');while(v.yardSettling)await new Promise(r=>setTimeout(r,1));await v.selectionReady;
+  const yard=v.scene.getObjectByName('yard');assert.notEqual(yard,old);let meshes=0;
+  yard.traverse(o=>{if(o.material&&!o.layers.isEnabled(31)){meshes++;assert.ok([].concat(o.material).every(m=>m.userData.styledFade),'all adopted yard parts remain ghosted');}});assert.ok(meshes);
+ }finally{v.dispose();}
+});
+await test('focus_invalidates_for_late_pieces_and_retries_failed_compile',async()=>{
+ const root=new T.Group(),site=new T.Group(),mesh=new T.Mesh(new T.BoxGeometry(),new T.MeshStandardMaterial());root.add(site,mesh);
+ const pieces=new Map([['b:r',[mesh]]]),room={id:'r',building:'b',allowed:['r']};mesh.userData={buildingId:'b',pieceId:'r'};
+ let attempts=0,fail=true;const focus=createSelectionFocus({compile:()=>{attempts++;return fail?Promise.reject(Error('warm failed')):null;},render:()=>{},failed:()=>{}});
+ await focus.apply(root,room,0xff0000,0xff00ff,{pieces,site,piecesRevision:0});fail=false;
+ await focus.apply(root,room,0xff0000,0xff00ff,{pieces,site,piecesRevision:0});assert.equal(attempts,2,'failed warm can retry');
+ const late=new T.Mesh(new T.BoxGeometry(),new T.MeshStandardMaterial());late.userData={buildingId:'b',pieceId:'late'};root.add(late);pieces.set('b:late',[late]);
+ await focus.apply(root,room,0xff0000,0xff00ff,{pieces,site,piecesRevision:1});assert.ok(late.material.userData.styledFade);focus.dispose();
+ let throws=0;const sync=createSelectionFocus({compile:()=>{if(++throws===1)throw Error('sync warm failed');},render:()=>{},failed:()=>{}});
+ await sync.apply(root,room,0xff0000,0xff00ff,{pieces,site});await sync.apply(root,room,0xff0000,0xff00ff,{pieces,site});assert.equal(throws,2);sync.dispose();
+});
+await test('focus_variants_release_on_source_dispose_and_warm_unlit_separately',async()=>{
+ const root=new T.Group(),site=new T.Group(),source=new T.MeshStandardMaterial(),mesh=new T.Mesh(new T.BoxGeometry(),source);root.add(site,mesh);
+ const room={id:'r',building:'b',allowed:[]},scope={pieces:new Map([['b:other',[mesh]]]),site};let state=false,compiles=0;
+ const focus=createSelectionFocus({warmState:()=>state,compile:()=>{compiles++;},render:()=>{}});
+ await focus.apply(root,room,0xff0000,0xff00ff,scope);const variant=mesh.material;let disposed=0;variant.addEventListener('dispose',()=>disposed++);
+ focus.restore();await focus.apply(root,room,0xff0000,0xff00ff,scope);assert.equal(compiles,1);
+ focus.restore();state=true;await focus.apply(root,room,0xff0000,0xff00ff,scope);assert.equal(compiles,2,'Unlit has its own warm state');
+ focus.restore();source.dispose();assert.equal(disposed,1,'source disposal releases cached variants');focus.dispose();assert.equal(disposed,1);
+});
+await test('focus_standins_do_not_copy_piece_metadata',async()=>{
+ const root=new T.Group(),site=new T.Group(),mesh=new T.Mesh(new T.BoxGeometry(),new T.MeshStandardMaterial());root.add(mesh,site);
+ mesh.userData={buildingId:'b',pieceId:'outside',payload:{toJSON(){throw Error('piece metadata copied');}}};
+ const focus=createSelectionFocus({compile:warm=>warm.traverse(o=>assert.deepEqual(o.userData,{})),render:()=>{}});
+ await focus.apply(root,{id:'r',building:'b',allowed:[]},0xff0000,0xff00ff,{pieces:new Map([['b:outside',[mesh]]]),site});focus.dispose();
+});
+
 finish();
 """
 
@@ -382,19 +433,110 @@ await test('plain_room_selection_does_not_dim_real_device_markers',async()=>{
   ed.tools.select({kind:'yard_rooms',id:'yard-marker-room'});ed.devices.draw();assert.equal(markers.children[0].material.opacity,.2,'yard-room marker dimming keeps main behavior');
  }finally{ed.dispose();}
 });
+
+await test('yard_selection_keeps_open_ground_device_drop_and_cards_safe',async()=>{
+ const ed=await mountEditor();const abort=new AbortController();try{
+  ed.plan.site.yard_rooms=[{id:'yard-fix2',polygon:[[180,180],[220,180],[220,220],[180,220]]}];
+  ed.tools.select({kind:'yard_rooms',id:'yard-fix2'});ed.look([200,200,0]);
+  const library=createLibrary({view:ed.view,kit:input.kit,getPlan:()=>ed.plan,tools:ed.tools,op:async()=>{},canEdit:()=>true,signal:abort.signal});
+  const p=ed.pixel([200,200,0]),event={clientX:p[0],clientY:p[1],pointerId:21,button:0};
+  assert.equal(library.ceilingAt(event,true),null);
+  const row=document.createElement('div');document.body.append(row);
+  ed.devices.startDrag({...event,clientX:event.clientX-12,target:row,currentTarget:row,preventDefault(){}},{device_id:'yard-drag',name:'Yard test'});
+  const up=new Event('pointerup');Object.assign(up,event);document.elementFromPoint=()=>ed.canvas;document.dispatchEvent(up);await new Promise(r=>setTimeout(r,0));
+  assert.equal(ed.ops.at(-1)?.host?.yard_room,'yard-fix2','drop retains main yard placement');
+  ed.tools.select({kind:'yard_rooms',id:'yard-fix2'});ed.devices.fixtureHandles.showDevice({device_id:'unbound-yard-card',name:'Yard card',entities:[]});
+  assert.ok(ed.dom.pieceCard.dataset.fixtureCard!==undefined);
+ }finally{abort.abort();ed.dispose();}
+});
+await test('device_card_keeps_the_binding_building_over_another_selected_room',async()=>{
+ const ed=await mountEditor();try{
+  const main=ed.plan.buildings.find(b=>b.id==='main-house'),pool=ed.plan.buildings.find(b=>b.id==='pool-house');
+  const room=pool.rooms.find(r=>r.state!=='ghost');pool.devices=[{id:'pool-device',device:'pool-card',host:{ceiling:room.id,u:.5,v:.5}}];
+  ed.tools.select({kind:'room',id:main.rooms[0].id,building:main.id});ed.devices.fixtureHandles.showDevice({device_id:'pool-card',name:'Pool card',entities:[]});
+  document.getElementById('properties-back').click();await new Promise(r=>setTimeout(r,0));
+  document.getElementById('properties-back').click();await new Promise(r=>setTimeout(r,0));
+  assert.equal(ed.tools.selection().building,pool.id);assert.equal(ed.tools.selection().id,room.id);
+ }finally{ed.dispose();}
+});
+await test('roof_and_split_context_never_fall_back_to_wall_hosts_or_yard_rooms',async()=>{
+ const ed=await mountEditor();try{
+  const b=ed.plan.buildings.find(b=>b.id==='pool-house'),wall=b.walls.find(w=>w.state!=='ghost');ed.tools.chooseFloor(b.id+':L1');
+  ed.tools.select({kind:'wall',id:wall.id,building:b.id});assert.equal(ed.tools.selectedRooms(),null,'Roof over a wall keeps main rooms:null');
+  assert.equal(roomInQuestion(ed.plan,ed.tools.selection(),null,{host:false}),null);
+  const room=b.rooms.find(r=>r.state!=='ghost');ed.tools.select({kind:'room',id:room.id,building:b.id});assert.deepEqual(ed.tools.selectedRooms(),[room.id]);
+  const another=b.rooms.find(r=>r.id!==room.id&&r.level==='L1'&&r.state!=='ghost');
+  const centre=[0,1].map(k=>another.polygon.reduce((sum,p)=>sum+p[k],0)/another.polygon.length);ed.look([...centre,0],b,80);
+  await ed.clickAt(ed.pixel([...centre,0],b),{shiftKey:true});assert.deepEqual(new Set(ed.tools.selectedRooms()),new Set([room.id,another.id]));
+  ed.plan.site.yard_rooms=[{id:'yard-roof',polygon:[[180,180],[220,180],[220,220],[180,220]]}];ed.tools.select({kind:'yard_rooms',id:'yard-roof'});assert.equal(ed.tools.selectedRooms(),null);
+ }finally{ed.dispose();}
+});
+
 finish();
 """
 
-if __name__ == '__main__':
-    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'mainGenerator': subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/twin_generator.js'], cwd=ROOT, text=True, encoding='utf-8')})
-    print(out)
-    if code:
-        sys.exit(code)
+
+# Test-only instrumentation records production partition work. No browser/GPU
+# timing claims: compare CPU samples in the same household/High Node harness.
+BENCHMARK = CONTROLLERS.split('const {createDraw}', 1)[0].replace("const THREE = await import('three');", r"""
+globalThis.__partitionTimes=[];globalThis.__standinBytes=0;
+registerHooks({load(url,ctx,next){
+ const loaded=next(url,ctx);
+ if(!url.endsWith('/selection_focus.js'))return loaded;
+ let source=String(input.baselineFocus || loaded.source)
+  .replace('const partition = () => {','const partition = () => {const __start=performance.now();')
+  .replace('return {groups,materials};','globalThis.__partitionTimes.push(performance.now()-__start);return {groups,materials};')
+  .replace('const standin=object.clone(false);','globalThis.__standinBytes+=JSON.stringify(object.userData).length;const standin=object.clone(false);')
+  .replace('return {apply,restore,refreshRanges,baseMaterial', 'globalThis.__focusRefresh=refreshRanges;return {apply,restore,refreshRanges,baseMaterial');
+ return {...loaded,source};
+}});
+const THREE = await import('three');
+""") + r"""
+const ed=await mountEditor(undefined,'high');
+try{
+ const b=ed.plan.buildings.find(b=>b.id==='main-house'),room=b.rooms.find(r=>r.state!=='ghost');
+ const start=performance.now();ed.tools.focusRoom({kind:'room',id:room.id,building:b.id});await ed.view.selectionReady;
+ const entry=performance.now()-start,entryPartitions=__partitionTimes.length,entryPartitionMs=__partitionTimes.reduce((a,b)=>a+b,0),metadataBytes=__standinBytes;
+ const owners=new Set();ed.view.scene.traverse(o=>{
+  if(o.userData.buildingId&&o.userData.pieceId)owners.add(o.userData.buildingId+':'+o.userData.pieceId);
+  for(const r of o.userData.snapRanges||o.geometry?.userData.snapRanges||[])owners.add(r.buildingId+':'+r.pieceId);
+ });
+ const frames=[],partitions=[];
+ for(let i=0;i<12;i++){
+  __partitionTimes.length=0;const start=performance.now();__focusRefresh(owners);
+  frames.push(performance.now()-start);partitions.push(__partitionTimes.reduce((a,b)=>a+b,0));
+ }
+ const wall=b.walls.find(w=>ed.tools.selection().tinted.walls.includes(w.id)),wallFrames=[],wallPartitions=[];
+ for(let i=0;i<12;i++){
+  const next=structuredClone(ed.view.plan),moving=next.buildings.find(x=>x.id===b.id).walls.find(w=>w.id===wall.id);
+  moving.from=moving.from.map((x,k)=>x+(k===0?.01:0));moving.to=moving.to.map((x,k)=>x+(k===0?.01:0));
+  __partitionTimes.length=0;const start=performance.now();ed.view.rebuildLevel(b.id,wall.level,next,{walls:[wall.id]});
+  wallFrames.push(performance.now()-start);wallPartitions.push(__partitionTimes.reduce((a,b)=>a+b,0));
+ }
+ const summary=values=>{const sorted=[...values].sort((a,b)=>a-b);return {median:sorted[Math.floor(sorted.length/2)],min:sorted[0],max:sorted.at(-1)};};
+ console.log('FOCUS_BENCH '+JSON.stringify({tier:'high',entryMs:entry,entryPartitionMs,entryPartitions,metadataBytes,refreshFrameMs:summary(frames),partitionFrameMs:summary(partitions),wallPreviewFrameMs:summary(wallFrames),wallPreviewPartitionMs:summary(wallPartitions),samples:frames.length,owners:owners.size}));
+}finally{ed.dispose();}
+"""
+
+def household_input():
     from services.twin_model_bridge import assemble, flatten
     flat = flatten(assemble(json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8')))[0])
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
     kit['manifest'] = {}
-    code, out = run_node(CONTROLLERS, {'root': ROOT.as_posix(), 'flat': flat, 'kit': kit,
-        'objectSchema': json.loads((ROOT / 'static/twin/object_schema.json').read_text(encoding='utf-8'))}, timeout=180)
+    return {'root': ROOT.as_posix(), 'flat': flat, 'kit': kit,
+        'objectSchema': json.loads((ROOT / 'static/twin/object_schema.json').read_text(encoding='utf-8'))}
+
+if __name__ == '__main__':
+    if '--focus-benchmark' in sys.argv or '--focus-benchmark-before' in sys.argv:
+        payload = household_input()
+        if '--focus-benchmark-before' in sys.argv:
+            payload['baselineFocus'] = subprocess.check_output(['git', 'show', 'HEAD:chauffeur/static/twin/selection_focus.js'], cwd=ROOT, text=True, encoding='utf-8')
+        code, out = run_node(BENCHMARK, payload, timeout=180)
+        print(out)
+        sys.exit(code or 0)
+    code, out = run_node(DRIVER, {'root': ROOT.as_posix(), 'mainGenerator': subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/twin_generator.js'], cwd=ROOT, text=True, encoding='utf-8')})
     print(out)
-    sys.exit(code or 0)
+    first_code = code
+    code, out = run_node(CONTROLLERS, household_input(), timeout=180)
+    print(out)
+    sys.exit(first_code or code or 0)

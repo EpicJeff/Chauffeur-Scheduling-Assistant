@@ -331,8 +331,9 @@ export function createFixtureEditor({ view, tools, library, getPlan, op, canEdit
     }
     owner ||= getPlan().buildings?.find(b => b.id === state.building);
     const context = roomInQuestion(getPlan(), state, owner && { building: owner, piece: binding });
-    const room = context?.room || owner?.rooms?.find(r => device.area_id && r.ha_area === device.area_id);
-    if (context) owner = context.building;
+    const room = (context?.building === owner ? context?.room : null)
+      || roomInQuestion(getPlan(), {}, owner && { building: owner, piece: binding })?.room
+      || owner?.rooms?.find(r => device.area_id && r.ha_area === device.area_id);
     deviceAnchor = !!binding && !!owner?.anchors?.includes(binding); deviceParent = false;
     deviceReturn = binding && owner?.anchors?.includes(binding) ? { pieceId: binding.id, buildingId: owner.id }
       : room ? { pieceId: room.id, buildingId: owner.id } : tools.selected?.() || null;

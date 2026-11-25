@@ -1,4 +1,3 @@
-import { roomInQuestion } from './room_context.js';
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
 import { groundAt, buildingGround, inPolygon } from '../twin_ground.js';
@@ -145,11 +144,9 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     armed = null; el('device-tools').hidden = true; el('device-tools').classList.remove('editor-device-dragging');
     canvas.style.cursor = ''; document.body.style.cursor = '';
   }
-  function arm(device, kind, room = null) {
+  function arm(device, kind, roomId = null) {
     cancel(); prepare(); tools.setTool('select');
-    const context = roomInQuestion(getPlan(), tools.selection());
-    room ||= context && { id: context.room.id, building: context.building?.id };
-    armed = { device, kind, room };
+    armed = { device, kind, roomId };
     el('device-note').textContent = `Click ${kind === 'yard_room' ? 'inside the yard room' : kind === 'wall' ? 'a wall' : 'the ceiling'} for ${device.name}. Escape cancels.`;
     el('device-tools').hidden = false; canvas.style.cursor = 'crosshair';
     showOptions(device.name);
@@ -189,7 +186,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
     if (!press || press.pointer !== event.pointerId) return false;
     const previous = press; releasePress();
     if (!cancelled && armed && canEdit() && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 3) {
-      try { const next = operation(armed.device, event, armed.kind, armed.room); cancel(); op(next).catch(report); }
+      try { const next = operation(armed.device, event, armed.kind, armed.roomId); cancel(); op(next).catch(report); }
       catch (error) { report(error); }
     }
     return true;

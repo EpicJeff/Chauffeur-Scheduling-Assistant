@@ -11,7 +11,10 @@ const drawingTools = ['draw-room', 'add-porch', 'draw-wall', 'split-room', 'add-
 
 export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal, onInteract, panel, surfaceAt, groundPoint, dock, cancelOtherDrawing }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement;
-  const editingRoom = () => roomInQuestion(getPlan(), tools.selection(), tools.floor())?.room;
+  const editingRoom = () => {
+    const floor = tools.floor(), context = roomInQuestion(getPlan(), tools.selection(), floor, { host: false });
+    return context?.building === floor?.building ? context?.room : null;
+  };
   let tool = null, points = [], press = null, anchorKind = 'light';
   let stair = null;
   let porchRoof = 'shed', porchOptions = null;

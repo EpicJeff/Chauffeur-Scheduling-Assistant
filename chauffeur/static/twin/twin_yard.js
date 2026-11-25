@@ -1061,7 +1061,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   writeWeatherOpen(root, skyCover, FT);
-  captureBakeMaterials(root);
+  if (!bakeSource) captureBakeMaterials(root);
   if (!bakeSource && !modelSource) {
     const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
     // Keep the neutral bake copy clipped to the same roof drip line whenever

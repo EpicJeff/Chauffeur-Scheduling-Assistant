@@ -4,12 +4,12 @@ import { scaleStyledFadeAlpha } from './twin_library.js';
 
 // Presentation owns materials and draw groups, never receiving topology. Geometry
 // may be shared by several objects: save and restore its groups exactly once.
-export function createSelectionFocus({ compile, render, failed }) {
-  const originals = new Map(), geometries = new Map(), variants = new Map(), warmed = new Set();
+export function createSelectionFocus({ compile, render, failed, warmState = () => null }) {
+  const originals = new Map(), geometries = new Map(), variants = new Map(), warmed = new Set(), releases = new Map();
   const display = materials => materials.length === 1 ? materials[0] : materials;
-  let revision = 0, activeRoot = null, activeKey = null, ready = Promise.resolve();
+  let revision = 0, activeRoot = null, activeKey = null, activeYard = null, ready = Promise.resolve();
   function restore() {
-    ++revision; activeRoot = activeKey = null;
+    ++revision; activeRoot = activeKey = activeYard = null;
     for (const [object, base] of originals) {
       object.material = base.material;
       object.removeEventListener('bakepresentationstart', base.beforeBake);
@@ -20,7 +20,18 @@ export function createSelectionFocus({ compile, render, failed }) {
   }
   function variant(source, mode, color) {
     if (!mode) return source;
-    if (!variants.has(source)) variants.set(source, new Map());
+    if (!variants.has(source)) {
+      const cache = new Map(); variants.set(source, cache);
+      const release = () => {
+        for (const material of cache.values()) {
+          for (const key of warmed) if (key.startsWith(material.uuid + ':')) warmed.delete(key);
+          material.dispose();
+        }
+        cache.clear(); variants.delete(source); releases.delete(source);
+        source.removeEventListener('dispose', release);
+      };
+      releases.set(source, release); source.addEventListener('dispose', release);
+    }
     const cache = variants.get(source), key = `${mode}:${color}`;
     if (cache.has(key)) return cache.get(key);
     const next = source.clone();
@@ -39,12 +50,13 @@ export function createSelectionFocus({ compile, render, failed }) {
   function syncMaterials(sync) {
     for (const [source, cache] of variants) for (const material of cache.values()) sync(source, material);
   }
-  function apply(root, room, accent, wallTint, { pieces, site } = {}) {
-    const key = room && JSON.stringify([room, accent, wallTint]);
-    if (root === activeRoot && key === activeKey) return ready;
+  function apply(root, room, accent, wallTint, { pieces, site, yard = site, piecesRevision = pieces?.revision } = {}) {
+    const sceneState = warmState();
+    const key = room && JSON.stringify([room, accent, wallTint, piecesRevision, sceneState]);
+    if (root === activeRoot && key === activeKey && yard === activeYard) return ready;
     restore();
     if (!root || !room) return ready = Promise.resolve();
-    activeRoot = root; activeKey = key;
+    activeRoot = root; activeKey = key; activeYard = yard;
     const stamp = revision, pending = [], warm = new THREE.Group(), warmKeys = new Set();
     const allowed = new Set(room.allowed || []), walls = new Set(room.walls || []), eligible = new Set();
     // Match the original focus scope: registered pieces and the site domain.
@@ -81,29 +93,37 @@ export function createSelectionFocus({ compile, render, failed }) {
         const sources = [].concat(source), baseGroups = geometryBase.groups;
         const ranges = object.userData.snapRanges || geometry.userData.snapRanges || [];
         const count = geometry.index?.count ?? geometry.attributes.position?.count ?? 0;
-        const bounds = new Set([0, count]);
-        for (const range of [...ranges, ...baseGroups]) {
-          bounds.add(Math.max(0, Math.min(count, range.start)));
-          bounds.add(Math.max(0, Math.min(count, range.start + range.count)));
-        }
-        const cuts = [...bounds].sort((a,b) => a-b), groups = [], materials = [], indices = new Map();
-        for (let i=0; i<cuts.length-1; i++) {
-          const start=cuts[i], length=cuts[i+1]-start;
-          if (!length) continue;
-          const owner = ranges.find(r => r.start <= start && r.start+r.count > start);
-          const group = baseGroups.find(g => g.start <= start && g.start+g.count > start);
+        const groups = [], materials = [], indices = new Map();
+        // Ownership and authored draw groups are ordered, disjoint intervals.
+        // Sweep each once, including the gaps before/between/after intervals.
+        let rangeIndex = 0, groupIndex = 0, start = 0;
+        while (start < count) {
+          while (rangeIndex < ranges.length && ranges[rangeIndex].start + ranges[rangeIndex].count <= start) rangeIndex++;
+          while (groupIndex < baseGroups.length && baseGroups[groupIndex].start + baseGroups[groupIndex].count <= start) groupIndex++;
+          const range = ranges[rangeIndex], baseGroup = baseGroups[groupIndex];
+          const owner = range?.start <= start ? range : null;
+          const group = baseGroup?.start <= start ? baseGroup : null;
+          const end = Math.min(count, owner ? owner.start + owner.count : range?.start ?? count,
+            group ? group.start + group.count : baseGroup?.start ?? count);
+          const length = end - start;
           const [style,color] = mode(ranges.length ? owner || {} : object.userData);
           const material = variant(sources[group?.materialIndex ?? 0] || sources[0],style,color);
           if (!indices.has(material)) { indices.set(material,materials.length); materials.push(material); }
           const materialIndex=indices.get(material), last=groups.at(-1);
           if (last?.materialIndex === materialIndex && last.start+last.count === start) last.count += length;
           else groups.push({start,count:length,materialIndex});
+          start = end;
         }
         return {groups,materials};
       };
       const next=partition();
       if (next.materials.length===1 && next.materials[0]===source) continue;
-      pending.push({object,partition,retarget: material => {source=material;},
+      const initialGeometry = object.geometry, initialRanges = object.userData.snapRanges || geometry.userData.snapRanges;
+      const initialMaterial = source, initialGroups = geometryBase.groups, initialPosition = geometry.attributes.position;
+      const firstPartition = () => object.geometry === initialGeometry && object.material === initialMaterial
+        && (object.userData.snapRanges || object.geometry.userData.snapRanges) === initialRanges
+        && geometryBase.groups === initialGroups && object.geometry.attributes.position === initialPosition ? next : partition();
+      pending.push({object,partition,firstPartition,retarget: material => {source=material;},
         beforeBake() { followGeometry(); if (!geometryBase.baking++) geometry.groups=geometryBase.groups; },
         afterBake() {
           const last = --geometryBase.baking === 0, replaced = followGeometry();
@@ -115,17 +135,30 @@ export function createSelectionFocus({ compile, render, failed }) {
         rememberGeometry() { followGeometry(); geometries.set(geometry,geometryBase); }
       });
       for (const material of next.materials) {
-        const key=`${material.uuid}:${object.type}:${!!object.isInstancedMesh}:${Object.keys(geometry.attributes)}`;
+        const key=`${material.uuid}:${sceneState}:${object.type}:${!!object.isInstancedMesh}:${Object.keys(geometry.attributes)}`;
         if (warmed.has(key) || warmKeys.has(key)) continue;
         warmKeys.add(key);
-        const standin=object.clone(false); standin.material=material; warm.add(standin);
+        // Compile only the rendering shape; Object3D.clone copies userData via
+        // JSON, including megabytes of ownership metadata on a merged house.
+        const standin = object.isInstancedMesh ? new THREE.InstancedMesh(geometry, material, 1)
+          : object.isSkinnedMesh ? new THREE.SkinnedMesh(geometry, material)
+          : object.isSprite ? new THREE.Sprite(material)
+          : object.isPoints ? new THREE.Points(geometry, material)
+          : object.isLineSegments ? new THREE.LineSegments(geometry, material)
+          : object.isLineLoop ? new THREE.LineLoop(geometry, material)
+          : object.isLine ? new THREE.Line(geometry, material) : new THREE.Mesh(geometry, material);
+        standin.castShadow = object.castShadow; standin.receiveShadow = object.receiveShadow;
+        if (object.isInstancedMesh) { standin.instanceColor = object.instanceColor; standin.morphTexture = object.morphTexture; }
+        if (object.isSkinnedMesh) { standin.skeleton = object.skeleton; standin.bindMatrix.copy(object.bindMatrix); standin.bindMatrixInverse.copy(object.bindMatrixInverse); }
+        if (object.morphTargetInfluences) standin.morphTargetInfluences = object.morphTargetInfluences;
+        warm.add(standin);
       }
     }
     const adopt = () => {
       if (stamp !== revision) return;
       for (const key of warmKeys) warmed.add(key);
       const applied = new Set();
-      for (const {object,partition,retarget,beforeBake,afterBake,rememberGeometry} of pending) {
+      for (const {object,partition,firstPartition,retarget,beforeBake,afterBake,rememberGeometry} of pending) {
         // Imports can finish while shaders warm. Adopt the material now owned
         // by the object, never the stale material from before compilation.
         const base={material:object.material,partition,retarget,beforeBake,afterBake};
@@ -133,15 +166,17 @@ export function createSelectionFocus({ compile, render, failed }) {
         originals.set(object,base);
         object.addEventListener('bakepresentationstart',base.beforeBake);
         object.addEventListener('bakepresentationend',base.afterBake);
-        const next=partition();
+        const next=firstPartition();
         if (!applied.has(object.geometry)) {object.geometry.groups=next.groups;applied.add(object.geometry);}
         object.material=display(next.materials);
       }
       render();
     };
-    const compilation=warm.children.length ? compile?.(warm) : null;
+    let compilation;
+    try { compilation=warm.children.length ? compile?.(warm) : null; }
+    catch (error) { activeKey=null; failed?.(error); return ready=Promise.resolve(); }
     if (!compilation) {adopt();return ready=Promise.resolve();}
-    return ready=Promise.resolve(compilation).then(adopt).catch(error=>{if(stamp===revision)failed?.(error);});
+    return ready=Promise.resolve(compilation).then(adopt).catch(error=>{if(stamp===revision){activeKey=null;failed?.(error);}});
   }
   function refreshRanges(changed) {
     const applied=new Set();
@@ -163,8 +198,8 @@ export function createSelectionFocus({ compile, render, failed }) {
   }
   function dispose() {
     restore();
-    for (const cache of variants.values()) for (const material of cache.values()) material.dispose();
-    variants.clear();warmed.clear();
+    for (const release of [...releases.values()]) release();
+    warmed.clear();
   }
   return {apply,restore,refreshRanges,baseMaterial,replaceMaterial,syncMaterials,dispose};
 }

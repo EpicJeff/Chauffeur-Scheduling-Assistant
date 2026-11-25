@@ -84,7 +84,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   function drawDimensions(plan = getPlan(), state = roomSelection.current(), problem = null) {
     if (!isPickable(state)) state = {};
     const building = plan?.buildings.find(b => b.id === state.building);
-    const room = roomInQuestion(plan, state)?.room;
+    const room = roomInQuestion(plan, state, null, { host: false })?.room;
     const piece = building?.walls.find(w => state.kind === 'wall' && w.id === state.id)
       || (problem && building?.walls.find(w => w.state !== 'ghost' && w.level === state.level
         && w.joints?.some(id => state.kind === 'joint' ? id === state.id : room?.joints?.includes(id))));
@@ -149,7 +149,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const previousKind = prevPrimaryKind;
     prevPrimaryKind = primaryRef?.kind ?? state.kind ?? null;
     if (split && (state.id !== split.wall || state.building !== split.building)) cancelSplit();
-    const selectedRoom = roomInQuestion(getPlan(), state)?.room.id;
+    const selectedRoom = roomInQuestion(getPlan(), state, null, { host: false })?.room.id;
     if (!selectedRoom || state.building !== roofRoomBuilding || !roofRooms.has(selectedRoom)) {
       roofRooms = new Set(selectedRoom ? [selectedRoom] : []); roofRoomBuilding = state.building;
     }

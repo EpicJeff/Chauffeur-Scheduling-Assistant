@@ -226,7 +226,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     new THREE.LineBasicMaterial({ fog: false, color: 0x52ccff, transparent: true, depthTest: false }));
   const selectionBoxWarm = new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1)), 0x52ccff);
   Object.assign(selectionBoxWarm.material, { fog: false, transparent: true, depthTest: false });
-  const focusStyle = createSelectionFocus({ compile: target => {
+  let selectionPiecesRevision = null;
+  const focusStyle = createSelectionFocus({ warmState: () => state.unlit, compile: target => {
     if (state.unlit) unlit.apply(target);
     return view.compileModelMaterials(target);
   }, render: () => {
@@ -258,7 +259,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const style = getComputedStyle(el.closest('.editor-shell') || el);
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
-    view.selectionReady = focusStyle.apply(twin.root, room, accent.getHex(), wallTint.getHex(), twin.groups && { pieces: twin.pieces, site: twin.groups.site });
+    selectionPiecesRevision = twin.pieces.revision;
+    view.selectionReady = focusStyle.apply(twin.root, room, accent.getHex(), wallTint.getHex(),
+      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision });
     if (!room) {
       const matchesMember = (data, objects, m) => {
         const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
@@ -599,6 +602,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     }
   }
   function render() {
+    if (!disposed && twin && selectionStyle?.room && selectionPiecesRevision !== twin.pieces.revision) { paintSelection(); return; }
     if (disposed) return;
     if (compiling && performance.now() - holdSince < HOLD_MS) return;
     // The live keeper can replace its layer. Read its current snapshot, without another stream.
@@ -1854,6 +1858,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
         const selected = viewing?.snapshot().pinned;
         const releaseViewing = viewing?.dispose({ deferMaterials: true }); viewing = null;
+        // Reused yard parts still carry the old Focus presentation. Restore
+        // before adoption/disposal, then style the accepted group below.
+        restoreSelection();
         group.userData.adoptParts?.();
         twin.groups.site.add(group); twin.yardGroup = group; yardGroup = group;
         freezeViewerMatrices(twin, {editor});

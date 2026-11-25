@@ -3,20 +3,17 @@ import { allPorches } from '../gutter_presence.js';
 
 // Editing context is independent of visual focus. Prefer the selected room,
 // then explicit room focus, then the room hosting the object being edited.
-export function roomInQuestion(plan, selected = {}, host = null) {
+export function roomInQuestion(plan, selected = {}, host = null, { host: includeHost = true } = {}) {
   selected ||= {};
   const buildingId = selected.building ?? selected.buildingId;
   const building = plan?.buildings?.find(b => b.id === buildingId) || host?.building;
-  const id = ['room', 'porch', 'yard_rooms'].includes(selected.kind) ? selected.id ?? selected.pieceId : null;
+  const id = ['room', 'porch'].includes(selected.kind) ? selected.id ?? selected.pieceId : null;
   const rooms = [...(building?.rooms || []), ...allPorches(building || {})];
   for (const candidate of [id, selected.focusKind !== 'level' ? selected.room : null]) {
     const room = rooms.find(r => candidate && r.id === candidate && r.state !== 'ghost');
     if (room) return { building, room };
   }
-  if (selected.kind === 'yard_rooms') {
-    const room = plan?.site?.yard_rooms?.find(r => r.id === id);
-    if (room) return { building: null, room };
-  }
+  if (!includeHost) return null;
   const owner = host?.building || building;
   const piece = host?.piece || (host?.building ? null : host) || ['anchors', 'devices', 'items', 'fixtures', 'lights', 'openings', 'walls'].flatMap(list => owner?.[list] || [])
     .find(p => p.id === (selected.id ?? selected.pieceId));
