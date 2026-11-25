@@ -1,6 +1,6 @@
 export const DRAG_THRESHOLD_PX = 3, HANDLE_HIT_PX = 16, CYCLE_SLOP_PX = 4;
 
-const key = ({ kind, building = null, id }) => JSON.stringify([kind, building, id]);
+const key = ({ kind, building, buildingId, id, pieceId }) => JSON.stringify([kind, building ?? buildingId ?? null, id ?? pieceId ?? null]);
 
 export function createPicker({ sources, isPickable = () => true }) {
   let previous = null;

@@ -9,6 +9,7 @@ import { contains } from '../twin_generator.js';
 import { sitePieces, sitePoints, objectOperation } from '../objects.js';
 import { fixtureReference } from '../live/emitters.js';
 import { transformShape, shapeCentre, shapeOperation } from './site_shapes.js';
+import { findPost } from '../porch_posts.js';
 
 const FT = .3048, rad = a => a * Math.PI / 180;
 const wrap = a => (a % 360 + 360) % 360;
@@ -28,6 +29,10 @@ export function groupRecord(plan, ref) {
     const piece = (building?.devices || (!bid && plan.site?.devices))?.find(p => p.id === id);
     return piece && { piece, kind: 'device', building, ref };
   }
+  if (ref.kind === 'porch_post' && building) {
+    const post = findPost(building, id);
+    return post && { piece: { ...post.piece, id: post.id }, kind: 'porch_post', building, porch: post.porch, porchId: post.porchId, index: post.index, post: true, ref };
+  }
   if (building && list) {
     const piece = building[list]?.find(p => p.id === id);
     return piece && { piece, kind: ref.kind, building, list, ref };
@@ -44,6 +49,7 @@ export function groupRecord(plan, ref) {
 
 export function canTransform(r, tool) {
   if (!r || r.piece.state === 'ghost') return false;
+  if (r.kind === 'porch_post') return tool === 'move' && r.porch?.state !== 'ghost';
   if (r.kind === 'wall') return tool !== 'scale';
   if (r.kind === 'opening') return tool !== 'rotate';
   if (r.pool) return tool === 'move';
@@ -62,6 +68,12 @@ function toLocal(r, at) {
 }
 function points(r) {
   const p = r.piece;
+  if (r.kind === 'porch_post') {
+    const room = r.building.rooms?.find(rm => rm.id === r.porchId);
+    const level = r.building.levels?.find(l => l.id === (r.porch.level || room?.level || r.building.levels?.[0]?.id));
+    const z = (r.porch.floor ?? level?.elevation ?? 0) + (room?.floor_offset_ft || 0);
+    return [[p.at[0], p.at[1], z]];
+  }
   if (r.kind === 'wall') return [p.from, p.to];
   if (r.kind === 'opening') {
     const w = r.building.walls.find(w => w.id === p.wall), d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
@@ -139,6 +151,11 @@ export function transformOperations(g, { by = [0, 0], angle = 0, factor = 1 } = 
   for (const r of g.records) {
     const p = r.piece, position = points(r)[0];
     if (r.kind === 'wall') continue;
+    if (r.kind === 'porch_post') {
+      const target = toLocal(r, transform(toWorld(r, position)));
+      ops.push({ op: 'update_porch_post', building: r.building.id, porch: r.porchId, post: p.id, at: target });
+      continue;
+    }
     if (r.kind === 'opening') {
       const w = r.building.walls.find(w => w.id === p.wall), d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
       const mid = w.from.map((v, i) => v + d[i] * p.at / length), moved = toLocal(r, transform(toWorld(r, mid)));
@@ -190,7 +207,12 @@ function pose(r, plan) {
     return [at[0], at[1], at[2] + fixtureReference(plan, p, at) + (p.offset_ft || 0)];
   }
   let at;
-  if (r.kind === 'opening') {
+  if (r.kind === 'porch_post') {
+    const room = r.building.rooms?.find(rm => rm.id === r.porchId);
+    const level = r.building.levels?.find(l => l.id === (r.porch.level || room?.level || r.building.levels?.[0]?.id));
+    const z = (r.porch.floor ?? level?.elevation ?? 0) + (room?.floor_offset_ft || 0);
+    at = [p.at[0], p.at[1], z];
+  } else if (r.kind === 'opening') {
     const w = r.building.walls.find(w => w.id === p.wall), d = w.to.map((v, i) => v - w.from[i]), length = Math.hypot(...d);
     at = [...w.from.map((v, i) => v + d[i] * p.at / length), (r.building.levels.find(l => l.id === w.level)?.elevation || 0) + openingFloor(r.building, w, p.at).offset + p.sill];
   } else if (r.building) { at = hostPoint(r.building, p.host, p.offset || 0); at[2] += p.elevation || 0; }
@@ -223,9 +245,19 @@ export function previewTransforms(g, transform, preview) {
 
 export function deleteOperations(plan, refs, model = null) {
   const ops = refs.map(ref => deleteOperation(plan, ref, model));
+  const derivedIndex = post => {
+    const m = typeof post === 'string' && post.match(/^post:.+:(\d+)$/);
+    return m ? Number(m[1]) : -1;
+  };
   // Children before hosts: all still exist when their own delete is applied.
-  const priority = op => op.op === 'unplace_device' ? 0 : op.op === 'delete_site_item' && ['pool', 'yard_rooms'].includes(op.list) ? 3
+  const priority = op => op.op === 'unplace_device' || op.op === 'delete_porch_post' ? 0 : op.op === 'delete_site_item' && ['pool', 'yard_rooms'].includes(op.list) ? 3
     : op.op === 'delete' && ['walls', 'rooms'].some(list => plan.buildings.find(p => p.id === op.building)?.[list]?.some(p => p.id === (op.id ?? op.piece))) ? 2
       : op.op === 'delete' && plan.buildings.some(b => b.id === op.piece) ? 4 : 1;
-  return ops.sort((a, b) => priority(a) - priority(b));
+  return ops.sort((a, b) => {
+    const diff = priority(a) - priority(b);
+    if (diff) return diff;
+    if (a.op === 'delete_porch_post' && b.op === 'delete_porch_post' && a.building === b.building && a.porch === b.porch)
+      return derivedIndex(b.post) - derivedIndex(a.post);
+    return 0;
+  });
 }

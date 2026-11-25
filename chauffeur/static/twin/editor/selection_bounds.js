@@ -156,6 +156,10 @@ function ownerFromData(data, inherited = {}) {
     level: data.level ?? inherited.level,
     visibilityKind: data.visibilityKind ?? inherited.visibilityKind,
     ghost: data.ghost || inherited.ghost,
+    ...(data.parentPieceId || data.porchId || inherited.parentPieceId ? {
+      parentPieceId: data.parentPieceId ?? data.porchId ?? inherited.parentPieceId,
+      porchId: data.porchId ?? data.parentPieceId ?? inherited.porchId,
+    } : {}),
   } : inherited;
 }
 
@@ -316,6 +320,7 @@ export function selectionBoxes({ twin, yard, scene, plan, visible = () => true }
       buildingId: data.buildingId,
       level,
       visibilityKind: data.visibilityKind,
+      ...(data.parentPieceId || data.porchId ? { parentPieceId: data.parentPieceId ?? data.porchId, porchId: data.porchId ?? data.parentPieceId } : {}),
     }, _box);
   }
 

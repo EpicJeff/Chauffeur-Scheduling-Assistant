@@ -27,6 +27,7 @@ import { deleteOperations, groupTransform, transformOperations } from './group_t
 import { createClipboard, clipboardKey } from './clipboard.js';
 import { dialogOpen } from './dialog.js';
 import { contextPoint } from './library.js';
+import { findPost } from '../porch_posts.js';
 
 const rotatePoint = (p, angle) => {
   const a = angle * Math.PI / 180;
@@ -102,6 +103,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const getLabel = item => {
     const label = getSheets().piece_labels?.find(p => p.piece === item.pieceId && p.building === item.buildingId)?.label;
     const record = findPiece(getPlan(), item.pieceId, item.buildingId);
+    if (record?.kind === 'porch_post') return `Post ${record.index + 1}`;
     return label || record?.piece.name || `${record?.kind || 'piece'} ${item.pieceId}`;
   };
   const isDelegateKind = kind => ['terraces', 'light_fixture', 'effect_fixture', 'device'].includes(kind);
@@ -196,8 +198,10 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     drawDimensions(getPlan(), state);
     if (!refreshingSelection || changed) sceneTree?.reveal(state.id, state.building);
   }
+  let rememberedPosts = null, fallingBack = false;
   const selectionStore = createSelection({
     onChange(members) {
+      if (!fallingBack && !refreshingSelection) rememberedPosts = null;
       if (syncingStore) return;
       const primaryRef = members.length ? members[members.length - 1] : null;
       // Clear room focus here (caller), not inside the pure member store (Ruling 1).
@@ -211,6 +215,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const roomSelection = createRoomSelection({
     view,
     getModel,
+    getPlan,
     getMembers: () => selectionStore.members(),
     onSync(state) {
       syncingStore = true;
@@ -246,12 +251,15 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
         ref.buildingId = record.building.id;
         const level = record.kind === 'level' ? record.piece.id
           : record.piece.level
+            || record.porch?.level
+            || (record.porchId && record.building.rooms?.find(r => r.id === record.porchId)?.level)
             || record.building.walls?.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level
             || record.building.rooms?.find(r => r.id === (record.piece.host?.floor || record.piece.host?.ceiling))?.level
             || picked.level || null;
         if (level != null) ref.level = level;
       }
       if (record.poolId !== undefined) ref.poolId = record.poolId;
+      if (record.porchId !== undefined) ref.porchId = record.porchId;
       return ref;
     }
     const plan = getPlan();
@@ -273,6 +281,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (picked.level != null) ref.level = picked.level;
     if (entity_id !== undefined) ref.entity_id = entity_id;
     if (picked.poolId !== undefined) ref.poolId = picked.poolId;
+    if (picked.porchId !== undefined || picked.parentPieceId !== undefined) ref.porchId = picked.porchId ?? picked.parentPieceId;
     return ref;
   }
   function pieceExists(plan, ref) {
@@ -323,7 +332,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   }
   signal.addEventListener('abort', () => { gizmo.finish(true); gizmoLayer.remove(); view.controls.removeEventListener('change', gizmo.draw); }, { once: true });
   const hasHandles = ({ kind, piece, building }) => piece.state !== 'ghost'
-    && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair'].includes(kind)
+    && (['wall', 'joint', 'room', 'roof', 'dormer', 'solar_zone', 'stair', 'porch_post'].includes(kind)
       || kind === 'opening' && building.walls.some(w => w.id === piece.wall)
       || ['anchor', 'item'].includes(kind) && !!piece.host);
   const listen = (node, event, fn, options = {}) => node.addEventListener(event, fn, { ...options, signal });
@@ -350,9 +359,20 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       roomSelection.clear(); roomSelection.select({ kind: record.kind, id: record.piece.id }); return;
     }
     const level = record.kind === 'level' ? record.piece.id : record.piece.level
+      || record.porch?.level
+      || (record.porchId && record.building.rooms?.find(r => r.id === record.porchId)?.level)
       || record.building.walls.find(w => w.id === (record.piece.wall || record.piece.host?.wall))?.level;
     if (['roof', 'dormer', 'solar_zone', 'building', 'level'].includes(record.kind) && roomSelection.current().room) roomSelection.clear();
-    roomSelection.select({ kind: record.kind, id: record.piece.id, building: record.building.id, level });
+    const nextPick = { kind: record.kind, id: record.piece.id, building: record.building.id, level, ...(record.porchId ? { porchId: record.porchId } : {}) };
+    if (item.fallbackFrom) {
+      fallingBack = true;
+      try {
+        roomSelection.select(nextPick);
+        rememberedPosts = { refs: item.fallbackFrom, porch: { pieceId: record.piece.id, buildingId: record.building.id } };
+      } finally { fallingBack = false; }
+      return;
+    }
+    roomSelection.select(nextPick);
   }
   let contextPicking = false;
   function sceneCandidate(item) {
@@ -368,13 +388,23 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       && record.building.roof.flags?.some(flag => flag.block_rect?.length === 4
         && flag.block_rect.every((v, i) => Math.abs(v - record.piece.block[i]) <= 1)));
     // Existing needs-checking markers still open their own correction card.
-    if (!contextPicking && item?.building && !['solar_zone','anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
+    if (!contextPicking && item?.building && !['solar_zone', 'anchor'].includes(item.kind) && !markedRoof && view.state.view === 'ext' && !roomSelection.current().id)
       return { ...item, kind: 'building', id: item.building, pieceId: item.building, level: null };
     return item;
   }
   const picker = createPicker({ isPickable, sources: [
     (x, y) => { const item = delegate?.pick?.(x, y); return item ? [item] : []; },
-    (x, y) => view.pickAll(x, y).filter(isPickable).map(sceneCandidate),
+    (x, y) => {
+      let floorDist = -Infinity;
+      return view.pickAll(x, y).filter(Boolean).map(item => {
+        const id = item.id ?? item.pieceId, building = item.building ?? item.buildingId ?? null;
+        const distance = Number.isFinite(item.distance) ? Math.max(floorDist, item.distance) : item.distance;
+        if (Number.isFinite(distance)) floorDist = distance;
+        const norm = { ...item, id, pieceId: id, building, buildingId: building, distance };
+        if (norm.kind === 'porch_post' && (norm.parentPieceId || norm.porchId)) norm.porchId = norm.porchId ?? norm.parentPieceId;
+        return norm;
+      }).filter(isPickable).map(sceneCandidate);
+    },
     (x, y) => siteHits ? siteHits(x, y) : [pickSite?.(x, y)].filter(Boolean),
     (x, y) => padHits?.(x, y) || [],
     (x, y) => fixtureHits?.(x, y) || [],
@@ -395,15 +425,25 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // A locked piece cannot be clicked in the view; when it is the nearest thing under the
   // pointer, say so instead of silently selecting what lies behind it (owner report 2026-11-19).
   const LOCKED_WORDS = { roof: 'This roof section', dormer: 'This dormer', wall: 'This wall', room: 'This room', opening: 'This opening',
-    stair: 'This stair', item: 'This item', anchor: 'This anchor', solar_zone: 'This solar zone' };
+    stair: 'This stair', item: 'This item', anchor: 'This anchor', solar_zone: 'This solar zone', porch_post: 'This post' };
   function lockedHint(x, y, picked) {
     const status = document.getElementById('editor-status');
     if (!status || !visibility?.isLocked) return;
-    const nearest = (view.pickAll?.(x, y) || []).find(hit => !visibility.isHidden?.(hit.id, hit.kind));
-    if (!nearest || !visibility.isLocked(nearest.id, nearest.kind)) { delete status.dataset.lockedHint; return; }
-    if (picked && picked.id === nearest.id) return;
+    const nearest = (view.pickAll?.(x, y) || []).find(hit => {
+      const id = hit.id ?? hit.pieceId, parent = hit.parentPieceId ?? hit.porchId;
+      return !visibility.isHidden?.(id, hit.kind) && (!parent || !visibility.isHidden?.(parent));
+    });
+    const nearestId = nearest?.id ?? nearest?.pieceId;
+    const parentId = nearest?.parentPieceId ?? nearest?.porchId
+      ?? (nearest?.kind === 'porch_post' ? findPiece(getPlan(), nearestId, nearest.building ?? nearest.buildingId)?.porchId : null);
+    const locked = nearest && (visibility.isLocked(nearestId, nearest.kind)
+      || !!(parentId && visibility.isLocked(parentId))
+      || !!(nearest.building && visibility.isLocked(nearest.building))
+      || !!(nearest.level && visibility.isLocked(nearest.level)));
+    if (!locked) { delete status.dataset.lockedHint; return; }
+    if (picked && (picked.id ?? picked.pieceId) === nearestId) return;
     status.textContent = `${LOCKED_WORDS[nearest.kind] || 'This piece'} is locked. Unlock it in Layers or the Scene tree to select it here.`;
-    status.dataset.lockedHint = nearest.id;
+    status.dataset.lockedHint = nearestId;
   }
   // Context actions use the same ranked picker, but retain the actual piece
   // under the pointer in the exterior view instead of its navigation parent.
@@ -483,7 +523,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
           return canEdit() && latest && op(objectOperation(latest, { [field]: !latest.piece[field] }));
         })));
     }
-    if (['wall', 'room', 'opening', 'item', 'anchor'].includes(record.kind) || !record.building)
+    if (['wall', 'room', 'opening', 'item', 'anchor', 'porch_post'].includes(record.kind) || !record.building)
       result.push(action('Delete', () => cards.remove()));
     return [...result, ...visibilityActions(target.id, record.piece.device ? 'device' : record.piece.object_kind === 'lamp' ? 'fixture' : record.kind)];
   }
@@ -528,10 +568,19 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     if (!canEdit()) return;
     const refs = selectionStore.members();
     if (refs.length < 2) return cards.remove();
-    if (!await window.promptConfirm(`Delete ${refs.length} selected pieces?`, 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
+    const allPosts = refs.every(r => r.kind === 'porch_post');
+    if (!await window.promptConfirm(`Delete ${refs.length} selected ${allPosts ? 'posts' : 'pieces'}?`,
+      allPosts ? 'Undo restores the whole selection.' : 'Attached doors or windows may also be removed. Undo restores the whole selection.', 'Delete', 'Cancel')) return;
+    const postPorches = allPosts
+      ? new Set(refs.map(r => JSON.stringify([r.buildingId ?? null, r.porchId ?? findPiece(getPlan(), r.pieceId, r.buildingId)?.porchId ?? null])))
+      : null;
     return cards.queue(async () => {
       if (!canEdit()) return;
       await applyBatch(deleteOperations(getPlan(), refs, getModel?.()));
+      if (postPorches?.size === 1) {
+        const [bid, pid] = JSON.parse([...postPorches][0]);
+        if (pid && findPiece(getPlan(), pid, bid)) { select({ pieceId: pid, buildingId: bid, fallbackFrom: refs }); return; }
+      }
       selectionStore.clear();
     });
   }
@@ -781,7 +830,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
     const hit = (event.ctrlKey || event.metaKey) ? null : handleHit(event);
     if (hit) {
       const enabled = view.controls.enabled, started = hit.source.begin(event, hit.handle);
-      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, started, enabled };
+      gesture = { x: event.clientX, y: event.clientY, pointerId, dragging: true, source: hit.source, handle: hit.handle, started, enabled };
       ownsGesture = true; onInteract?.(); view.controls.enabled = false;
       canvas.setPointerCapture(event.pointerId); event.stopImmediatePropagation(); return;
     }
@@ -940,7 +989,16 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       if (g.source !== handles && g.started) g.source.pointerUp?.(event, cancel);
       view.controls.enabled = g.enabled;
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-      if (g.source === handles && g.started) handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report);
+      if (g.source === handles && g.started) {
+        handles.finish(cancel || !g.moved, !cancel && !g.moved).catch(report);
+        // A click (no drag) on a post's handle cycles picking to the piece behind it (e.g. its porch).
+        if (!cancel && !g.moved && g.handle?.kind === 'porch_post') {
+          roofRooms.clear();
+          const picked = picker.click(event.clientX, event.clientY);
+          lockedHint(event.clientX, event.clientY, picked);
+          if (picked && !delegate?.selectPick?.(picked)) roomSelection.select(picked);
+        }
+      }
       return;
     }
     if (g.selecting) {
@@ -948,11 +1006,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       if (!cancel && !g.moved && Math.hypot(event.clientX - g.x, event.clientY - g.y) < DRAG_THRESHOLD_PX) {
         onInteract?.();
         if (g.addRoom) {
-          const target = floor(), p = target && view.floorAt(event.clientX, event.clientY, target.key);
-          const room = p && target.building.rooms.find(r => r.level === target.level.id && r.state !== 'ghost' && contains(r.polygon, p));
-          if (room) {
-            if (roofRoomBuilding !== target.building.id || !roofRooms.size) roomSelection.focusRoom(room.id, target.building.id);
-            roofRooms.add(room.id); roofRoomBuilding = target.building.id;
+          contextPicking = true;
+          let nearest = null;
+          try { nearest = picker.at(event.clientX, event.clientY)[0] || null; }
+          finally { contextPicking = false; }
+          lockedHint(event.clientX, event.clientY, nearest);
+          if (nearest?.kind === 'porch_post') {
+            roofRooms.clear();
+            const ref = toSelectionRef(nearest);
+            if (ref) selectionStore.toggle(ref);
+          } else {
+            const target = floor(), p = target && view.floorAt(event.clientX, event.clientY, target.key);
+            const room = p && target.building.rooms.find(r => r.level === target.level.id && r.state !== 'ghost' && contains(r.polygon, p));
+            if (room) {
+              if (roofRoomBuilding !== target.building.id || !roofRooms.size) roomSelection.focusRoom(room.id, target.building.id);
+              roofRooms.add(room.id); roofRoomBuilding = target.building.id;
+            }
           }
         } else if (event.ctrlKey || event.metaKey) {
           roofRooms.clear();
@@ -1024,8 +1093,22 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       }).catch(report); return;
     }
     const record = selection && findPiece(getPlan(), selection.pieceId, selection.buildingId);
-    if (!record || !isObject(record) && record.kind !== 'opening' && record.building) return;
+    if (!record || !isObject(record) && record.kind !== 'opening' && record.kind !== 'porch_post' && record.building) return;
     if (event.key === 'Delete') { event.preventDefault(); cards.remove().catch(report); return; }
+    if (record.kind === 'porch_post' && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      event.preventDefault();
+      const by = [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0];
+      const target = { building: record.building.id, post: record.piece.id };
+      cards.queue(() => {
+        if (!canEdit()) return;
+        const b = getPlan()?.buildings?.find(x => x.id === target.building);
+        const current = b && findPost(b, target.post);
+        if (!current) return;
+        const localBy = rotatePoint(by, -(b.rotation || 0));
+        return op({ op: 'update_porch_post', building: target.building, porch: current.porchId, post: current.id,
+          at: [current.piece.at[0] + localBy[0], current.piece.at[1] + localBy[1]] });
+      }).catch(report); return;
+    }
     if (!record.building && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
       event.preventDefault();
       const by = [{ ArrowLeft: -1, ArrowRight: 1 }[event.key] || 0, { ArrowDown: -1, ArrowUp: 1 }[event.key] || 0];
@@ -1154,11 +1237,27 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
       const currentMembers = selectionStore.members();
       const surviving = currentMembers.filter(ref => pieceExists(plan, ref));
       if (surviving.length !== currentMembers.length) {
-        if (!surviving.length) select(null);
-        else {
+        if (!surviving.length) {
+          const postPorches = currentMembers.every(r => r.kind === 'porch_post')
+            ? new Set(currentMembers.map(r => JSON.stringify([r.buildingId ?? null, r.porchId ?? null])))
+            : null;
+          if (postPorches?.size === 1) {
+            const [bid, pid] = JSON.parse([...postPorches][0]);
+            if (pid && findPiece(plan, pid, bid)) { select({ pieceId: pid, buildingId: bid, fallbackFrom: currentMembers }); return; }
+          }
+          select(null);
+        } else {
           refreshingSelection = true;
           try { selectionStore.set(surviving); } finally { refreshingSelection = false; }
         }
+      } else if (rememberedPosts && currentMembers.length === 1
+        && currentMembers[0].pieceId === rememberedPosts.porch.pieceId
+        && (currentMembers[0].buildingId ?? null) === (rememberedPosts.porch.buildingId ?? null)
+        && rememberedPosts.refs.every(ref => pieceExists(plan, ref))) {
+        const restore = rememberedPosts.refs;
+        rememberedPosts = null;
+        if (restore.length === 1) select(restore[0]);
+        else selectionStore.set(restore);
       } else {
         refreshingSelection = true;
         try { roomSelection.refresh(); } finally { refreshingSelection = false; }

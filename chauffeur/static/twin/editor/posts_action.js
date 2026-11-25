@@ -40,11 +40,11 @@ function coversColumn(roof, sections, at) {
 
 export function postRoofReason(building, porch, roof) {
   if (['ghost','proposal'].includes(porch?.state)) return 'Choose a settled porch; ghost and proposal porches cannot move posts.';
-  if (roof && ['ghost','proposal'].includes(roof.state)) return 'Choose a settled roof; ghost and proposal roofs cannot receive posts.';
   if (!porch?.columns?.length) return 'This porch has no columns to move.';
   const level=porch.level || building.rooms?.find(r=>r.id===porch.id)?.level;
   const area=roof && (roof.area || [[roof.rect[0],roof.rect[1]],[roof.rect[2],roof.rect[1]],[roof.rect[2],roof.rect[3]],[roof.rect[0],roof.rect[3]]]);
   if (!roof || roof.level!==level || overlapArea(porch.polygon,area.map(p=>roofPoint(roof,p)))<=1e-8) return 'No roof overlaps this porch on its floor.';
+  if (['ghost','proposal'].includes(roof.state)) return 'Choose a settled roof; ghost and proposal roofs cannot receive posts.';
   if (isSupported(roof)) return 'This roof already has supports.';
   const sections=roof.rect ? [roof] : (building.roof?.sections || []).filter(s=>(s.roof || s.id)===roof.id);
   if (!sections.length || sections.some(s=>s.kind!=='shed')) return 'Choose a shed roof; this walled roof is not a shed.';
@@ -52,6 +52,30 @@ export function postRoofReason(building, porch, roof) {
   if (columns.length>40 || size<.05 || size>3 || columns.some(c=>Math.abs(c.size-size)>1e-8)) return 'The roof needs at most 40 columns of the same size, from 0.05 to 3 feet.';
   if (columns.some(c=>!coversColumn(roof,sections,c.at))) return 'A post would be outside the roof.';
   return null;
+}
+
+const REASON_RANK = [
+  'No roof overlaps this porch on its floor.',
+  'Choose a settled roof; ghost and proposal roofs cannot receive posts.',
+  'This roof already has supports.',
+  'Choose a shed roof; this walled roof is not a shed.',
+  'The roof needs at most 40 columns of the same size, from 0.05 to 3 feet.',
+  'A post would be outside the roof.',
+  'Choose a settled porch; ghost and proposal porches cannot move posts.',
+];
+
+export function postRoofDisabledReason(building, porch) {
+  if (!porch?.columns?.length) return postRoofReason(building, porch, null);
+  const candidates = building?.roofs?.length ? building.roofs : building?.roof?.sections || [];
+  if (!candidates.length) return postRoofReason(building, porch, null);
+  let best = null, bestRank = -1;
+  for (const roof of candidates) {
+    const reason = postRoofReason(building, porch, roof);
+    if (reason === null) return null;
+    const rank = REASON_RANK.indexOf(reason);
+    if (best === null || rank > bestRank) { best = reason; bestRank = rank; }
+  }
+  return best || postRoofReason(building, porch, null);
 }
 
 export function postRoofChoices(building, porchId) {
@@ -64,15 +88,36 @@ export function postRoofChoices(building, porchId) {
 export function drawPostsAction(host, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved }) {
   if (!(record.kind === 'porch' || record.kind === 'room' && record.piece.kind === 'porch')) return null;
   const current = () => getPlan().buildings.find(b => b.id === record.building.id);
+  const currentPorch = () => current() ? allPorches(current()).find(p => p.id === record.piece.id) : null;
   const choices = () => current() ? postRoofChoices(current(), record.piece.id) : [];
-  const row = document.createElement('div'); row.className = 'editor-material-actions editor-card-row';
-  host.append(row);
+  const wrap = document.createElement('div');
+  host.append(wrap);
   let signature, button;
   const refresh = () => {
-    const roofs = choices(), key = JSON.stringify([roofs.map(r => [r.roof || r.id, r.name]), canEdit()]);
+    const building = current(), porch = currentPorch(), hasPosts = !!porch?.columns?.length;
+    const roofs = hasPosts ? choices() : [];
+    const reason = hasPosts && !roofs.length ? postRoofDisabledReason(building, porch) : null;
+    const key = JSON.stringify([hasPosts, roofs.map(r => [r.roof || r.id, r.name]), reason, canEdit()]);
     if (key === signature) return;
-    signature = key; row.replaceChildren(); button = null; row.hidden = !roofs.length;
-    if (!roofs.length) return;
+    signature = key; wrap.replaceChildren(); button = null; wrap.hidden = !hasPosts;
+    if (!hasPosts) return;
+    const row = document.createElement('div'); row.className = 'editor-material-actions editor-card-row';
+    wrap.append(row);
+    if (!roofs.length) {
+      button = document.createElement('button'); button.type = 'button'; button.textContent = 'Move posts to the roof';
+      button.disabled = true; button.dataset.postDisabled = '';
+      if (reason) button.title = reason;
+      row.append(button);
+      if (reason) {
+        const note = document.createElement('p');
+        note.className = 'editor-downspout-note'; note.dataset.postRoofReason = '';
+        const noteId = `post-roof-reason-${record.building.id}-${record.piece.id}`;
+        note.id = noteId; note.textContent = reason;
+        button.setAttribute('aria-describedby', noteId);
+        wrap.append(note);
+      }
+      return;
+    }
     let select;
     if (roofs.length > 1) {
       select = document.createElement('select'); select.setAttribute('aria-label', 'Roof for the posts');
@@ -95,6 +140,6 @@ export function drawPostsAction(host, record, { getPlan, canEdit, queue, op, rep
     row.append(button);
   };
   refresh();
-  ownSlot?.({refresh, dispose: () => row.remove()});
+  ownSlot?.({refresh, dispose: () => wrap.remove()});
   return button;
 }

@@ -186,7 +186,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
   // line; the floor-plane point is only the fallback (a straight-down look at
   // the top of a wall, where the ray never crosses the wall's face).
   function wallHit(event) {
-    const surface = surfaceAt?.(event, { skip: ['room'] });
+    const surface = surfaceAt?.(event, { skip: ['room', 'porch_post'] });
     if (surface?.kind !== 'wall' || surface.piece.kind === 'separator') return null;
     const level = surface.building.levels.find(l => l.id === surface.piece.level);
     const z = surface.point[2] - (level?.elevation || 0), height = surface.piece.height || level?.ceiling || 0;
@@ -340,7 +340,7 @@ export function createDraw({ view, tools, getPlan, op, gesture, canEdit, signal,
               host={floor:room.id,u:(p[0]-low[0])/(high[0]-low[0]),v:(p[1]-low[1])/(high[1]-low[1])};}
             enqueue(()=>save({op:'add_equipment',building:building.id,kind:'parking',host}).then(done()));return true;
           }
-          const surface=surfaceAt?.(event,{skip:['room']});
+          const surface=surfaceAt?.(event,{skip:['room','porch_post']});
           if(tool==='add-solar-zone'){
             if(surface?.kind!=='roof'){note('Click a roof plane.');return true;}
             const b=surface.building,roof=surface.piece.roof || surface.piece.id;

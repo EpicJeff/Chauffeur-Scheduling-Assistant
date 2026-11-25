@@ -161,7 +161,10 @@ export function materialLines(record, plan, kit) {
   if (['item', 'fixture'].includes(kind) && piece.rect) return (['counter', 'vanity'].includes(piece.kind) ? ['cabinet', 'counter']
     : piece.kind === 'shower' ? ['shower_tile', 'shower_glass'] : []).filter(part => ITEM_PARTS.fixture.includes(part)).map(part => itemLine(part, piece, 'item'));
   const porch = kind === 'room' && piece.kind === 'porch'
-    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece : kind === 'porch' ? piece : null;
+    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece
+    : kind === 'porch' ? piece
+      : kind === 'porch_post' ? record.porch || [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === record.porchId) || null : null;
+  if (kind === 'porch_post') return porch ? [itemLine('column', porch, 'porch')] : [];
   const porchLines = porch ? ITEM_PARTS.porch.filter(part => part !== 'screen' || porch.screened).map(part => itemLine(part, porch, 'porch')) : [];
   if (kind === 'porch') return porchLines;
   if (kind === 'wall') return ['left', 'right'].map(side => {
@@ -452,6 +455,14 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const piece = kind === 'pool' ? pool : pool?.features?.find(f => f.kind === 'spa' && f.id === id);
       return piece && { kind, piece, role: 'water', target: { [kind]: piece.id, part: 'water' }, label: `${piece.name || (kind === 'spa' ? 'Spa' : 'Pool')} water` };
     }
+    if (kind === 'porch_post') {
+      const porchId = picked.parentPieceId || picked.porchId || findPiece(getPlan(), id, building?.id)?.porchId;
+      const porch = porchId && [...allPorches(building || {}), ...(building?.porches_detail || [])].find(p => p.id === porchId);
+      const name = building?.rooms?.find(r => r.id === porch?.id)?.name || porch?.name || 'porch';
+      if (porch) return { building, kind: 'porch', piece: porch, role: 'column', target: { porch: porch.id, part: 'column' },
+        level: porch.level, point: picked.point && local(building, new THREE.Vector3(...picked.point)).toArray(),
+        label: `${name} column` };
+    }
     const targetKind = kind === 'fixture' ? 'item' : kind;
     if (picked.part && ITEM_PARTS[targetKind === 'item' ? 'fixture' : targetKind]?.includes(picked.part)) {
       const pieces = kind === 'porch' ? [...allPorches(building || {}), ...(building?.porches_detail || [])]
@@ -508,6 +519,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       if (!target) return true;
       const id = target.id || target.pieceId, bid = target.building || target.buildingId;
       if (target.kind === 'building') return surface.building?.id === (bid || id);
+      if (target.kind === 'porch_post' && surface.kind === 'porch') {
+        const porchId = target.parentPieceId || target.porchId || findPiece(getPlan(), id, bid)?.porchId;
+        return surface.piece.id === porchId && (surface.building?.id || null) === (bid || null);
+      }
       return (surface.piece.id === id || surface.piece.roof === id)
         && (surface.building?.id || null) === (bid || null);
     };
