@@ -324,10 +324,12 @@ def update_building(bid: str, fields: dict) -> dict:
 
             note = (f'Renamed {old["name"]} to {building["name"]}' if old['name'] != building['name']
                     else f'Changed {building["name"]} to {twin_place.KINDS[building["kind"]]}')
-            update_current(rename, kind='edit', note=note)
-            latest = _state()
-            latest['place'], latest['page_roles'], latest['sources'] = registry, row['page_roles'], row['sources']
-            row = latest
+            def update_state(state):
+                state['place'], state['page_roles'], state['sources'] = registry, row['page_roles'], row['sources']
+
+            update_model(rename, kind='edit', note=note, state_mutator=update_state,
+                         building_fields={bid: ('name', 'kind')})
+            return deepcopy(building)
         _save(row)
         return deepcopy(building)
 
@@ -666,7 +668,7 @@ def director_round_count(run):
 
 @_edit_timed('round')
 def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, changes=(), step=None, partial=False,
-                  *, restored_from=None, normalized=False):
+                  *, restored_from=None, normalized=False, raw_building_edit=()):
     """Called with _LOCK held; file, pointer and fixes form one mutation."""
     round_id = max((r['id'] for r in row['rounds']), default=0) + 1
     at = datetime.now(timezone.utc).isoformat()
@@ -679,6 +681,8 @@ def _append_round(row, plan, kind, note='', cost=None, run=None, base=None, chan
         record['partial'] = True
     if restored_from is not None:
         record['restored_from'] = restored_from
+    if raw_building_edit:
+        record['raw_building_edit'] = list(raw_building_edit)
     root = Path(DATA_DIR) / 'rounds'
     root.mkdir(parents=True, exist_ok=True)
     target = root / f'{round_id}.json'
@@ -775,8 +779,8 @@ def _director_json(value):
 
 def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, state_mutator=None,
                  return_model=False, preserve_room_polygons=False, cost=None, run=None,
-                 base=None) -> int | None | tuple[int | None, dict]:
-    """Publish a connected edit; a director no-op returns no new round id."""
+                 base=None, building_fields=None) -> int | None | tuple[int | None, dict]:
+    """Publish a connected edit; validated building_fields preserve the raw house."""
     with LIFECYCLE, _LOCK:
         row = _state()
         if generation is not None and generation != row['generation']:
@@ -788,7 +792,25 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
             raise ValueError('There is no house yet.')
         before = (deepcopy(_READ_MODEL) if _READ_MODEL is not None and _READ_KEY == _read_key(row)
                   else _read_round(row, row['current']))
-        if kind == 'director':
+        if building_fields is not None:
+            # Setup actions already validate these scalar fields. Publish them
+            # on the raw house, and refuse any incidental structural rewrite.
+            if kind != 'edit' or not building_fields or any(
+                    not set(fields) <= {'name', 'kind', 'position', 'rotation'}
+                    for fields in building_fields.values()):
+                raise ValueError('Choose a building detail to change.')
+            model = mutator(deepcopy(before))
+            expected = deepcopy(before)
+            for building in expected['buildings']:
+                if building['id'] in building_fields:
+                    candidate = next(b for b in model['buildings'] if b['id'] == building['id'])
+                    for field in building_fields[building['id']]:
+                        if field in candidate:
+                            building[field] = deepcopy(candidate[field])
+            if model != expected:
+                raise ValueError('The building edit changed unrelated house records. Nothing was saved.')
+            normalized = False
+        elif kind == 'director':
             from services import twin_cost
             if director_round_count(run) >= twin_cost.ROUND_CAP:
                 raise twin_plan.DirectorUnsafe('round cap reached')
@@ -814,10 +836,11 @@ def update_model(mutator, kind='edit', note='', changes=(), generation=None, *, 
             twin_plan.assert_director_preserved(before, model)
             if _director_json(before) == _director_json(model):
                 return (None, deepcopy(before)) if return_model else None
-        else:
+        elif building_fields is None:
             _follow_place(row, model)
         round_id = _append_round(row, model, kind, note=note, changes=changes, normalized=normalized,
-                                 cost=cost, run=run, base=base)
+                                 cost=cost, run=run, base=base,
+                                 raw_building_edit=tuple(building_fields or ()))
         return (round_id, deepcopy(_READ_MODEL)) if return_model else round_id
 
 
@@ -860,10 +883,24 @@ def revert(round_id: int, generation=None) -> int:
                         if r['id'] < row['current'] and not r.get('stale')), default=None)
         undoing_director = round_id == previous and any(
             r['id'] == row['current'] and r['kind'] == 'director' for r in row['rounds'])
+        low, high = sorted((round_id, row['current']))
+        # History permits multi-round jumps in either direction. An ordinary
+        # edit at either endpoint must not hide raw edits inside the span.
+        raw_buildings = {bid for record in row['rounds'] if low <= record['id'] <= high
+                         for bid in record.get('raw_building_edit', ())}
+        if not restored and raw_buildings:
+            # The historical model owns these details on undo/redo. Reapplying
+            # the newer registry name here would corrupt the restored house.
+            details = {b['id']: b for b in twin_place.migrate({}, plan)['buildings']}
+            for building in _place(row)['buildings']:
+                if building['id'] in raw_buildings and building['id'] in details:
+                    for field in ('name', 'kind'):
+                        building[field] = details[building['id']][field]
         if not restored and not undoing_director:
             _follow_place(row, plan)
         _follow_tombstones(row, round_id)
-        return _append_round(row, plan, 'revert', restored_from=origin)
+        return _append_round(row, plan, 'revert', restored_from=origin,
+                             raw_building_edit=sorted(raw_buildings))
 
 
 def _follow_tombstones(row, round_id):
