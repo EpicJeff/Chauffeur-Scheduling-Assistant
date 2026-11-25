@@ -289,7 +289,114 @@ function buildCorbel(THREE, frame, { u, wWall, wEdge, wAt, size, style, slabBot,
   return b.build(THREE, frame);
 }
 
-function buildBrace(THREE, frame, { u, wWall, wEdge, wAt, size, slabBot, groundAtLocal }) {
+function archedBraceProfile() {
+  // Normalized (fw in [0..1] wall->tip, fy in [0..1] ceiling->foot) outer silhouette:
+  // wall leg with shaped foot, chunky top arm with ogee end (~20% taller tip), curved diagonal arch.
+  const outer = [
+    [0, 0], [1.0, 0],
+    // Chunkier ogee / stepped scroll end on top arm
+    [1.0, 0.08], [0.955, 0.12], [0.93, 0.18], [0.86, 0.205], [0.835, 0.26], [0.765, 0.285], [0.72, 0.295],
+  ];
+  const archStart = outer.length - 1;
+  const cOut = [[0.72, 0.295], [0.58, 0.38], [0.37, 0.60], [0.25, 0.79]];
+  for (let i = 1; i <= 7; i++) outer.push(cubicBezier(...cOut, i / 7));
+  const archEnd = outer.length - 1;
+  // Shaped stepped foot on wall leg
+  outer.push([0.25, 0.845], [0.20, 0.875], [0.195, 0.925], [0.145, 0.955], [0.12, 1.0], [0, 1.0]);
+
+  // Crisp triangular interior cutout with curved inner diagonal edge
+  const hole = [[0.20, 0.25], [0.46, 0.25]];
+  const holeArchStart = 1;
+  const cIn = [[0.46, 0.25], [0.36, 0.305], [0.25, 0.42], [0.20, 0.53]];
+  for (let i = 1; i <= 3; i++) hole.push(cubicBezier(...cIn, i / 3));
+  const holeArchEnd = hole.length - 1;
+
+  return { outer, hole, archStart, archEnd, holeArchStart, holeArchEnd };
+}
+
+function buildArchedBrace(THREE, frame, { u, wWall, wEdge, wAt, size, slabBot, groundAtLocal }) {
+  const s = Math.max(0.14, Math.min(1.0, size)), hs = s / 2;
+  const availRun = Math.max(s + 0.25, Math.min(wEdge, wAt > wWall + 0.3 ? wAt : wEdge) - wWall - 0.14);
+  const run = Math.min(availRun, Math.max(s * 4.2, Math.min(availRun, Math.max(2.4, size * 6.0))));
+  if (!(run > s + 0.05)) return null;
+  const yTop0P = slabBot(u + hs, wWall), yTop1P = slabBot(u + hs, wWall + run);
+  const yTop0M = slabBot(u - hs, wWall), yTop1M = slabBot(u - hs, wWall + run);
+  const yTopMin = Math.min(yTop0P, yTop0M);
+  const ground = groundAtLocal(u, wWall);
+  const maxDrop = Number.isFinite(ground) ? Math.max(s * 2.2, yTopMin - ground - 0.1) : 4.2;
+  const drop = Math.min(maxDrop, Math.max(s * 3.4, Math.min(run * 0.92, 3.4)));
+
+  const { outer, hole, archStart, archEnd, holeArchStart, holeArchEnd } = archedBraceProfile();
+  const mapLoop = pts => ({
+    plus: pts.map(([fw, fy]) => [u + hs, yTop0P + (yTop1P - yTop0P) * fw - fy * drop, wWall + fw * run]),
+    minus: pts.map(([fw, fy]) => [u - hs, yTop0M + (yTop1M - yTop0M) * fw - fy * drop, wWall + fw * run]),
+  });
+  const out3 = mapLoop(outer), in3 = mapLoop(hole);
+  const allPlus = [...out3.plus, ...in3.plus];
+  const allMinus = [...out3.minus, ...in3.minus];
+  const uvPlus = allPlus.map(p => [p[2] - wWall, p[1] - (yTop0P - drop)]);
+  const uvMinus = allMinus.map(p => [p[2] - wWall, p[1] - (yTop0M - drop)]);
+
+  const contour2D = outer.map(([fw, fy]) => new THREE.Vector2(fw, -fy));
+  const hole2D = hole.map(([fw, fy]) => new THREE.Vector2(fw, -fy));
+  const faces = THREE.ShapeUtils.triangulateShape(contour2D, [hole2D]);
+  const b = createBuilder();
+
+  for (const [i0, i1, i2] of faces) {
+    // Check cross product x-component so +u side faces +X and -u side faces -X.
+    const a = allPlus[i0], c = allPlus[i1], d = allPlus[i2];
+    const nx = (c[1] - a[1]) * (d[2] - a[2]) - (c[2] - a[2]) * (d[1] - a[1]);
+    const [p1, p2] = nx >= 0 ? [i1, i2] : [i2, i1];
+    b.addTri(allPlus[i0], allPlus[p1], allPlus[p2], [1, 0, 0], [1, 0, 0], [1, 0, 0], uvPlus[i0], uvPlus[p1], uvPlus[p2]);
+    b.addTri(allMinus[i0], allMinus[p2], allMinus[p1], [-1, 0, 0], [-1, 0, 0], [-1, 0, 0], uvMinus[i0], uvMinus[p2], uvMinus[p1]);
+  }
+
+  const emitRibbon = (plus, minus, flip, smoothStart, smoothEnd) => {
+    const n = plus.length;
+    const quadNormal = i => {
+      const j = (i + 1) % n;
+      const a = flip ? minus[i] : plus[i];
+      const m = flip ? plus[i] : minus[i];
+      const c = flip ? minus[j] : plus[j];
+      const e1x = m[0] - a[0], e1y = m[1] - a[1], e1z = m[2] - a[2];
+      const e2x = c[0] - a[0], e2y = c[1] - a[1], e2z = c[2] - a[2];
+      const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      return [nx / l, ny / l, nz / l];
+    };
+    const avg = idx => {
+      const na = quadNormal((idx - 1 + n) % n), nb = quadNormal(idx);
+      const nx = na[0] + nb[0], ny = na[1] + nb[1], nz = na[2] + nb[2], l = Math.hypot(nx, ny, nz) || 1;
+      return [nx / l, ny / l, nz / l];
+    };
+    let arc = 0;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const len = Math.hypot(plus[j][2] - plus[i][2], (plus[j][1] + minus[j][1] - plus[i][1] - minus[i][1]) * 0.5);
+      let n0 = null, n1 = null;
+      if (i >= smoothStart && i < smoothEnd) {
+        n0 = i === smoothStart ? quadNormal(i) : avg(i);
+        n1 = j === smoothEnd ? quadNormal(i) : avg(j);
+      }
+      if (!flip) {
+        b.addQuad(plus[i], minus[i], minus[j], plus[j], n0, n1,
+          [0, arc], [s, arc], [s, arc + len], [0, arc + len]);
+      } else {
+        b.addQuad(minus[i], plus[i], plus[j], minus[j], n0, n1,
+          [0, arc], [s, arc], [s, arc + len], [0, arc + len]);
+      }
+      arc += len;
+    }
+  };
+
+  emitRibbon(out3.plus, out3.minus, false, archStart, archEnd);
+  emitRibbon(in3.plus, in3.minus, true, holeArchStart, holeArchEnd);
+  return b.build(THREE, frame);
+}
+
+function buildBrace(THREE, frame, params) {
+  if (params.style === 'arched') return buildArchedBrace(THREE, frame, params);
+  const { u, wWall, wEdge, wAt, size, slabBot, groundAtLocal } = params;
   const s = Math.max(0.14, Math.min(1.0, size)), hs = s / 2;
   const availRun = Math.max(s + 0.25, Math.min(wEdge, wAt > wWall + 0.3 ? wAt : wEdge) - wWall - 0.06);
   const run = Math.min(availRun, Math.max(s * 4.5, Math.min(availRun, Math.max(2.8, size * 9.5))));

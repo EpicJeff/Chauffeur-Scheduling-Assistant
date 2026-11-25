@@ -14,6 +14,7 @@ import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes } from './twin_roof.js';
 import { isSupported, supportPoints, supportGeometry, supportFrame, roofPoint } from './roof_supports.js';
+import { prepareUnderside, undersideGeometry } from './roof_underside.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
@@ -1639,6 +1640,25 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const section = sections[index], positions = [];
       const thickness = supported ? section.thickness_ft ?? ROOF_THICKNESS : ROOF_THICKNESS;
       const bare = supported && section.fascia === false;
+      const supRec = supported ? (b.roofs?.find(r => r.id === (section.roof || section.id)) || section) : null;
+      const supUnder = supRec?.underside ?? section.underside;
+      const supEnds = supRec?.ends ?? section.ends;
+      const flatDrop = supUnder?.kind === 'flat' && Number.isFinite(supUnder.drop_ft) ? Math.max(0, Math.min(3, supUnder.drop_ft)) : 0;
+      const coplanarFlatUnderside = supported && supUnder?.kind === 'flat' && flatDrop === 0
+        && ((section.kind || supRec?.kind) === 'flat' || !(section.pitch || 0));
+      const isFramedShedSide = (axis, sign) => {
+        if (!supported || !supEnds || (section.kind || supRec?.kind) !== 'shed') return false;
+        const sideIdx = axis === 0 ? (sign > 0 ? 1 : 3) : (sign > 0 ? 2 : 0);
+        if (supEnds[String(sideIdx)] !== 'closed') return false;
+        if (sideIdx === supRec?.host?.edge) return false;
+        const lowSide = section.low_side || supRec?.low_side;
+        return ['y0', 'x1', 'y1', 'x0'][sideIdx] !== lowSide;
+      };
+      const fullyClosedShedBox = supported && supUnder?.kind === 'flat' && (section.kind || supRec?.kind) === 'shed'
+        && !!supEnds && [0, 1, 2, 3].every(ei => {
+          const lowSide = section.low_side || supRec?.low_side;
+          return ei === supRec?.host?.edge || ['y0', 'x1', 'y1', 'x0'][ei] === lowSide || supEnds[String(ei)] === 'closed';
+        });
       use(section, 'roof', `roof:${indices[index]}`);
       const finishes = new Map(), triangleFinishes = [];
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) {
@@ -1649,7 +1669,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         finish.positions.push(...triangle); positions.push(...triangle); triangleFinishes.push(finish);
       }
       const planePart = edge => `roof-plane:${section.roof || section.id || indices[index]}:${edge}`;
-      const boxed = bare && finishes.size === 1 && positions.length === 18
+      const boxed = !coplanarFlatUnderside && bare && finishes.size === 1 && positions.length === 18
         && [0,3,6,9,12,15].every(i => {
           const r=roofBounds(section.roof_frame?{...section,roof_frame:null}:section);
           const p=section.roof_frame?roofPoint(section,positions.slice(i,i+2),true):positions.slice(i,i+2);
@@ -1713,7 +1733,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         // here would occupy the same plane (and fight for double-sided looks).
         if (!shared) band(a, c, finish.stitching);
       }
-      if (!boxed && underside.length) mesh(roofGroup, roofGeometry(underside), bare ? mat('roof', roofLevel(section), roofRef(section)) : kindMat('soffit', section), null, null, bare ? roofRef(section) : kindRef('soffit', section), bare ? planePart(finishes.values().next().value?.edge) : '');
+      if (!boxed && !coplanarFlatUnderside && !fullyClosedShedBox && underside.length) mesh(roofGroup, roofGeometry(underside), bare ? mat('roof', roofLevel(section), roofRef(section)) : kindMat('soffit', section), null, null, bare ? roofRef(section) : kindRef('soffit', section), bare ? planePart(finishes.values().next().value?.edge) : '');
       // These outward-facing shell edges are the visible covering thickness.
       for (const finish of finishes.values()) if (!boxed && finish.stitching.length)
         mesh(roofGroup, roofGeometry(finish.stitching), finish.material, null, null, finish.ref, planePart(finish.edge));
@@ -1728,6 +1748,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const edgeA = section.roof_frame ? roofPoint(section,a,true) : a,
             edgeC = section.roof_frame ? roofPoint(section,c,true) : c;
           for (let axis = 0; axis < 2; axis++) for (const sign of [-1, 1]) {
+            if (isFramedShedSide(axis, sign)) continue;
             const end = rect[axis + (sign > 0 ? 2 : 0)];
             if (Math.abs(edgeA[axis] - end) > 1e-5 || Math.abs(edgeC[axis] - end) > 1e-5) continue;
             const mid = [(edgeA[0] + edgeC[0]) / 2, (edgeA[1] + edgeC[1]) / 2];
@@ -1831,38 +1852,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       if (supported && index === sections.length - 1) {
         const record = b.roofs?.find(r => r.id === (section.roof || section.id)) || section;
-        const shape = {...record, ...section, area: record.area || section.area};
+        const shape = { ...record, ...section, area: record.area || section.area };
         const bAngle = (b.rotation || 0) * Math.PI / 180, cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
         const roofPorches = allPorches(b);
-        const slabBottomAt = (x, y) => {
+        const rawSlabBottomAt = (x, y) => {
           const z = heightAt(sections, x, y);
           return z === null ? null : z - thickness;
-        };
-        const supportGroundAt = (x, y) => {
-          const limit = slabBottomAt(x, y) ?? (section.plate - thickness);
-          let floor = -Infinity;
-          for (const po of roofPorches) {
-            if (!po.polygon || po.polygon.length < 3 || !contains(po.polygon, [x, y])) continue;
-            const pr = (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
-              && r.level === (po.level || first.id)
-              && (r.id === po.id || (r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p)))));
-            const z = (po.floor ?? 0) + (pr?.floor_offset_ft || 0);
-            if (z < limit - 0.05 && z > floor) floor = z;
-          }
-          for (const r of b.rooms || []) {
-            if (r.state === 'ghost' || !r.polygon || r.polygon.length < 3 || !contains(r.polygon, [x, y])) continue;
-            const lv = levels[r.level];
-            if (!lv) continue;
-            const z = roomFloor(lv, r);
-            if (z < limit - 0.05 && z > floor) floor = z;
-          }
-          for (const lv of ordered) {
-            if (lv.elevation < limit - 0.05 && lv.elevation > floor
-                && (outlines.get(lv.id) || []).some(poly => contains(poly, [x, y]))) floor = lv.elevation;
-          }
-          if (floor > -Infinity) return floor;
-          const wx = position[0] + x * cosB - y * sinB, wy = position[1] + x * sinB + y * cosB;
-          return groundAt(plan, wx, wy) - base;
         };
         const supportWallTopAt = (x, y, out = null) => {
           let best = -Infinity;
@@ -1900,8 +1895,69 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           }
           return best;
         };
+        const underShape = { ...shape, ends: record.ends ?? section.ends, underside: record.underside ?? section.underside };
+        const roofSidingRef = surfaceRef('siding', roofLevel(section), record.materials?.siding);
+        const roofSidingAsset = materialKitFor({ siding: roofSidingRef }).materials.siding?.asset || materialKit.materials.siding?.asset;
+        const sidingIsBatten = roofSidingAsset === 'board_and_batten';
+        const prepared = prepareUnderside(underShape, {
+          THREE, slabBottomAt: rawSlabBottomAt, wallFaceAt: supportWallFaceAt,
+          recordEdges: record.edges, sidingIsBatten,
+        });
+        const ceilingHeight = prepared?.hasFlat && Number.isFinite(prepared.ceilingZ) ? prepared.ceilingZ : null;
+        const slabBottomAt = Number.isFinite(ceilingHeight) ? () => ceilingHeight : rawSlabBottomAt;
+        const supportGroundAt = (x, y) => {
+          const limit = slabBottomAt(x, y) ?? (section.plate - thickness);
+          let floor = -Infinity;
+          for (const po of roofPorches) {
+            if (!po.polygon || po.polygon.length < 3 || !contains(po.polygon, [x, y])) continue;
+            const pr = (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
+              && r.level === (po.level || first.id)
+              && (r.id === po.id || (r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p)))));
+            const z = (po.floor ?? 0) + (pr?.floor_offset_ft || 0);
+            if (z < limit - 0.05 && z > floor) floor = z;
+          }
+          for (const r of b.rooms || []) {
+            if (r.state === 'ghost' || !r.polygon || r.polygon.length < 3 || !contains(r.polygon, [x, y])) continue;
+            const lv = levels[r.level];
+            if (!lv) continue;
+            const z = roomFloor(lv, r);
+            if (z < limit - 0.05 && z > floor) floor = z;
+          }
+          for (const lv of ordered) {
+            if (lv.elevation < limit - 0.05 && lv.elevation > floor
+                && (outlines.get(lv.id) || []).some(poly => contains(poly, [x, y]))) floor = lv.elevation;
+          }
+          if (floor > -Infinity) return floor;
+          const wx = position[0] + x * cosB - y * sinB, wy = position[1] + x * sinB + y * cosB;
+          return groundAt(plan, wx, wy) - base;
+        };
+        const underParts = prepared ? undersideGeometry(underShape, {
+          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt,
+          slabBottomAt: rawSlabBottomAt, wallFaceAt: supportWallFaceAt,
+          cuts: exclude.flat(), recordEdges: record.edges, sidingIsBatten, _prepared: prepared,
+        }) : [];
+        for (const part of underParts) {
+          let partRef, partMat;
+          if (part.slot === 'underside') {
+            const ownRef = resolveSlot('underside', { item: record, building: b, level: roofLevel(section) }) || plan.materials?.underside;
+            partRef = ownRef || kindRef('soffit', record);
+            partMat = ownRef ? mat('porch_ceiling', roofLevel(section), ownRef) : kindMat('soffit', record);
+          } else if (part.slot === 'fascia') {
+            partRef = kindRef('fascia', record);
+            partMat = kindMat('fascia', record);
+          } else if (part.slot === 'siding') {
+            partRef = roofSidingRef;
+            partMat = mat('siding', roofLevel(section), record.materials?.siding);
+          } else {
+            partRef = kindRef('trim', record);
+            partMat = kindMat('trim', record);
+          }
+          tagPart(mesh(roofGroup, part.geometry, partMat, null, null, partRef, part.part), part.part);
+        }
+        const supportSlabBottomAt = record.support?.kind === 'cable' ? rawSlabBottomAt : slabBottomAt;
         for (const part of supportGeometry(shape, supportPoints(record), {
-          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt, slabBottomAt, wallFaceAt: supportWallFaceAt,
+          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt,
+          slabBottomAt: supportSlabBottomAt, wallFaceAt: supportWallFaceAt,
         })) {
           const partSlot = part.slot || 'support';
           const partRef = partSlot === 'column'
@@ -2466,8 +2522,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     });
     for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
       for (const space of group.children) space.traverse(o => {
+        const partName = o.userData.part || '';
         if (o.userData.kind === 'roof' && supportedIds.has(o.userData.pieceId)
-            && !(o.userData.part || '').startsWith('support:')) capture(o, positions, false, space);
+            && !partName.startsWith('support:') && partName !== 'underside'
+            && partName !== 'underside:front' && !partName.startsWith('end:')) capture(o, positions, false, space);
         if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
       });
     if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,
