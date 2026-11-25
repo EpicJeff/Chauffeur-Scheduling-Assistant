@@ -108,6 +108,9 @@ export const KINDS = [
     "item": "opening"
   },
   {
+    "kind": "support", "label": "Supports", "scope": "building", "fallback": {"role": "trim"}, "item": "roof"
+  },
+  {
     "kind": "column",
     "label": "Columns",
     "scope": "building",
@@ -242,6 +245,7 @@ export const PANEL_ROLES = [
 ];
 
 export const ITEM_PARTS = {
+  "roof": ["support"],
   "opening": [
     "casing",
     "window_frame",

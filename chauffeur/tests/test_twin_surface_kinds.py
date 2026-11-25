@@ -21,7 +21,7 @@ console.log(JSON.stringify({KINDS,PANEL_ROLES,ITEM_PARTS,BUILTIN_LOOKS}));
     expected = {key: getattr(surfaces, key) for key in ('KINDS', 'PANEL_ROLES', 'ITEM_PARTS', 'BUILTIN_LOOKS')}
     assert json.loads(output) == json.loads(json.dumps(expected))
     assert [r['kind'] for r in surfaces.KINDS] == ['trim', 'fascia', 'gutter', 'casing', 'window_frame', 'pane', 'door', 'garage_door',
-        'column', 'screen', 'soffit', 'base', 'stair_tread', 'stair_rail', 'ceiling', 'roof', 'cabinet',
+        'support', 'column', 'screen', 'soffit', 'base', 'stair_tread', 'stair_rail', 'ceiling', 'roof', 'cabinet',
         'counter', 'shower_tile', 'shower_glass', 'lawn', 'water']
 
 
@@ -108,6 +108,7 @@ def test_chain_link_copy_keeps_the_generated_cutout():
 def test_load_resets_an_unknown_house_default():
     seed()
     raw = json.loads((ROOT / 'tests/fixtures/twin_poolhouse.plan.json').read_text(encoding='utf-8'))
+    raw, _ = twin_plan.normalize(raw)  # Finish legacy awning migration before injecting the corrupt slot.
     raw['buildings'][0]['materials'] = {'pane': {'id': 'nope'}, 'column': {'id': 'glass'},
                                          'custom_role': {'id': 'trim'}}
     plan, notes = twin_plan.normalize(raw)

@@ -636,6 +636,10 @@ def _surface_slots(building, notes):
     for roof in [*building.get('roofs', []), *building.get('dormers', []),
                  *building.get('roof', {}).get('sections', [])]:
         ref(roof, 'material')
+        if 'materials' in roof:
+            roof['materials'] = clean_slots(roof['materials'], None, notes, roof.get('id', 'Roof'))
+            if not roof['materials']:
+                roof.pop('materials')
         if 'plane_materials' not in roof:
             continue
         values = roof['plane_materials']

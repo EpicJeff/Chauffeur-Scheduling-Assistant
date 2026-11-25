@@ -18,6 +18,7 @@ import { stairShelf } from './stair_shelf.js';
 import { siteShapeKinds, siteShapeLabels } from '../objects.js';
 import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
+import { drawPostsAction } from './posts_action.js';
 import { drawMoveToButton } from './move_to_action.js';
 import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout, gutterLocation } from './gutter_controls.js';
 
@@ -259,6 +260,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         }catch(error){report(error);}});label.append(input);host.append(label);
       }
     }
+    drawPostsAction(host, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved: () => { layout = null; draw(); } });
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') {
       foundationShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, preview });

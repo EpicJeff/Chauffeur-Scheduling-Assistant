@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
+import { supportMaterialSurface } from './support_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
@@ -1904,11 +1905,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt, slabBottomAt, wallFaceAt: supportWallFaceAt,
         })) {
           const partSlot = part.slot || 'support';
-          const partRef = partSlot === 'column'
-            ? kindRef('column', record)
-            : resolveSlot(partSlot, {item:record, building:b, level:roofLevel(section)}) || plan.materials?.[partSlot] || surfaceRef('trim');
-          const partMat = partSlot === 'column'
-            ? kindMat('column', record)
+          const postDefault = partSlot === 'column' && !record.materials?.support;
+          const partRef = postDefault ? kindRef('column', record)
+            : resolveSurfaceMaterial(plan, supportMaterialSurface(plan, b, record, kit)).ref;
+          const partMat = postDefault ? kindMat('column', record)
             : mat('trim', roofLevel(section), partRef);
           tagPart(mesh(roofGroup, part.geometry, partMat, null, null, partRef, part.part), part.part);
         }

@@ -4,9 +4,9 @@ import math
 import re
 
 SUPPORT_KINDS = ['walls', 'bracket', 'corbel', 'brace', 'cable', 'post']
-ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia', 'gable_beam', 'roof_frame')
+ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia', 'gable_beam', 'roof_frame', 'materials')
 CHOICE_FIELDS = (*ROOF_FIELDS, 'edges')
-_SIZES = dict(bracket=.3, corbel=.5, brace=.3, cable=.08, post=.5)
+_SIZES = dict(bracket=.3, corbel=.5, brace=.45, cable=.08, post=.5)
 _EPS = 1e-8
 
 
