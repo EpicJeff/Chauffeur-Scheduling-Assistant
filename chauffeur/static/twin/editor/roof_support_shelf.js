@@ -1,5 +1,6 @@
 import { SUPPORT_KINDS, isSupported, supportPoints, roofPoint } from '../roof_supports.js';
 import { parseLength } from './selection_fields.js';
+import { SUPPORT_STYLES, normalizeRoofBox, roofEndLabels } from '../roof_box_contract.js';
 
 const sizes = { bracket: .3, corbel: .5, brace: .3, cable: .08, post: .5 };
 const precise = value => `${Number(value.toFixed(10))} ft`;
@@ -8,7 +9,7 @@ const precise = value => `${Number(value.toFixed(10))} ft`;
 export function roofHostChoices(roof, building) {
   const area = roof.area, sign = area.reduce((n, p, i) => { const q = area[(i+1)%area.length]; return n+p[0]*q[1]-p[1]*q[0]; }, 0) > 0 ? 1 : -1;
   const joints = new Map((building.joints || []).map(j => [j.id, j.at]));
-  return (building.walls || []).flatMap((wall, wi) => {
+  const candidates = (building.walls || []).flatMap((wall, wi) => {
     if (wall.level !== roof.level || wall.state === 'ghost' || wall.kind === 'separator' || wall.exterior === false) return [];
     const a = wall.from || joints.get(wall.joints?.[0]), b = wall.to || joints.get(wall.joints?.[1]);
     if (!a || !b) return [];
@@ -31,9 +32,15 @@ export function roofHostChoices(roof, building) {
     pairs.sort((a,b) => a.distance-b.distance || a.edge-b.edge);
     return pairs.length ? [{ ...pairs[0], wall: wall.id, label: wall.name || `Wall ${wi+1}` }] : [];
   }).sort((a,b) => a.distance-b.distance || a.wall.localeCompare(b.wall)).slice(0,8);
+  if (roof.host && !candidates.some(w => w.wall === roof.host.wall && w.edge === roof.host.edge)) {
+    const wall = (building.walls || []).find(w => w.id === roof.host.wall);
+    candidates.push({...roof.host, label: wall?.name || 'Current host wall'});
+  }
+  return candidates;
 }
 
 export function roofSupportShelf(host, roof, building, { canEdit, save, move, setPlate, report }) {
+  roof = normalizeRoofBox({...roof});
   const field = (text, value, change, { choices, number, check, length, validate } = {}) => {
     const label = document.createElement('label'); label.textContent = text;
     const input = document.createElement(choices ? 'select' : 'input');
@@ -69,7 +76,21 @@ export function roofSupportShelf(host, roof, building, { canEdit, save, move, se
     count.min = '0'; count.max = '40'; count.step = '1';
     for (const [key, label, fallback, lo, hi] of [['inset_ft', 'Support inset', .6, 0, 6], ['size_ft', 'Support size', sizes[s.kind], .05, 3]])
       field(label, s[key] ?? fallback, value => save({ support: { [key]: value } }), { length: true, validate: bounded(lo, hi, label) });
-    field('Support style', s.style || 'plain', style => save({ support: { style } }), { validate: s => { if (!/^[A-Za-z0-9_-]{1,64}$/.test(s)) throw new Error('Use 1 to 64 letters, numbers, hyphens or underscores.'); } });
+    const styles = SUPPORT_STYLES[s.kind] || [];
+    if (styles.length) {
+      const known = styles.some(([value]) => value === s.style);
+      const choices = s.style && !known ? [['', 'Choose a style'], ...styles] : styles;
+      field('Support style', known ? s.style : s.style ? '' : styles[0][0], style => style && save({support:{style}}), {choices});
+    }
+    const ends = roofEndLabels(roof);
+    if (ends.length) {
+      const heading=document.createElement('h4');heading.textContent='Ends';host.append(heading);
+      const values=ends.map(([i])=>roof.ends?.[i] || 'open'), uniform=values.every(v=>v===values[0])?values[0]:'';
+      field('All ends', uniform, value => value && save({ends:Object.fromEntries(ends.map(([i])=>[i,value]))}), {choices:[...(uniform?[]:[['','Mixed']]),['open','Open'],['closed','Closed']]});
+      for (const [i,label] of ends) field(label, roof.ends?.[i] || 'open', value=>save({ends:{[i]:value}}), {choices:[['open','Open'],['closed','Closed']]});
+    }
+    field('Ceiling underneath', roof.underside?.kind === 'flat' ? 'flat' : 'exposed', kind=>save({underside:{kind}}), {choices:[['exposed','None'],['flat','Flat']]});
+    if (roof.underside?.kind === 'flat') field('Drop below the roof edge (ft)', roof.underside.drop_ft, drop_ft=>save({underside:{kind:'flat',drop_ft}}), {number:true,validate:bounded(0,3,'Drop')});
     field('Thickness', roof.thickness_ft ?? .25, thickness_ft => save({ thickness_ft }), { length: true, validate: bounded(.05, 2, 'Thickness') });
     field('Fascia', roof.fascia !== false, fascia => save({ fascia }), { check: true });
     field('Host wall', roof.host ? JSON.stringify([roof.host.wall,roof.host.edge]) : '', value => {

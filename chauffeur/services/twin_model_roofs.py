@@ -61,6 +61,8 @@ def from_section(section: dict) -> dict:
             roof['edges'][-1]['gutter'] = True
         if side in section.get('downspouts', {}):
             roof['edges'][-1]['downspouts'] = deepcopy(section['downspouts'][side])
+    closed = {str(i): 'closed' for i in range(4) if section.get('ends', {}).get(str(i)) == 'closed'}
+    if closed: roof['ends'] = closed
     return roof
 
 

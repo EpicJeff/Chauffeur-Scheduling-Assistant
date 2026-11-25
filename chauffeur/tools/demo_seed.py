@@ -242,7 +242,8 @@ def synthetic_plan(gutters_on=True):
     awning_section = dict(id='demo-awning', roof='demo-awning', name='Garden awning',
                           kind='shed', low_side='y1', pitch=2, plate=8.5, overhang=.4,
                           level='L1', rect=[8, 22, 24, 27], fascia=False, thickness_ft=.3,
-                          support=dict(kind='bracket', count=3, inset_ft=.6, size_ft=.3),
+                          support=dict(kind='brace', style='arched', count=3, inset_ft=.6, size_ft=.3),
+                          ends={'1':'closed','3':'closed'}, underside=dict(kind='flat',drop_ft=.8),
                           host=dict(wall='w2', edge=0))
     awning_roof = {**awning_section, 'area': [[8,22],[24,22],[24,27],[8,27]],
                    'edges': [dict(setting=s, pitch=2) for s in ('gable','gable','sloped','gable')]}

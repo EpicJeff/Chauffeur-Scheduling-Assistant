@@ -96,7 +96,7 @@ def _normal(building, wall, walls):
 
 def _flag(building, record, notes, reason='has no supporting wall; the awning was kept'):
     name = record.get('name') or 'Awning'
-    text = f'{name} {reason}.'
+    text = f'{reason}.' if reason.startswith('This ') else f'{name} {reason}.'
     area = record['area']
     from services.twin_model_supports import frame_point
     flags = building.setdefault('flags', [])

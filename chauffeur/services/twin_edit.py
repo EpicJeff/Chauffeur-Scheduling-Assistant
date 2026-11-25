@@ -229,8 +229,9 @@ def _set(kind, piece, building, field, value, ha_catalogue=None):
     old_roof = deepcopy(piece) if kind == 'roof' and field == 'kind' else None
     piece[field] = deepcopy(value)
     if kind == 'roof':
+        closed = {k:v for k,v in piece.get('ends', {}).items() if k.isdigit()}
         if field == 'ridge' and piece.get('ends'):
-            piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items()}
+            piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items() if not end.isdigit()}
         if field == 'pitch':
             piece['pitch_source'] = 'person'
             piece.pop('pitches', None)
@@ -252,6 +253,7 @@ def _set(kind, piece, building, field, value, ha_catalogue=None):
                 if (old_roof.get('ends', {}).get(end, old_roof['kind']) in ('gable', 'clip')
                         and (value in ('shed', 'flat') or piece.get('ends', {}).get(end, value) == 'hip')):
                     raise ValueError('A window sits in that gable; move or delete it first.')
+        if closed: piece['ends'] = {**piece.get('ends', {}), **closed}
         _choose_roof(building, piece)
     if kind == 'opening':
         _opening_valid(building, piece)
@@ -939,6 +941,9 @@ def save(edit, actor_id, reason=''):
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
                       else twin_model.normalize(current, preserve_room_polygons=preserve_polygons))
         model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
+        if model == current and (edit.get('op') == 'set_roof_support' or twin_model_ops.roof_support_noop(current, edit)):
+            round_id = twin_store._state()['current']
+            return {'round': round_id, 'lighting': twin_store.round_lighting(round_id), 'summary': summary, 'model': current}
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
         # so a pass's own re-derive is never logged as the person's fix.

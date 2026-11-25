@@ -176,6 +176,8 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
     members = op.get('ops')
     if not isinstance(members, list) or not members:
         raise Refused('A batch needs a non-empty list of operations.')
+    if roof_support_noop(model, op):
+        return deepcopy(model), 'This roof already has walls.'
     apply_member = apply_member or (lambda value, member, **kwargs: apply(value, member, actor, **kwargs))
     original = (twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op))
                 if _normalized is None else _normalized)
@@ -1497,9 +1499,15 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         _rehost(building, piece, host, opening)
     elif kind == 'set_roof_support':
         roof = _find(building, 'roofs', op.get('id'))
+        if _already_walled(roof, op):
+            return 'This roof already has walls.'
         from services.twin_model_supports import validate_edit, support_points, _SIZES
         validate_edit(roof, building, op, Refused)
         previous_support = deepcopy(roof.get('support', {}))
+        was_supported = is_supported(roof)
+        if not was_supported and op.get('support', {}).get('kind') not in (None, 'walls'):
+            roof['wall_attachments'] = {str(i): {k:deepcopy(e[k]) for k in ('wall','wall_offset') if k in e}
+                                        for i,e in enumerate(roof['edges'])}
         remaining = support_points(roof) if is_supported(roof) else []
         if 'support' in op:
             if not isinstance(op['support'], dict):
@@ -1511,15 +1519,33 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
             old_kind, new_kind = previous_support.get('kind'), new.get('kind')
             if old_kind != new_kind and new_kind in _SIZES and 'size_ft' not in op['support'] and previous_support.get('size_ft') == _SIZES.get(old_kind):
                 new['size_ft'] = _SIZES[new_kind]
+            if old_kind != new_kind and 'style' not in op['support']:
+                new.pop('style', None)
             if new.get('count', 2) < previous_support.get('count', 2):
                 new['at'] = {str(i): p['at'] for i, p in enumerate(remaining[:new['count']])}
             if new_kind == 'walls':
-                for field in ('support', 'host', 'thickness_ft', 'fascia'):
+                attachments = roof.pop('wall_attachments', None)
+                for field in ('support', 'host', 'thickness_ft', 'fascia', 'ends', 'underside'):
                     roof.pop(field, None)
                 for edge in roof['edges']:
                     for key in ('wall', 'wall_offset', 'wall_along_offset'):
                         edge.pop(key, None)
-                roof.update(roofs.attach_edges(roof, building['walls'], building['joints']))
+                if attachments is None:
+                    roof.update(roofs.attach_edges(roof, building['walls'], building['joints']))
+                else:
+                    for i, edge in enumerate(roof['edges']):
+                        saved = attachments.get(str(i), {})
+                        wall = next((w for w in building['walls'] if w['id'] == saved.get('wall')), None)
+                        if wall:
+                            a, b = roofs._segments(roof['area'])[i]
+                            axis = 0 if abs(a[0]-b[0]) <= _EPS else 1
+                            joints = {j['id']:j['at'] for j in building['joints']}
+                            start = joints[wall['joints'][0]]
+                            end = joints[wall['joints'][1]]
+                            from services.twin_model_supports import wall_axis
+                            if wall_axis(start, end) != axis:
+                                continue  # An edited edge must not inherit a perpendicular wall.
+                            edge.update(wall=wall['id'],wall_offset=a[axis]-start[axis])
         if 'at' in op:
             if not isinstance(roof.get('support'), dict) or not isinstance(op['at'], dict):
                 raise Refused('Choose support points on a supported roof.')
@@ -1527,6 +1553,14 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         for field in ('thickness_ft', 'fascia'):
             if field in op:
                 roof[field] = deepcopy(op[field])
+        if 'ends' in op:
+            ends = roof.setdefault('ends', {})
+            for edge, value in op['ends'].items():
+                if value == 'open': ends.pop(edge, None)
+                else: ends[edge] = value
+            if not ends: roof.pop('ends', None)
+        if 'underside' in op:
+            roof['underside'] = deepcopy(op['underside'])
         if 'host' in op:
             indices = {h['edge'] for h in (roof.get('host'), op['host']) if isinstance(h, dict)}
             for index in indices:
@@ -1600,12 +1634,18 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         if kind == 'draw_roof':
             from services.twin_model_supports import validate_edit
             validate_edit(roof, building, op, Refused)
-            for field in ('support', 'host', 'thickness_ft', 'fascia', 'roof_frame'):
+            for field in ('support', 'host', 'thickness_ft', 'fascia', 'roof_frame', 'ends', 'underside'):
                 if field in op:
                     roof[field] = deepcopy(op[field])
             if isinstance(roof.get('support'), dict) and 'count' in roof['support']:
                 roof['support']['count'] = int(roof['support']['count'])
-        building['roofs'].append(roofs.attach_edges(roof, building['walls'], building['joints']))
+            if 'ends' in roof:
+                roof['ends'] = {edge:value for edge,value in roof['ends'].items() if value != 'open'}
+                if not roof['ends']: roof.pop('ends')
+        attached = roofs.attach_edges(roof, building['walls'], building['joints'])
+        if kind == 'draw_roof' and 'ends' in op:
+            validate_edit(attached, building, {'ends': op['ends']}, Refused)
+        building['roofs'].append(attached)
     elif kind in ('set_roof_edge', 'move_roof_edge'):
         roof = _find(building, 'roofs', op.get('roof'))
         index = _edge_index(roof, op.get('edge'))
@@ -1724,10 +1764,16 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         _material(building, op)
     elif kind in ('accept_proposal', 'dismiss_proposal'):
         _proposal(building, op)
+    if kind == 'set_roof_support':
+        parts = []
+        if any(k in op for k in ('support','at','host','thickness_ft','fascia')): parts.append('the roof supports')
+        if 'ends' in op: parts.append('the roof ends')
+        if 'underside' in op: parts.append('the ceiling underneath')
+        return 'Changed ' + ' and '.join(parts or ['the roof']) + '.'
     return {'add_opening': 'Added the opening.', 'move_hosted': 'Moved the piece.',
             'resize_opening': 'Resized the opening.', 'add_anchor': 'Added the anchor.',
             'add_item': 'Added the item.', 'draw_roof': 'Drew the roof.', 'roof_over': 'Added the roof.',
-            'set_roof_support': 'Changed the roof supports.', 'move_roof': 'Moved the roof.',
+            'move_roof': 'Moved the roof.',
             'set_roof_edge': 'Changed the roof edge.', 'move_roof_edge': 'Moved the roof edge.',
             'add_dormer': 'Added the dormer.', 'move_dormer': 'Moved the dormer.',
             'add_level': 'Added the floor.', 'move_building': 'Moved the building.',
@@ -2077,12 +2123,39 @@ def preserves_room_geometry(op):
     return material_only(op) or isinstance(op, dict) and op.get('op') == 'set' and op.get('field') == 'name'
 
 
+def _already_walled(roof, op):
+    # Walls on Walls ignores accompanying support/settings fields, for every caller.
+    return (op.get('op') == 'set_roof_support' and isinstance(op.get('support'), dict)
+            and op['support'].get('kind') == 'walls' and not is_supported(roof))
+
+
+def roof_support_noop(model, op):
+    if not isinstance(op, dict):
+        return False
+    if op.get('op') == 'batch':
+        members = op.get('ops')
+        if not isinstance(members, list) or not members:
+            return False
+        for index, member in enumerate(members):
+            if not isinstance(member, dict) or member.get('op') == 'batch':
+                return False
+            try:
+                if not roof_support_noop(model, member): return False
+            except Refused as exc:
+                raise BatchRefused(index, member, exc) from exc
+        return True
+    if op.get('op') != 'set_roof_support' or not isinstance(op.get('support'), dict) or op['support'].get('kind') != 'walls':
+        return False
+    building = _find(model, 'buildings', op.get('building'))
+    return _already_walled(_find(building, 'roofs', op.get('id')), op)
+
+
 def apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normalized=None, _batch_inplace=False) -> tuple[dict, str]:
     if isinstance(op, dict) and op.get('op') == 'batch':
         return apply_batch(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized)
     result, words = _apply(model, op, actor, ha_catalogue=ha_catalogue, _normalized=_normalized,
                            _batch_inplace=_batch_inplace)
-    if not _batch_inplace:
+    if not _batch_inplace and not roof_support_noop(model, op):
         _finish_model(_normalized[0] if _normalized is not None else model, result)
     return result, words
 
@@ -2107,6 +2180,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     """Return an edited model and plain words, leaving the input untouched."""
     if not isinstance(op, dict):
         raise Refused('Choose an operation.')
+    if roof_support_noop(model, op):
+        return (model if _batch_inplace else deepcopy(model)), 'This roof already has walls.'
     kind = op.get('op')
     from services import twin_effect_fixtures
     if kind not in MORE_OPS + twin_effect_fixtures.OPS + ('move_joint', 'move_joints', 'move_wall', 'move_room', 'add_wall',

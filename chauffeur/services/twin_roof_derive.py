@@ -371,7 +371,9 @@ def derive_roof(blocks, observations, evidence, choices):
             if 'ends' in choice:
                 section['ends'] = deepcopy(choice['ends'])
             if section['kind'] in ('shed', 'flat'):
+                closed = {k:v for k,v in section.get('ends', {}).items() if k.isdigit()}
                 section.pop('ends', None)
+                if closed: section['ends'] = closed
                 if section['kind'] == 'shed':
                     section.setdefault('low_side', 'y0' if section['ridge'] == 'x' else 'x0')
             if 'pitch' in choice:

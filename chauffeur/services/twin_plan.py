@@ -308,17 +308,20 @@ def _roof(building, notes):
         section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name, minimum_pitch)
         if 'ends' in section:
             ends = section.pop('ends')
+            closed = {k:v for k,v in ends.items() if isinstance(k, str) and k.isdigit()} if isinstance(ends, dict) and is_supported(section) else {}
             if isinstance(ends, dict) and section['kind'] in ('gable', 'hip'):
                 allowed = (f"{section['ridge']}0", f"{section['ridge']}1")
                 section['ends'] = {end: style for end, style in ends.items()
                                    if end in allowed and style in ('gable', 'hip', 'clip')}
                 for end, style in ends.items():
+                    if end in closed: continue
                     if end not in section['ends']:
                         words = {'x0': 'the left end', 'x1': 'the right end',
                                  'y0': 'the front end', 'y1': 'the back end'}.get(end, 'an unknown end')
                         notes.append(f'Roof section {name}: dropped invalid end style on {words}.')
             else:
-                notes.append(f'Roof section {name}: dropped invalid ends.')
+                if not closed: notes.append(f'Roof section {name}: dropped invalid ends.')
+            if closed: section['ends'] = {**section.get('ends', {}), **closed}
         if 'pitches' in section:
             pitches = section.pop('pitches')
             if isinstance(pitches, dict):

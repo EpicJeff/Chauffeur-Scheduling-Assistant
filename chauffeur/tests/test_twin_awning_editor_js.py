@@ -14,6 +14,9 @@ const hostRoof={area:[[0,0],[12,0],[12,4],[0,4]],level:'L1'};
 const hostBuilding={walls:Array.from({length:20},(_,i)=>({id:`w${i}`,from:[0,-i-1],to:[12,-i-1],level:'L1',exterior:true}))};
 hostBuilding.walls.push({id:'other-floor',level:'L2',from:[0,0],to:[12,0]}, {id:'separator',kind:'separator',level:'L1',from:[0,0],to:[12,0]}, {id:'angled',level:'L1',from:[0,-.1],to:[12,-.6]});
 assert.deepEqual(roofHostChoices(hostRoof,hostBuilding).map(w=>[w.wall,w.edge]),Array.from({length:8},(_,i)=>[`w${i}`,0]));
+hostRoof.host={wall:'w19',edge:0};assert.ok(roofHostChoices(hostRoof,hostBuilding).some(w=>w.wall==='w19'&&w.edge===0));
+const {normalizeRoofBox}=await import(file('static/twin/roof_box_contract.js'));
+assert.deepEqual(normalizeRoofBox({area:hostRoof.area,support:{kind:'brace'},host:{edge:0},edges:[{setting:'gable'},{setting:'gable'},{setting:'sloped',pitch:3},{setting:'gable'}],ends:{'0':'closed','1':'closed','2':'closed'},underside:{kind:'flat',drop_ft:9}}).underside,{kind:'flat',drop_ft:0});
 const cards=createCards({getPlan:()=>flat,getLabel:()=> 'roof',canEdit:()=>enabled,edit:()=>{},op:commit,select(){},ask(){}});
 const card=nodes.get('piece-card'), controls=()=>descendants(card);
 const scroll=new Element();scroll.style.overflowY='auto';scroll.scrollTop=240;scroll.scrollHeight=2000;scroll.clientHeight=600;scroll.append(card);
@@ -33,6 +36,17 @@ const section=b.roof.sections.find(s=>s.id===roof.id);section.support=roof.suppo
 cards.draw({pieceId:roof.id,buildingId:B});
 for(const label of ['Support count','Support inset','Support size','Support style','Thickness','Fascia','Host wall','Move along building X (ft)','Move along building Y (ft)'])assert.ok(controls().find(n=>n['aria-label']===label),label);
 const flush=()=>new Promise(r=>setTimeout(r,0));
+roof.edges=[{setting:'gable',pitch:3},{setting:'gable',pitch:3},{setting:'sloped',pitch:3},{setting:'gable',pitch:3}];roof.host={wall:'current-host',edge:0};roof.ends={'1':'closed'};roof.underside={kind:'flat',drop_ft:1};
+cards.draw({pieceId:roof.id,buildingId:B});
+assert.ok(controls().find(n=>n['aria-label']==='Left end'));assert.ok(controls().find(n=>n['aria-label']==='Right end'));
+assert.ok(!controls().find(n=>n['aria-label']==='Front end'));assert.ok(!controls().find(n=>n['aria-label']==='Back end'));
+let allEnds=controls().find(n=>n['aria-label']==='All ends');allEnds.focus();scroll.scrollTop=240;allEnds.value='closed';allEnds.dispatchEvent(new Event('change'));await flush();assert.deepEqual(ops.at(-1).ends,{'1':'closed','3':'closed'});assert.equal(scroll.scrollTop,240);assert.equal(document.activeElement?.['aria-label'],'All ends');
+const ceiling=controls().find(n=>n['aria-label']==='Ceiling underneath');assert.equal(ceiling.value,'flat');
+const drop=controls().find(n=>n['aria-label']==='Drop below the roof edge (ft)');drop.value='2';drop.dispatchEvent(new Event('change'));await flush();assert.deepEqual(ops.at(-1).underside,{kind:'flat',drop_ft:2});
+let style=controls().find(n=>n['aria-label']==='Support style');assert.equal(style.tag,'select');assert.deepEqual(style.children.map(n=>n.textContent),['Straight']);
+roof.support.kind='corbel';roof.support.style='custom-stored';cards.draw({pieceId:roof.id,buildingId:B});style=controls().find(n=>n['aria-label']==='Support style');assert.deepEqual(style.children.map(n=>n.textContent),['Choose a style','Scroll','Stepped']);assert.equal(roof.support.style,'custom-stored');
+roof.support.kind='cable';cards.draw({pieceId:roof.id,buildingId:B});assert.ok(!controls().find(n=>n['aria-label']==='Support style'));
+roof.support.kind='bracket';delete roof.support.style;delete roof.ends;delete roof.underside;delete roof.host;cards.draw({pieceId:roof.id,buildingId:B});
 for (const text of ['', '41', '2.5', '2']) {
  const n=ops.length, input=controls().find(n=>n['aria-label']==='Support count');
  input.value=text;input.dispatchEvent(new Event('change'));await flush();assert.equal(ops.length,n);

@@ -4,10 +4,60 @@ import math
 import re
 
 SUPPORT_KINDS = ['walls', 'bracket', 'corbel', 'brace', 'cable', 'post']
-ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia', 'gable_beam', 'roof_frame')
+ROOF_FIELDS = ('support', 'host', 'thickness_ft', 'fascia', 'gable_beam', 'roof_frame', 'ends', 'underside', 'wall_attachments')
 CHOICE_FIELDS = (*ROOF_FIELDS, 'edges')
 _SIZES = dict(bracket=.3, corbel=.5, brace=.3, cable=.08, post=.5)
 _EPS = 1e-8
+SUPPORT_STYLES = {'bracket': ('plain',), 'corbel': ('scroll', 'plain'), 'brace': ('plain', 'arched'), 'cable': (), 'post': ()}
+
+
+def allowed_end_indices(roof):
+    edges = roof.get('edges')
+    ends = roof.get('ends') if isinstance(roof.get('ends'), dict) else {}
+    host = roof.get('host') if isinstance(roof.get('host'), dict) else {}
+    if not isinstance(edges, list):
+        # Flat sections may omit their redundant edge list.
+        kind = roof.get('kind')
+        sides = ('y0', 'x1', 'y1', 'x0')
+        edges = [dict(setting=('sloped' if kind == 'flat' or kind == 'shed' and side == roof.get('low_side')
+                    or kind in ('gable', 'hip') and side[0] != roof.get('ridge') else
+                    ends.get(side, 'gable')), pitch=roof.get('pitch', 0)) for side in sides]
+    # Decision: a flat awning allows closed ends on every non-host edge.
+    return {str(i) for i, e in enumerate(edges) if isinstance(e, dict) and i != host.get('edge')
+            and (e.get('setting') in ('gable', 'clip') or e.get('pitch', roof.get('pitch', 0)) == 0)}
+
+
+def normalize_box(roof, notes):
+    legacy = {k:v for k,v in roof.get('ends', {}).items() if k in ('x0','x1','y0','y1')} if isinstance(roof.get('ends'), dict) and 'rect' in roof else {}
+    if not is_supported(roof):
+        roof.pop('underside', None)
+        if legacy: roof['ends'] = legacy
+        else: roof.pop('ends', None)
+        roof.pop('wall_attachments', None)
+        return
+    if 'ends' in roof:
+        ends = roof['ends']; allowed = allowed_end_indices(roof)
+        clean = {k:v for k,v in ends.items() if k in allowed and v == 'closed'} if isinstance(ends, dict) else {}
+        if not isinstance(ends, dict) or any(k not in legacy and k not in clean for k in ends): _note(roof, notes)
+        if clean or legacy: roof['ends'] = {**legacy, **clean}
+        else: roof.pop('ends', None)
+    if 'wall_attachments' in roof:
+        saved = roof['wall_attachments']
+        if not isinstance(saved, dict):
+            roof.pop('wall_attachments'); _note(roof, notes)
+        else:
+            roof['wall_attachments'] = {str(i): {k:v for k,v in saved.get(str(i), {}).items()
+                if k == 'wall' and isinstance(v, str) or k == 'wall_offset' and _number(v)}
+                if isinstance(saved.get(str(i)), dict) else {} for i in range(len(roof.get('edges') or area_of(roof)))}
+    if 'underside' in roof:
+        value = roof['underside']
+        if isinstance(value, dict) and value.get('kind') == 'flat':
+            drop = value.get('drop_ft', 0)
+            if not _number(drop, 0, 3): drop = 0; _note(roof, notes)
+            roof['underside'] = dict(kind='flat', drop_ft=drop)
+        else:
+            roof.pop('underside', None)
+            if not isinstance(value, dict) or value.get('kind') != 'exposed': _note(roof, notes)
 
 
 def is_supported(roof):
@@ -82,6 +132,22 @@ def validate_edit(roof, building, edit, refused):
             raise refused(f'Choose {key.replace("_ft", "").replace("_", " ")} from {lo} to {hi} ft.')
     if 'style' in support and (not isinstance(support['style'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', support['style'])):
         raise refused('Use a support style of 1 to 64 letters, numbers, hyphens or underscores.')
+    if 'style' in support and support['style'] not in SUPPORT_STYLES.get(kind, ()):
+        raise refused('Choose a built-in style for this support kind.')
+    if any(k in edit for k in ('ends', 'underside')) and kind == 'walls':
+        raise refused('Choose supports before adding ends or a ceiling underneath.')
+    if 'ends' in edit:
+        probe = {**roof, **{k:edit[k] for k in ('host',) if isinstance(edit.get(k), dict)}}
+        if edit.get('host', 1) is None: probe.pop('host', None)
+        allowed = allowed_end_indices(probe)
+        if not isinstance(edit['ends'], dict) or any(k not in allowed or v not in ('open','closed') for k,v in edit['ends'].items()):
+            raise refused('Choose Open or Closed on an end edge, away from the host wall and sloped eaves.')
+    if 'underside' in edit:
+        value = edit['underside']
+        if (not isinstance(value, dict) or value.get('kind') not in ('flat','exposed')
+                or any(k not in ('kind','drop_ft') for k in value)
+                or 'drop_ft' in value and (value['kind'] != 'flat' or not _number(value['drop_ft'], 0, 3))):
+            raise refused('Choose None or Flat underneath, with a drop from 0 to 3 ft.')
     if 'thickness_ft' in edit and not _number(edit['thickness_ft'], .05, 2):
         raise refused('Choose thickness from 0.05 to 2 ft.')
     if 'fascia' in edit and type(edit['fascia']) is not bool:
@@ -179,6 +245,7 @@ def normalize_support(roof, notes):
             uniform = roof.get('overhang', 1)
             edge['overhang_ft'] = uniform if _number(uniform, 0, 6) else 1
             _note(roof, notes)
+    normalize_box(roof, notes)
     return roof
 
 
@@ -295,6 +362,8 @@ def edge_pairs(source, target):
 def carry_fields(source, target, *, overwrite=False):
     """Keep person-set record fields across a geometry replacement."""
     for key in ROOF_FIELDS:
+        if key in ('ends', 'wall_attachments'):
+            continue
         if key in source and (overwrite or key not in target):
             target[key] = deepcopy(source[key])
             if key == 'host' and isinstance(target[key], dict):
@@ -312,6 +381,19 @@ def carry_fields(source, target, *, overwrite=False):
         old, new = source['edges'][source_index], target['edges'][target_index]
         if 'overhang_ft' in old and (overwrite or 'overhang_ft' not in new):
             new['overhang_ft'] = deepcopy(old['overhang_ft'])
+    if 'ends' in source and (overwrite or not any(str(k).isdigit() for k in target.get('ends', {}))):
+        # Closed ends belong to a whole edge: a split/deleted edge loses its own entry.
+        old_segments = list(zip(area_of(source), area_of(source)[1:]+area_of(source)[:1]))
+        new_segments = list(zip(area_of(target), area_of(target)[1:]+area_of(target)[:1]))
+        clean = {k:v for k,v in target.get('ends', {}).items() if not str(k).isdigit()}
+        for ti, si in edge_pairs(source, target):
+            if str(si) in source['ends'] and (len(old_segments) == len(new_segments) or set(map(tuple,old_segments[si])) == set(map(tuple,new_segments[ti]))):
+                clean[str(ti)] = source['ends'][str(si)]
+        if clean: target['ends'] = clean
+        else: target.pop('ends', None)
+    if 'wall_attachments' in source and (overwrite or 'wall_attachments' not in target):
+        target['wall_attachments'] = {str(ti):deepcopy(source['wall_attachments'].get(str(si), {}))
+                                      for ti,si in edge_pairs(source, target)}
     return target
 
 
