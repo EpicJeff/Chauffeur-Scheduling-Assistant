@@ -2,6 +2,8 @@
 // with strict no-op guards and a member-only onChange/subscribe payload.
 // Room-focus navigation lives in createRoomSelection (kept compatible with callers
 // passing `{ view, getModel }` to createSelection).
+import { porchPosts, postRef } from '../porch_posts.js';
+
 function refKey(ref) {
   if (!ref) return null;
   const pieceId = ref.pieceId ?? ref.id ?? null;
@@ -21,6 +23,7 @@ function normalizeRef(ref) {
   if (ref.slots !== undefined) out.slots = Array.isArray(ref.slots) ? [...new Set(ref.slots)] : ref.slots;
   if (ref.entity_id !== undefined) out.entity_id = ref.entity_id;
   if (ref.poolId !== undefined) out.poolId = ref.poolId;
+  if (ref.porchId !== undefined || ref.parentPieceId !== undefined) out.porchId = ref.porchId ?? ref.parentPieceId;
   return out;
 }
 
@@ -174,11 +177,12 @@ function toViewPick(ref) {
   };
   if (ref.entity_id !== undefined) out.entity_id = ref.entity_id;
   if (ref.poolId !== undefined) out.poolId = ref.poolId;
+  if (ref.porchId !== undefined || ref.parentPieceId !== undefined) out.porchId = ref.porchId ?? ref.parentPieceId;
   return out;
 }
 
 // Room-focus and hover controller for the 3D view.
-export function createRoomSelection({ view, getModel, onChange, onSync, getMembers } = {}) {
+export function createRoomSelection({ view, getModel, getPlan, onChange, onSync, getMembers } = {}) {
   let selected = null, room = null, hovered = null, ghosted = 0;
   let walls = [], allowed = [];
 
@@ -187,8 +191,9 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     id: pick.id ?? pick.pieceId ?? null,
     building: pick.building ?? pick.buildingId ?? null,
     level: pick.level ?? null,
+    ...(pick.porchId !== undefined || pick.parentPieceId !== undefined ? { porchId: pick.porchId ?? pick.parentPieceId } : {}),
   };
-  const building = id => getModel?.()?.buildings?.find(b => b.id === id);
+  const building = id => getModel?.()?.buildings?.find(b => b.id === id) || getPlan?.()?.buildings?.find(b => b.id === id);
 
   function roomContext(pick) {
     const b = building(pick.building), r = b?.rooms?.find(r => r.id === pick.id);
@@ -200,6 +205,13 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     const belongs = host => host && (ids.has(host.wall) || host.floor === r.id || host.ceiling === r.id);
     for (const collection of ['openings', 'anchors', 'items']) for (const piece of b[collection] || []) {
       if (ids.has(piece.wall) || belongs(piece.host)) ids.add(piece.id);
+    }
+    const sources = [getModel?.()?.buildings?.find(x => x.id === pick.building), getPlan?.()?.buildings?.find(x => x.id === pick.building)].filter(Boolean);
+    for (const src of sources) {
+      for (const post of porchPosts(src)) if (post.porchId === r.id) ids.add(post.id);
+      for (const detail of src.porches_detail || []) {
+        if (detail?.id === r.id) for (let i = 0; i < (detail.columns || []).length; i++) ids.add(postRef(detail, i));
+      }
     }
     return {
       kind: 'room', id: r.id, building: b.id, level: r.level,
@@ -267,6 +279,10 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
 
   function select(value) {
     const pick = normalize(value);
+    if (pick && room && pick.kind !== 'proposal' && !inside(pick) && pick.building === room.building) {
+      const context = roomContext(room);
+      if (context) { walls = context.walls; allowed = context.allowed; }
+    }
     if (!pick || pick.kind !== 'proposal' && !inside(pick)) { back(); return; }
     if (pick.kind === 'room') { focusRoom(pick); return; }
     if (['building', 'level', 'proposal'].includes(pick.kind)) clearRoom();
@@ -291,14 +307,14 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     return current();
   }
 
-  function refresh() {
+  function refresh(silent = false) {
     if (room) {
       const context = roomContext(room);
       if (!context) { clear(); return; }
       walls = context.walls; allowed = context.allowed;
       if (selected && !inside(selected)) selected = { ...room };
     }
-    changed(false);
+    if (!silent) changed(false);
   }
 
   return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, back, refresh };

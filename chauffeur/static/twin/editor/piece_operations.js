@@ -1,5 +1,6 @@
 import { allPorches } from '../twin_generator.js';
 import { siteRecord, siteRecords } from '../objects.js';
+import { findPost } from '../porch_posts.js';
 
 // A set resolves many owners against one immutable plan. Build the yard index
 // once; retain findPiece's precedence and fallback for all building records.
@@ -30,6 +31,8 @@ export function findPiece(plan, pieceId, buildingId) {
   }
   const porch = allPorches(building).find(p => p.id === pieceId);
   if (porch) return { piece: porch, building, kind: 'porch' };
+  const post = findPost(building, pieceId);
+  if (post) return { piece: { ...post.piece, id: post.id }, column: post.piece, building, kind: 'porch_post', porch: post.porch, porchId: post.porchId, index: post.index };
   const section = building.roof?.sections?.find(p => p.id === pieceId);
   const dormer = building.dormers?.find(p => p.id === pieceId);
   if (dormer) return { piece: section || dormer, building, kind: 'dormer' };
@@ -58,6 +61,7 @@ export function deleteOperation(plan, ref, model = null) {
   if (!record && !bid) return { op: 'delete_site_item', list: ref.kind, id };
   if (!record) throw new Error(`Missing ${ref.kind}: ${id}`);
   const { kind, piece, building } = record;
+  if (kind === 'porch_post') return { op: 'delete_porch_post', building: building.id, porch: record.porchId, post: piece.id };
   if (record.poolId) return { op: 'delete_pool_feature', id };
   if (!building) return { op: 'delete_site_item', list: kind, id, index: record.index };
   const owner = model?.buildings?.find(b => b.id === building.id);

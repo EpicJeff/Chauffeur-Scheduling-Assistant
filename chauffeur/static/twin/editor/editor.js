@@ -28,7 +28,7 @@ import { createDock } from './dock.js';
 import { mountDialogs } from './dialog.js';
 import { createContextMenu } from './context_menu.js';
 import { houseMaterialsShelf } from './house_materials.js';
-import { createVisibility } from './visibility.js';
+import { createVisibility, existingPostIds, postParentId } from './visibility.js';
 
 const el = id => document.getElementById(id);
 const notSaved = label => `${label} ${label === 'The selected pieces' ? 'were' : 'was'} not saved`;
@@ -57,7 +57,9 @@ export async function boot() {
       if (typeof value.id === 'string') ids.push(value.id);
       for (const child of Object.values(value)) if (typeof child === 'object') visit(child);
     }
-    visit(plan); return ids;
+    visit(plan);
+    ids.push(...existingPostIds(plan));
+    return ids;
   };
   function loadVisibility(houseId, plan) {
     visibilityHouse = houseId || 'current'; visibilityLoaded = true;
@@ -69,8 +71,10 @@ export async function boot() {
     const building = candidate?.building ?? candidate?.buildingId;
     const owner = shownPlan()?.buildings?.find(b => b.id === building);
     const piece = [...(owner?.anchors || []), ...(owner?.items || []), ...(shownPlan()?.site?.furniture || []), ...(shownPlan()?.site?.planting || [])].find(p => p.id === id);
-    return visibility.isPickable(piece?.device ? { ...candidate, visibilityKind: 'device' }
-      : piece?.object_kind === 'lamp' ? { ...candidate, visibilityKind: 'fixture' } : candidate);
+    const postParent = candidate?.kind === 'porch_post' && !candidate.parentPieceId && !candidate.porchId ? postParentId(owner, id) : null;
+    const enriched = postParent ? { ...candidate, parentPieceId: postParent } : candidate;
+    return visibility.isPickable(piece?.device ? { ...enriched, visibilityKind: 'device' }
+      : piece?.object_kind === 'lamp' ? { ...enriched, visibilityKind: 'fixture' } : enriched);
   };
   const unsubscribeVisibility = visibility.subscribe(({ hidden, hiddenKinds }) => {
     view?.setHiddenPieces?.(hidden, hiddenKinds);

@@ -20,6 +20,7 @@ const noun = {
   roof_plane: ['roof slope', 'roof slopes'], solar_zone: ['solar zone', 'solar zones'],
   hardscape: ['path', 'paths'], fire_pit: ['fire pit', 'fire pits'], level: ['floor', 'floors'],
   ledge: ['pool ledge', 'pool ledges'], spa: ['spa', 'spas'], device: ['device', 'devices'],
+  porch_post: ['post', 'posts'],
 };
 const kinds = refs => [...new Set(refs.map(ref => ref.kind || 'piece'))].sort().join('|');
 export const selectionSubject = refs => refs.length === 1 ? JSON.stringify([refs[0].buildingId, refs[0].pieceId]) : kinds(refs);

@@ -161,7 +161,10 @@ export function materialLines(record, plan, kit) {
   if (['item', 'fixture'].includes(kind) && piece.rect) return (['counter', 'vanity'].includes(piece.kind) ? ['cabinet', 'counter']
     : piece.kind === 'shower' ? ['shower_tile', 'shower_glass'] : []).filter(part => ITEM_PARTS.fixture.includes(part)).map(part => itemLine(part, piece, 'item'));
   const porch = kind === 'room' && piece.kind === 'porch'
-    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece : kind === 'porch' ? piece : null;
+    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece
+    : kind === 'porch' ? piece
+      : kind === 'porch_post' ? record.porch || [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === record.porchId) || null : null;
+  if (kind === 'porch_post') return porch ? [itemLine('column', porch, 'porch')] : [];
   const porchLines = porch ? ITEM_PARTS.porch.filter(part => part !== 'screen' || porch.screened).map(part => itemLine(part, porch, 'porch')) : [];
   if (kind === 'porch') return porchLines;
   if (kind === 'wall') return ['left', 'right'].map(side => {
@@ -451,6 +454,12 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const pool = getPlan().site?.pool;
       const piece = kind === 'pool' ? pool : pool?.features?.find(f => f.kind === 'spa' && f.id === id);
       return piece && { kind, piece, role: 'water', target: { [kind]: piece.id, part: 'water' }, label: `${piece.name || (kind === 'spa' ? 'Spa' : 'Pool')} water` };
+    }
+    if (kind === 'porch_post') {
+      const porch = [...allPorches(building || {}), ...(building?.porches_detail || [])].find(p => p.id === (picked.parentPieceId || picked.porchId));
+      if (porch) return { building, kind: 'porch', piece: porch, role: 'column', target: { porch: porch.id, part: 'column' },
+        level: porch.level, point: picked.point && local(building, new THREE.Vector3(...picked.point)).toArray(),
+        label: `${porch.name || 'porch'} column` };
     }
     const targetKind = kind === 'fixture' ? 'item' : kind;
     if (picked.part && ITEM_PARTS[targetKind === 'item' ? 'fixture' : targetKind]?.includes(picked.part)) {

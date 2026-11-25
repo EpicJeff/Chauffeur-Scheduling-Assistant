@@ -133,6 +133,11 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-downspout-row[data-downspout-last] { border-bottom: 1px solid var(--editor-line); padding-bottom: 8px; margin-bottom: 8px; }
 .editor-downspout-row > label { margin-top: 0; }
 .editor-downspout-note { color: var(--editor-muted); font-size: 11px; margin: 0 0 6px; }
+#piece-card label small:empty { display: none; }
+#piece-card label small { flex: 0 0 100%; color: var(--editor-muted); font-size: 11px; }
+[data-porch-posts] { border-top: 1px solid var(--editor-line); padding-top: 8px; margin-top: 8px; }
+[data-porch-posts] h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+[data-porch-posts] > button { width: 100%; margin-top: 8px; }
 /* Tool checkboxes use the card's shared labelled row, at button height. */
 .editor-actions > label.editor-material-line { justify-content: flex-start; gap: 6px; margin: 0; min-height: 44px; }
 .editor-actions > label.editor-material-line input[type="checkbox"] { width: auto; min-height: 0; margin: 0; padding: 0; }
@@ -177,6 +182,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 .editor-handles { pointer-events: none; }
 .editor-handle { position: fixed; z-index: 3; width: 10px; height: 10px; transform: translate(-50%, -50%); border: 1px solid var(--editor-accent); border-radius: 50%; background: var(--editor-panel); backdrop-filter: blur(16px); }
 .editor-handle-joint { background: var(--editor-accent); }
+.editor-handle-porch_post { width: 14px; height: 14px; border-width: 2px; background: var(--editor-accent); }
 .editor-dimensions button { position: fixed; z-index: 3; pointer-events: auto; transform: translate(-50%, -50%); background: var(--editor-panel); backdrop-filter: blur(16px); color: var(--editor-accent); border: 1px solid var(--editor-accent); border-radius: 12px; padding: 6px 8px; font-size: 12px; white-space: nowrap; }
 #editor-drag-layer { position: fixed; inset: 0; width: 100vw; height: 100dvh; pointer-events: none; z-index: 3; }
 #editor-drag-outline { fill: color-mix(in srgb, var(--twinCyan) 13.33%, transparent); stroke: var(--twinCyan); stroke-width: 3; stroke-dasharray: 8 4; }
