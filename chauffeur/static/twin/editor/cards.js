@@ -151,10 +151,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const flags = roofFlags(record);
     const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
     const isPorch = record?.kind === 'porch' || record?.kind === 'room' && record.piece.kind === 'porch';
-    const porchDetail = isPorch ? (record.kind === 'porch' ? record.piece : record.building.porches?.find(p => p.id === record.piece.id)) : null;
     const porchLayout = isPorch
-      ? JSON.stringify([record.piece.foundation, record.kind === 'room' ? porchShelfOnGrade(getPlan(), record.building, record.piece) : null,
-        porchDetail?.columns, record.building.roofs?.map(r => [r.id, r.support, r.state, r.area]), canEdit()])
+      ? JSON.stringify([record.piece.foundation, record.kind === 'room' ? porchShelfOnGrade(getPlan(), record.building, record.piece) : null, canEdit()])
       : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
@@ -281,7 +279,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         }catch(error){report(error);}});label.append(input);host.append(label);
       }
     }
-    drawPorchPostsSection(host, record, { getPlan, canEdit, queue, op, applyBatch, report, ownSlot, select, onSaved: () => { layout = null; draw(); } });
+    drawPorchPostsSection(host, record, { getPlan, canEdit, queue, op, applyBatch, report, ownSlot, select, visibility, onSaved: () => draw() });
     if (kindIsEquipment(record)) equipmentShelf.draw(host, record);
     if (kind === 'building') {
       foundationShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, preview });

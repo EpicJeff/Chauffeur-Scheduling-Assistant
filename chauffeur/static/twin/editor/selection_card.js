@@ -215,9 +215,14 @@ export function drawSelectionCard(host, options) {
         if (!canEdit()) return;
         const current = sharedMaterialRows(getPlan(), owners, getKit()).find(row => row.key === shared.key)?.matches.map(match => match.slot);
         if (!current?.length) throw new Error('These pieces no longer share this slot.');
+        const seenOps = new Set();
         const ops = current.flatMap(member => {
           const next = change(member);
-          return JSON.stringify(member.ref || null) === JSON.stringify(next || null) ? [] : [member.operation(next)];
+          if (JSON.stringify(member.ref || null) === JSON.stringify(next || null)) return [];
+          const op = member.operation(next), opKey = JSON.stringify(op);
+          if (seenOps.has(opKey)) return [];
+          seenOps.add(opKey);
+          return [op];
         });
         if (ops.length) await applyBatch(ops); onSaved();
       });

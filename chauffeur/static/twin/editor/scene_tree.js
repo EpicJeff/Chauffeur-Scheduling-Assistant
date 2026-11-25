@@ -118,7 +118,10 @@ export function createSceneTree({ host, getPlan, getSelection, selection = null,
   const locked = r => {
     if (r.kind === 'group') return rows.some(c => c.parent === r) && rows.filter(c => c.parent === r).every(c => visibility?.isLocked(c.id, c.visibilityKind || c.kind));
     if (visibility?.isLocked(r.id, r.visibilityKind || r.kind)) return true;
-    for (let p = r.parent; p; p = p.parent) if ((['building', 'level', 'group'].includes(p.kind) || r.kind === 'porch_post' && p.id === r.porchId) && visibility?.isLocked(p.id, p.visibilityKind || p.kind)) return true;
+    for (let p = r.parent; p; p = p.parent) {
+      if (['building', 'level', 'group'].includes(p.kind) && visibility?.isLocked(p.id)) return true;
+      if (r.kind === 'porch_post' && p.id === r.porchId && visibility?.isLocked(p.id, p.visibilityKind || p.kind)) return true;
+    }
     return false;
   };
   const rowToRef = r => {
