@@ -8,6 +8,8 @@ import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT, allPorches, PICK_LAYER } from '../twin_generator.js';
 import { findPiece } from './piece_operations.js';
 import { ITEM_PARTS, kindRow } from '../surface_kinds.js';
+import { supportMaterialSurface } from '../support_material.js';
+import { isSupported } from '../roof_supports.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
@@ -91,7 +93,8 @@ export function contextSurfaceForHit(plan, hit) {
     if (building?.dormers?.some(p => p.id === id)) { kind = 'dormer'; slot = 'roof'; }
     else {
       const section = building?.roof?.sections?.find(p => p.id === id) || piece;
-      if (section.rect && localPoint) {
+      if (slot.startsWith('support:')) slot = 'support';
+      else if (section.rect && localPoint) {
         const [x, y] = localPoint;
         const plane = planes(section).reduce((best, candidate) => !best
           || candidate[0] * x + candidate[1] * y + candidate[2] < best[0] * x + best[1] * y + best[2] ? candidate : best, null);
@@ -191,7 +194,12 @@ export function materialLines(record, plan, kit) {
     // Concave roofs may have multiple authored edges on the same side.
     const counts = new Map(); for (const row of planeRows) counts.set(row.label, (counts.get(row.label) || 0) + 1);
     for (const row of planeRows) if (counts.get(row.label) > 1) row.label += ` ${row.target.plane + 1}`;
-    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows];
+    const support = isSupported(roof) ? (() => {
+      const target = {roof:id,part:'support'}, description = supportMaterialSurface(plan, building, roof, kit);
+      return [line('Supports', 'support', roof.materials?.support, target, null,
+        {target, label:'supports'}, {role:description.role, level:description.level, fallback:description.fallback})];
+    })() : [];
+    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows, ...support];
   }
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];

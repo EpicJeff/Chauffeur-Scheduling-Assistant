@@ -53,7 +53,7 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
     ['Trim', ['trim', 'fascia', 'gutter']],
     ['Openings', ['casing', 'window_frame', 'pane', 'door', 'garage_door']],
     ['Porch and stairs', ['column', 'screen', 'stair_tread', 'stair_rail']],
-    ['Roof and ceilings', ['soffit', 'ceiling', 'roof']],
+    ['Roof and ceilings', ['soffit', 'ceiling', 'roof', 'support']],
     ['Fixtures', ['cabinet', 'counter', 'shower_tile', 'shower_glass']],
     ['Yard', ['lawn', 'water', ...YARD_ROLES.map(row => row.kind)]],
   ];

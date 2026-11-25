@@ -23,10 +23,10 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor', 'twin-awning-box-editor')
+SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts')
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
-SURFACE_LABELS = dict(zip(SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters', 'awning editor', 'awning ends and ceiling')))
+SURFACE_LABELS = dict(zip(SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters', 'awning editor', 'awning ends and ceiling', 'patio posts')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -58,10 +58,12 @@ SURFACE_STATE = r"""({shot, final = false}) => {
     ready = path.endsWith('/house/twin') && twin;
     if (shot === 'twin-gutters' && final) ready = ready && !!window.__demoGutterFrame?.spout;
   }
-  if (shot === 'twin-editor' || shot === 'twin-awning-editor' || shot === 'twin-awning-box-editor') {
+  if (shot === 'twin-editor' || shot === 'twin-awning-editor' || shot === 'twin-awning-box-editor' || shot === 'twin-posts') {
     ready = path.endsWith('/house/editor') && twin && window.__editor?.ready === true;
     if (final) ready = ready && seen('#piece-card')
-      && window.__editor.selected()?.pieceId === (shot.startsWith('twin-awning-') ? 'demo-awning' : 'r1');
+      && window.__editor.selected()?.pieceId === (shot.startsWith('twin-awning-') ? 'demo-awning' : shot === 'twin-posts' ? 'front-porch' : 'r1');
+    if (shot === 'twin-posts' && final) ready = ready && [...document.querySelectorAll('#piece-card button')]
+      .some(button => visible(button) && button.textContent === 'Move posts to the roof');
   }
   return {blocked, ready: !!ready};
 }"""
@@ -455,32 +457,25 @@ def _capture_pages(served, data, token, out, shots):
                     _assert_surface(desktop, 'twin-gutters')
                     desktop.evaluate(GUTTER_OUTLET_CAMERA, True)
                 save(desktop, 'twin-gutters', True)
-        if set(shots) & {'twin-editor', 'twin-awning-editor', 'twin-awning-box-editor'}:
+        for shot in [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts') if name in shots]:
             # The panel shell latches its flags in session storage. Keep the
             # editor's adult session separate while reusing the same browser.
             browser = desktop.context.browser
-            desktop.close()
             with browser.new_context(viewport=dict(width=1600, height=900),
                     device_scale_factor=1, reduced_motion='reduce', timezone_id=DEMO_TIMEZONE,
                     service_workers='block') as editor_context:
                 editor = editor_context.new_page()
                 prepare(editor)
-                with _shot_stage('twin-editor', 'editor'):
+                with _shot_stage(shot, 'editor'):
                     H.open_editor(editor, served, timeout=READY_TIMEOUT)
-                    _wait_surface(editor, 'twin-editor')
+                    _wait_surface(editor, shot)
                     editor.evaluate('(iso) => window.__twin.setClock(iso)', now.replace(hour=12, tzinfo=timezone.utc).isoformat())
-                    editor.evaluate("() => window.__editor.clickPiece('r1', 'synth-house')")
+                    editor.evaluate("id => window.__editor.clickPiece(id, 'synth-house')", 'demo-awning' if shot.startswith('twin-awning-') else 'front-porch' if shot == 'twin-posts' else 'r1')
                     editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
-                if 'twin-editor' in shots:
-                    save(editor, 'twin-editor', True)
-                if 'twin-awning-editor' in shots:
-                    editor.evaluate("() => window.__editor.clickPiece('demo-awning', 'synth-house')")
-                    editor.wait_for_selector('[aria-label="Support kind"]', state='visible', timeout=READY_TIMEOUT)
-                    save(editor, 'twin-awning-editor', True)
-                if 'twin-awning-box-editor' in shots:
-                    editor.evaluate("() => window.__editor.clickPiece('demo-awning', 'synth-house')")
-                    editor.wait_for_selector('[aria-label="Ceiling underneath"]', state='visible', timeout=READY_TIMEOUT)
-                    save(editor, 'twin-awning-box-editor', True)
+                if shot.startswith('twin-awning-'):
+                    label = 'Support kind' if shot == 'twin-awning-editor' else 'Ceiling underneath'
+                    editor.wait_for_selector(f'[aria-label="{label}"]', state='visible', timeout=READY_TIMEOUT)
+                save(editor, shot, True)
 
 
 def _worker(out, shots):

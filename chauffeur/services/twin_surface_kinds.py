@@ -9,6 +9,7 @@ KINDS = [
     {'kind': 'pane', 'label': 'Panes', 'scope': 'building', 'fallback': {'builtin': 'glass'}, 'item': 'opening'},
     {'kind': 'door', 'label': 'Doors', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
     {'kind': 'garage_door', 'label': 'Garage door', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
+    {'kind': 'support', 'label': 'Supports', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'roof'},
     {'kind': 'column', 'label': 'Columns', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'porch'},
     {'kind': 'screen', 'label': 'Screens', 'scope': 'building', 'fallback': {'builtin': 'screen'}, 'item': 'porch'},
     {'kind': 'soffit', 'label': 'Soffit', 'scope': 'building', 'fallback': {'role': 'porch_ceiling'}, 'item': None},
@@ -28,6 +29,7 @@ PANEL_ROLES = ['siding', 'interior_wall', 'floor']
 ITEM_PARTS = {
     'opening': ('casing', 'window_frame', 'pane', 'door', 'garage_door'),
     'porch': ('column', 'screen'),
+    'roof': ('support',),
     'stair': ('stair_tread', 'stair_rail'),
     'fixture': ('cabinet', 'counter', 'shower_tile', 'shower_glass'),
     'pool': ('water',), 'spa': ('water',),

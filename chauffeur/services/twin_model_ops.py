@@ -179,6 +179,10 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
     if roof_support_noop(model, op):
         return deepcopy(model), 'This roof already has walls.'
     apply_member = apply_member or (lambda value, member, **kwargs: apply(value, member, actor, **kwargs))
+    for member in members:
+        if isinstance(member, dict) and member.get('op') == 'move_posts_to_roof':
+            from services.twin_model_posts import validate_move_posts
+            validate_move_posts(model, member, states_only=True)
     original = (twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op))
                 if _normalized is None else _normalized)
 
@@ -832,7 +836,7 @@ def _mark_touched(building, previous, op):
 MORE_OPS = ('set_roof_support', 'move_roof', 'add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
-            'set_material', 'accept_proposal', 'dismiss_proposal',
+            'set_material', 'move_posts_to_roof', 'accept_proposal', 'dismiss_proposal',
             'move_site_item', 'delete_site_item', 'add_site_item', 'add_site_shape', 'update_site_shape', 'make_yard_room', 'place_device', 'unplace_device', 'set_ha_display',
             'add_pad', 'update_pad', 'delete_pad', 'reorder_pad', 'set_foundation', 'set_porch_foundation',
             'add_pool_feature', 'update_pool_feature', 'delete_pool_feature',
@@ -1255,6 +1259,10 @@ def _material(building, op, model=None):
         material = normalize_material_slot(material)
     except ValueError as error:
         raise Refused(str(error)) from error
+    if material and 'color' in material and (target.get('role') == 'support' or 'roof' in target and target.get('part') == 'support'):
+        import re
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}', material['color']):
+            raise Refused('Choose a support tint as a six-digit hex color.')
     if 'site' in target:
         container, key = model.setdefault('materials', {}), target['role']
     elif any(kind in target for kind in ('opening', 'porch', 'stair', 'item')):
@@ -1286,7 +1294,11 @@ def _material(building, op, model=None):
                'walls': 'wall_material'}[target['surface']]
     elif 'roof' in target:
         owner = _find(building, 'roofs', target['roof'])
-        if 'plane' in target:
+        if 'part' in target:
+            if target['part'] != 'support':
+                raise Refused('Choose a surface for the material.')
+            container, key = owner.setdefault('materials', {}), 'support'
+        elif 'plane' in target:
             plane = target['plane']
             if type(plane) is not int or not 0 <= plane < len(owner['edges']):
                 raise Refused('Choose a roof area edge for the plane material.')
@@ -2120,7 +2132,7 @@ def preserves_room_geometry(op):
     """A rename, like a slot write, must not re-derive cached room polygons."""
     if isinstance(op, dict) and op.get('op') == 'batch':
         return bool(op.get('ops')) and isinstance(op['ops'], list) and all(preserves_room_geometry(member) for member in op['ops'])
-    return material_only(op) or isinstance(op, dict) and op.get('op') == 'set' and op.get('field') == 'name'
+    return material_only(op) or isinstance(op, dict) and (op.get('op') == 'move_posts_to_roof' or op.get('op') == 'set' and op.get('field') == 'name')
 
 
 def _already_walled(roof, op):
@@ -2188,12 +2200,18 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
                     'split_wall', 'draw_room', 'split_room', 'delete'):
         raise Refused('That operation is not available.')
     op = deepcopy(op)
+    if kind == 'move_posts_to_roof':
+        from services.twin_model_posts import validate_move_posts
+        validate_move_posts(model, op)  # Refuse proposal state before normalization discards it.
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
     if _batch_inplace:
         notes = []
     else:
         model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
+    if kind == 'move_posts_to_roof':
+        from services.twin_model_posts import move_posts_to_roof
+        return model, move_posts_to_roof(model, op, actor)
     if kind in twin_effect_fixtures.OPS:
         try:
             return model, twin_effect_fixtures.apply_op(model, op, _defer_resolve=_batch_inplace)

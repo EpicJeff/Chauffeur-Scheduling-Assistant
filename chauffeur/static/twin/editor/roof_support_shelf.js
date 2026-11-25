@@ -2,7 +2,7 @@ import { SUPPORT_KINDS, isSupported, supportPoints, roofPoint } from '../roof_su
 import { parseLength } from './selection_fields.js';
 import { SUPPORT_STYLES, normalizeRoofBox, roofEndLabels } from '../roof_box_contract.js';
 
-const sizes = { bracket: .3, corbel: .5, brace: .3, cable: .08, post: .5 };
+const sizes = { bracket: .3, corbel: .5, brace: .45, cable: .08, post: .5 };
 const precise = value => `${Number(value.toFixed(10))} ft`;
 
 // Same geometric choices as the operation: one facing edge per settled wall.

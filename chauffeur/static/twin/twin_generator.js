@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
+import { supportMaterialSurface } from './support_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
@@ -1854,9 +1855,85 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (supported && index === sections.length - 1) {
         const record = b.roofs?.find(r => r.id === (section.roof || section.id)) || section;
         const shape = {...record, ...section, area: record.area || section.area};
-        const ref = resolveSlot('support', {item:record, building:b, level:roofLevel(section)}) || surfaceRef('trim');
-        for (const part of supportGeometry(shape, supportPoints(record), {THREE}))
-          tagPart(mesh(roofGroup, part.geometry, mat('trim', roofLevel(section), ref), null, null, ref, part.part), part.part);
+        const bAngle = (b.rotation || 0) * Math.PI / 180, cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
+        const roofPorches = allPorches(b);
+        const slabBottomAt = (x, y) => {
+          const z = heightAt(sections, x, y);
+          return z === null ? null : z - thickness;
+        };
+        const supportGroundAt = (x, y) => {
+          const limit = slabBottomAt(x, y) ?? (section.plate - thickness);
+          let floor = -Infinity;
+          for (const po of roofPorches) {
+            if (!po.polygon || po.polygon.length < 3 || !contains(po.polygon, [x, y])) continue;
+            const pr = (b.rooms || []).find(r => r.kind === 'porch' && r.polygon?.length >= 3
+              && r.level === (po.level || first.id)
+              && (r.id === po.id || (r.polygon.every(p => contains(po.polygon, p)) && po.polygon.every(p => contains(r.polygon, p)))));
+            const z = (po.floor ?? 0) + (pr?.floor_offset_ft || 0);
+            if (z < limit - 0.05 && z > floor) floor = z;
+          }
+          for (const r of b.rooms || []) {
+            if (r.state === 'ghost' || !r.polygon || r.polygon.length < 3 || !contains(r.polygon, [x, y])) continue;
+            const lv = levels[r.level];
+            if (!lv) continue;
+            const z = roomFloor(lv, r);
+            if (z < limit - 0.05 && z > floor) floor = z;
+          }
+          for (const lv of ordered) {
+            if (lv.elevation < limit - 0.05 && lv.elevation > floor
+                && (outlines.get(lv.id) || []).some(poly => contains(poly, [x, y]))) floor = lv.elevation;
+          }
+          if (floor > -Infinity) return floor;
+          const wx = position[0] + x * cosB - y * sinB, wy = position[1] + x * sinB + y * cosB;
+          return groundAt(plan, wx, wy) - base;
+        };
+        const supportWallTopAt = (x, y, out = null) => {
+          let best = -Infinity;
+          for (const { w, l, dx, dy, panels } of supportingWalls) {
+            const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+            if (!(len > 1e-6)) continue;
+            if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
+            const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
+            const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
+            if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
+            const uc = Math.max(0, Math.min(len, ux));
+            let h = w.height;
+            if (panels?.length) {
+              const p = panels.find(([a, c]) => uc >= a - 1e-4 && uc <= c + 1e-4)
+                || panels.reduce((q, r) => Math.abs((r[0] + r[1]) / 2 - uc) < Math.abs((q[0] + q[1]) / 2 - uc) ? r : q);
+              h = p[1] > p[0] ? p[2] + (p[3] - p[2]) * Math.max(0, Math.min(1, (uc - p[0]) / (p[1] - p[0]))) : Math.max(p[2], p[3]);
+            }
+            const top = l.elevation + h;
+            if (top > best) best = top;
+          }
+          return best > -Infinity ? best : null;
+        };
+        const supportWallFaceAt = (x, y, out) => {
+          let best = 0;
+          for (const { w, dx, dy } of supportingWalls) {
+            if (!w.footprint?.length) continue;
+            const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+            if (!(len > 1e-6)) continue;
+            if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
+            const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
+            const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
+            if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
+            const proj = Math.max(...w.footprint.map(p => (p[0] - x) * out[0] + (p[1] - y) * out[1]));
+            if (proj > best && proj <= (w.thickness || 0.5) + 0.1) best = proj;
+          }
+          return best;
+        };
+        for (const part of supportGeometry(shape, supportPoints(record), {
+          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt, slabBottomAt, wallFaceAt: supportWallFaceAt,
+        })) {
+          const partSlot = part.slot || 'support';
+          const postDefault = partSlot === 'column' && !record.materials?.support;
+          const partRef = postDefault ? kindRef('column', record)
+            : resolveSurfaceMaterial(plan, supportMaterialSurface(plan, b, record, kit)).ref;
+          const partMat = postDefault ? kindMat('column', record)
+            : mat('trim', roofLevel(section), partRef);
+          tagPart(mesh(roofGroup, part.geometry, partMat, null, null, partRef, part.part), part.part);
+        }
       }
     }
     }
