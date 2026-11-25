@@ -1,6 +1,22 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1001 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1002 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1002 (2026-11-25, NOT device-verified): full downspouts where there is room, and one placed anywhere by hand.**
+
+Owner: "Two spots just have a tiny start of a downspout and there is no way to do anything other than remove the downspout completely and have none."
+
+**Automatic.** A run that already had a full downspout keeps exactly that one: the old rule runs first. Only a run the old rule gives nothing tries both faces of a corner, then 0.5 ft from an opening instead of 1 ft (`GUTTER.openingClearMinFt`), then free ends on the same terms, then a stub. Opening distance in the new tiers is measured from the pipe's true position past the wall's end; door avoidance keeps the old measure. A corner face whose drop is too short also tries the other face.
+
+**By hand.** An entry of an edge's `downspouts` is a number (snaps to a corner, unchanged) or `{"at": f}` (stays at that fraction of the authored edge; 0 and 1 are the drip corners). `{at}` may sit mid-run, on an inner corner or over an opening. It takes the nearest wall or post in reach, otherwise stands free (`mount: 'free'`). It is always a full drop unless a surface is under the gutter itself. Automatic downspouts stay 1 ft clear of it. Check flags, acknowledgeable: `placed-off-corner`, `over-opening`, `no-support`. The same shapes work in `set_roof_edge`, the plan reader, drafts and Argyle.
+
+**Editor.** Drag a handle anywhere along its gutter: within 1 ft of a free corner it snaps, elsewhere it stays. Card rows: "Placed by hand", "Keep exactly here", "Snap to a corner". Add uses a free corner, else the middle of the longest exposed piece, and replaces automatic stubs. Quick edits queue against the current plan. No placement runs during a drag. Porch gutters have no per-downspout control.
+
+**Seams.** Placement outputs carry `exact` and `authoredIndex`; `gutterCandidates` entries carry `occupied` (corner claims) and `nearExact`. `static/twin/gutter_presence.js` is the one "has gutters" predicate. Bake stamp `gutters-2` for guttered houses: **one lighting rebake**; a house without gutters keeps every key and byte.
+
+**Owner's 11-20 export, every gutter on.** 3 of 7 stubs become full drops (garage corner, rear window corner, one short piece onto a lower roof); all 15 healthy runs identical in four modes. Cost: 0 draws, programs, samplers or meshes; +240 triangles; placement +2% cold and warm. The remaining stubs are slivers above a lower roof, a porch end and a clipped patio eave; a downspout can be placed on them by hand.
+
+Tests: `test_twin_gutters_js` (236), `_model`, `_geometry_js`, `_editor_js`, `test_house_editor_gutters_live`. `test_house_design_tool` fails on main too (schema 8,915 to 8,996 characters).
 
 **v2.499.1001 (2026-11-25, NOT device-verified): awnings are roofs with supports.**
 
