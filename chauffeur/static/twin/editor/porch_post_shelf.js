@@ -263,13 +263,13 @@ export function drawPorchPostFooter(host, record, { select }) {
 }
 
 // Porch card's "Posts" section: count, Add post, Size for all posts, and Move posts to the roof.
-export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, op, applyBatch, report, ownSlot, select, onSaved }) {
+export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, op, applyBatch, report, ownSlot, select, visibility, onSaved }) {
   if (!(record?.kind === 'porch' || record?.kind === 'room' && record.piece.kind === 'porch')) return null;
   const buildingId = record.building.id, porchId = record.piece.id;
-  const building = getPlan().buildings.find(b => b.id === buildingId) || record.building;
-  const porch = allPorches(building).find(p => p.id === porchId) || null;
-  const columns = porch?.columns || [];
-  const count = columns.length;
+  const currentColumns = () => {
+    const b = getPlan().buildings.find(x => x.id === buildingId) || record.building;
+    return allPorches(b).find(p => p.id === porchId)?.columns || [];
+  };
 
   const section = document.createElement('section');
   section.setAttribute('aria-label', 'Posts');
@@ -277,15 +277,11 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
   const heading = document.createElement('h4'); heading.textContent = 'Posts';
   const summary = document.createElement('p');
   summary.dataset.porchPostsCount = '';
-  summary.textContent = `${count} ${count === 1 ? 'post' : 'posts'}`;
   section.append(heading, summary);
 
   const add = document.createElement('button');
   add.type = 'button';
   add.textContent = 'Add post';
-  const atLimit = count >= POST_SIZE.limit;
-  add.disabled = !canEdit() || atLimit;
-  if (atLimit) { add.dataset.postDisabled = ''; add.title = `A porch can have at most ${POST_SIZE.limit} posts.`; }
   add.addEventListener('click', () => Promise.resolve(queue(async () => {
     if (!canEdit()) return;
     const bNow = getPlan().buildings.find(b => b.id === buildingId);
@@ -297,64 +293,83 @@ export function drawPorchPostsSection(host, record, { getPlan, canEdit, queue, o
     const pAfter = bAfter && allPorches(bAfter).find(p => p.id === porchId);
     const afterCols = pAfter?.columns || [];
     if (afterCols.length > beforeCount) {
-      const newIndex = afterCols.length - 1;
-      select({ pieceId: postRef(pAfter, newIndex), buildingId });
+      const newId = postRef(pAfter, afterCols.length - 1);
+      visibility?.show?.(newId);
+      visibility?.unlock?.(newId);
+      select({ pieceId: newId, buildingId });
     } else {
       onSaved?.();
     }
   })).catch(report));
   section.append(add);
 
-  if (count > 0) {
-    const firstSize = columns[0].size ?? POST_SIZE.fallback;
-    const uniform = columns.every(c => Math.abs((c.size ?? POST_SIZE.fallback) - firstSize) <= EPS);
-    const label = document.createElement('label'); label.textContent = 'Size for all posts';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.setAttribute('aria-label', 'Size for all posts');
-    input.value = uniform ? fmt(firstSize) : '';
-    input.placeholder = uniform ? '' : 'Mixed';
-    input.disabled = !canEdit();
-    const error = document.createElement('small'); error.setAttribute('role', 'status');
-    label.append(input, error); section.append(label);
-    const baseline = input.value;
-    const fail = err => {
-      error.textContent = err.message;
-      input.setAttribute('aria-invalid', 'true');
-      report(Object.assign(err, { shown: true }));
-    };
-    const saveAll = () => {
+  const label = document.createElement('label'); label.textContent = 'Size for all posts';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.setAttribute('aria-label', 'Size for all posts');
+  const error = document.createElement('small'); error.setAttribute('role', 'status');
+  label.append(input, error); section.append(label);
+  let baseline = '', uniform = true, queued = 0;
+  const fail = err => {
+    error.textContent = err.message;
+    input.setAttribute('aria-invalid', 'true');
+    report(Object.assign(err, { shown: true }));
+  };
+  const saveAll = () => {
+    if (!canEdit()) return;
+    error.textContent = ''; input.setAttribute('aria-invalid', 'false');
+    if (!input.value.trim()) {
+      if (!uniform) return;
+      fail(new Error(SIZE_REFUSAL));
+      return;
+    }
+    if (uniform && input.value === baseline && !queued) return;
+    let size;
+    try { size = parsePostNumber(input.value, { min: POST_SIZE.min, max: POST_SIZE.max, message: SIZE_REFUSAL }); }
+    catch (err) { fail(err); return; }
+    const submitted = input.value;
+    ++queued;
+    Promise.resolve(queue(async () => {
       if (!canEdit()) return;
-      error.textContent = ''; input.setAttribute('aria-invalid', 'false');
-      if (!input.value.trim()) {
-        if (!uniform) return;
-        fail(new Error(SIZE_REFUSAL));
-        return;
-      }
-      if (uniform && input.value === baseline) return;
-      let size;
-      try { size = parsePostNumber(input.value, { min: POST_SIZE.min, max: POST_SIZE.max, message: SIZE_REFUSAL }); }
-      catch (err) { fail(err); return; }
-      Promise.resolve(queue(async () => {
-        if (!canEdit()) return;
-        const bNow = getPlan().buildings.find(b => b.id === buildingId);
-        const pNow = bNow && allPorches(bNow).find(p => p.id === porchId);
-        if (!pNow?.columns?.length) return;
-        const ops = [];
-        for (let i = 0; i < pNow.columns.length; i++) {
-          if (Math.abs((pNow.columns[i].size ?? POST_SIZE.fallback) - size) > EPS) {
-            ops.push({ op: 'update_porch_post', building: buildingId, porch: porchId, post: postRef(pNow, i), size });
-          }
+      const bNow = getPlan().buildings.find(b => b.id === buildingId);
+      const pNow = bNow && allPorches(bNow).find(p => p.id === porchId);
+      if (!pNow?.columns?.length) return;
+      const ops = [];
+      for (let i = 0; i < pNow.columns.length; i++) {
+        if (Math.abs((pNow.columns[i].size ?? POST_SIZE.fallback) - size) > EPS) {
+          ops.push({ op: 'update_porch_post', building: buildingId, porch: porchId, post: postRef(pNow, i), size });
         }
-        if (ops.length) await applyBatch(ops);
-        onSaved?.();
-      })).catch(fail);
-    };
-    input.addEventListener('change', saveAll);
-    input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); saveAll(); } });
+      }
+      if (ops.length) await applyBatch(ops);
+      if (input.value === submitted) baseline = submitted;
+      onSaved?.();
+    })).catch(fail).finally(() => { --queued; });
+  };
+  input.addEventListener('change', saveAll);
+  input.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); saveAll(); } });
 
-    drawPostsAction(section, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved });
-  }
+  const refresh = () => {
+    const columns = currentColumns(), count = columns.length;
+    summary.textContent = `${count} ${count === 1 ? 'post' : 'posts'}`;
+    const atLimit = count >= POST_SIZE.limit;
+    add.disabled = !canEdit() || atLimit;
+    if (atLimit) { add.dataset.postDisabled = ''; add.title = `A porch can have at most ${POST_SIZE.limit} posts.`; }
+    else { delete add.dataset.postDisabled; add.removeAttribute('title'); }
+    label.hidden = count === 0;
+    input.disabled = !canEdit();
+    if (count > 0) {
+      const firstSize = columns[0].size ?? POST_SIZE.fallback;
+      uniform = columns.every(c => Math.abs((c.size ?? POST_SIZE.fallback) - firstSize) <= EPS);
+      if (document.activeElement !== input && input.value === baseline && !queued) {
+        input.value = uniform ? fmt(firstSize) : '';
+        input.placeholder = uniform ? '' : 'Mixed';
+        baseline = input.value;
+      }
+    }
+  };
+  refresh();
+  drawPostsAction(section, record, { getPlan, canEdit, queue, op, report, ownSlot, onSaved });
+  ownSlot?.({ refresh, dispose: () => section.remove() });
 
   host.append(section);
   return section;

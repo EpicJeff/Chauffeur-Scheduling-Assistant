@@ -227,6 +227,29 @@ await test('scene_tree_household_orphan_idless_hide_lock', () => {
   assert.equal(vis.isHidden('post:orphan-porch:0'), true);
   assert.equal(vis.isLocked('post:orphan-porch:1'), true);
   tree.dispose(); host.remove();
+
+  // scene_tree.js:121: pass kind only for posts when checking ancestor lock state.
+  const calls = [];
+  const spyVis = {
+    isHidden: () => false,
+    isLocked: (id, kind) => { calls.push([id, kind]); return false; },
+    subscribe: () => () => {},
+  };
+  const spyHost = document.createElement('div'); spyHost.clientHeight = 400; document.body.append(spyHost);
+  const spyTree = createSceneTree({ host: spyHost, getPlan: () => edgePlan, getSelection: () => null,
+    select: () => {}, visibility: spyVis, floors: { current: () => 'b1:L1', hidden: () => false } });
+  spyTree.reveal('post:orphan-porch:0', 'b1');
+  calls.length = 0;
+  spyTree.refresh();
+  const buildingAncestorCalls = calls.filter(([id]) => id === 'b1');
+  const levelAncestorCalls = calls.filter(([id]) => id === 'L1');
+  // Row's own check passes kind, while descendant checks on building/level pass undefined.
+  assert.ok(buildingAncestorCalls.some(([, kind]) => kind === undefined), `building ancestor lock check omits kind: ${JSON.stringify(buildingAncestorCalls)}`);
+  assert.ok(levelAncestorCalls.some(([, kind]) => kind === undefined), `level ancestor lock check omits kind: ${JSON.stringify(levelAncestorCalls)}`);
+  // Post's parent porch check passes porch kind!
+  const porchCalls = calls.filter(([id]) => id === 'orphan-porch');
+  assert.ok(porchCalls.length >= 2 && porchCalls.every(([, kind]) => kind === 'porch'), `porch parent lock check passes kind for posts: ${JSON.stringify(porchCalls)}`);
+  spyTree.dispose(); spyHost.remove();
 });
 
 // ---------------------------------------------------------------------------
@@ -252,21 +275,38 @@ await test('real_view_picking_outside_i4_i5_i6_i7_i9', async () => {
     assert.equal(h.tools.selected()?.kind, 'building', 'OUTSIDE ruling: click on post selects building');
     assert.equal(h.tools.selected()?.pieceId, b.id);
 
-    // On a floor view, click 1 selects post, click 2 on same spot selects its porch directly behind it.
+    // On a floor view, click 1 selects post, click 2 on same spot selects its porch directly behind it (plain selection: no focus, no rebuild).
+    let rebuildCount = 0;
+    const origRebuild = h.view.rebuild.bind(h.view);
+    h.view.rebuild = (...args) => { rebuildCount++; return origRebuild(...args); };
     h.tools.select(null);
     h.view.setView(`${b.id}:L1`);
     h.clickCanvas(...pixel0);
     assert.equal(h.tools.selected()?.kind, 'porch_post');
     assert.equal(h.tools.selected()?.pieceId, 'post:patio:0');
     assert.equal(document.getElementById('properties-crumbs').textContent, 'Pool patio > Post 1');
+    // Plain selection: single Escape clears selection.
+    fire(document.body, 'keydown', { key: 'Escape' });
+    assert.equal(h.tools.selected(), null, 'plain post selection clears on first Escape');
+    h.clickCanvas(...pixel0);
+    assert.equal(h.tools.selected()?.pieceId, 'post:patio:0');
     h.clickCanvas(...pixel0);
     assert.equal(h.tools.selected()?.kind, 'room');
     assert.equal(h.tools.selected()?.pieceId, 'patio');
+    assert.equal(h.tools.selection().room, null, 'plain selection: clicking porch does NOT focus it');
+    assert.equal(rebuildCount, 0, 'plain selection causes zero view.rebuild calls');
 
-    // Focused porch room keeps room focus when clicking a post inside it.
+    // Explicit Focus room -> clicking a post keeps room focus; Escape 1 leaves focus, Escape 2 clears.
+    h.tools.focusRoom({ kind: 'room', id: 'patio', building: b.id, level: 'L1' });
+    assert.equal(h.tools.selection().room, 'patio');
     h.clickCanvas(...pixel1);
     assert.equal(h.tools.selected()?.pieceId, 'post:patio:1');
     assert.equal(h.tools.selection().room, 'patio');
+    fire(document.body, 'keydown', { key: 'Escape' });
+    assert.equal(h.tools.selection().room, null, 'Escape 1 leaves Focus room');
+    assert.equal(h.tools.selected()?.pieceId, 'patio', 'leaving Focus room leaves porch selected');
+    fire(document.body, 'keydown', { key: 'Escape' });
+    assert.equal(h.tools.selected(), null, 'Escape 2 clears plain selection');
 
     // I5: Locking the parent porch gives the locked hint when clicking its post.
     h.tools.select(null);
@@ -277,6 +317,30 @@ await test('real_view_picking_outside_i4_i5_i6_i7_i9', async () => {
     assert.match(status.textContent, /This post is locked/);
     assert.equal(h.tools.selected(), null);
     h.visibility.unlock('patio');
+
+    // N4: Shift-click sets locked hint ONLY when nothing was done.
+    delete status.dataset.lockedHint; status.textContent = '';
+    h.visibility.lock('post:patio:0');
+    h.clickCanvas(...pixel0, { shiftKey: true });
+    // Unlocked porch room was selected by addRoom -> something WAS done, so no locked hint!
+    assert.equal(h.tools.selected()?.pieceId, 'patio');
+    assert.equal(status.dataset.lockedHint, undefined, 'N4 no locked hint when Shift-click selected a room');
+    h.visibility.unlock('post:patio:0');
+
+    // N3: Filter before adjusting distances, and set ONLY the porch's distance to its post's (never raise unrelated later hits).
+    const origPickAll = h.view.pickAll.bind(h.view);
+    h.visibility.lock('w0');
+    h.view.pickAll = () => [
+      { kind: 'wall', id: 'w0', building: b.id, distance: 9.0 },
+      { kind: 'porch_post', id: 'post:patio:0', parentPieceId: 'patio', building: b.id, distance: 5.0 },
+      { kind: 'room', id: 'patio', building: b.id, distance: 4.8 },
+      { kind: 'wall', id: 'w1', building: b.id, distance: 4.9 },
+    ];
+    // Locked w0 (9.0) is filtered first so it doesn't raise post/porch/w1.
+    // w1 (4.9) stays 4.9 (< post 5.0), so w1 is NOT raised behind post/porch!
+    assert.equal(h.tools.pick(100, 100)?.id, 'w1', 'N3 unrelated hit (4.9) is not raised by locked hit (9.0) or post (5.0)');
+    h.view.pickAll = origPickAll;
+    h.visibility.unlock('w0');
 
     // I6: Shift-click toggles a post when it is the nearest hit.
     h.tools.select({ pieceId: 'post:patio:0', buildingId: b.id });
@@ -411,7 +475,7 @@ await test('cards_refusals_readonly_layout_posts_action_and_materials_dedupe', a
       'Choose a settled roof; ghost and proposal roofs cannot receive posts.'
     );
 
-    // selection_materials dedupes per porch ("x 1 surface", 1 op) for 2 posts on same porch!
+    // selection_materials: N5 dedupe operations, NOT owners; materialsInSelection counts 1 surface.
     const postRefs = [
       { kind: 'porch_post', pieceId: 'post:patio:0', buildingId: b.id, porchId: 'patio' },
       { kind: 'porch_post', pieceId: 'post:patio:1', buildingId: b.id, porchId: 'patio' },
@@ -424,15 +488,77 @@ await test('cards_refusals_readonly_layout_posts_action_and_materials_dedupe', a
     assert.deepEqual(repOps[0].target, { porch: 'patio', part: 'column' });
     const shared = sharedMaterialRows(h.getPlan(), postRefs, baseKit);
     assert.equal(shared.length, 1);
-    assert.equal(shared[0].matches.length, 1, 'shared Columns slot dedupes matches per porch');
+    assert.equal(shared[0].matches.length, 2, 'N5 sharedMaterialRows keeps every owner in matches');
 
-    // Single-post delete confirmation wording ("Delete this post?" / "Undo restores the post.").
+    // N5: Saving the shared Columns slot in multi-select card dedupes the emitted operations to ONE set_material op!
+    h.tools.selectionStore.set(postRefs);
+    const colSlot = card.querySelector('[data-library-slot="Columns"]');
+    assert.ok(colSlot, 'multi-select posts card mounts shared Columns slot');
+    const opsBeforeMat = h.ops.length;
+    const clearBtn = colSlot.querySelector('[data-slot-clear]');
+    assert.ok(clearBtn && !clearBtn.disabled);
+    click(clearBtn); await flush();
+    assert.equal(h.ops.length, opsBeforeMat + 1);
+    assert.equal(h.ops.at(-1).op, 'batch');
+    assert.equal(h.ops.at(-1).ops.length, 1, 'N5 shared Columns save dedupes to 1 set_material op');
+    assert.deepEqual(h.ops.at(-1).ops[0].target, { porch: 'patio', part: 'column' });
+
+    // Item 3: "Select the porch" is a plain selection (no focus, no rebuild).
+    let cardRebuilds = 0;
+    const origCardRebuild = h.view.rebuild.bind(h.view);
+    h.view.rebuild = (...args) => { cardRebuilds++; return origCardRebuild(...args); };
+    h.tools.select({ pieceId: 'post:patio:1', buildingId: b.id });
+    click(card.querySelector('[data-select-porch]'));
+    assert.equal(h.tools.selected()?.pieceId, 'patio');
+    assert.equal(h.tools.selection().room, null, 'Select the porch is a plain selection (no focus)');
+    assert.equal(cardRebuilds, 0, 'Select the porch triggers zero view.rebuild');
+
+    // N1: Porch card Posts section refreshes in place without tearing down half-typed text in another field (Name)!
+    const nameInput = [...card.querySelectorAll('label')].find(l => l.textContent === 'Name')?.querySelector('input');
+    assert.ok(nameInput, 'porch card has Name input');
+    nameInput.focus();
+    nameInput.value = 'Draft Patio Name';
+    const countNodeBefore = card.querySelector('[data-porch-posts-count]');
+    const colChanged = structuredClone(h.getPlan());
+    colChanged.buildings[0].porches[0].columns[0].size = 0.9;
+    h.setPlanOnly(colChanged);
+    h.tools.refreshCard();
+    assert.equal(document.activeElement, nameInput, 'N1 Name input stays focused across porch column refresh');
+    assert.equal(nameInput.value, 'Draft Patio Name', 'N1 half-typed Name survives porch column change');
+    assert.equal(card.querySelector('[data-porch-posts-count]'), countNodeBefore, 'N1 Posts section refreshes in place');
+    assert.equal(card.querySelector('input[aria-label="Size for all posts"]').placeholder, 'Mixed', 'N1 Size for all updates in place to Mixed');
+
+    // N2: Adding a post clears any stale hide/lock on the new post's id!
+    const nextPostId = `post:patio:${h.getPlan().buildings[0].porches[0].columns.length}`;
+    h.visibility.hide(nextPostId);
+    h.visibility.lock(nextPostId);
+    assert.equal(h.visibility.isHidden(nextPostId), true);
+    assert.equal(h.visibility.isLocked(nextPostId), true);
+    const addBtn = [...card.querySelectorAll('[data-porch-posts] button')].find(btn => btn.textContent === 'Add post');
+    click(addBtn); await flush();
+    assert.equal(h.tools.selected()?.pieceId, nextPostId, 'Add post selects newly added post');
+    assert.equal(h.visibility.isHidden(nextPostId), false, 'N2 new post id is unhidden');
+    assert.equal(h.visibility.isLocked(nextPostId), false, 'N2 new post id is unlocked');
+
+    // Single-post delete confirmation wording ("Delete this post?" / "Undo restores the post.") + plain porch selection (no focus, no rebuild from selection).
     h.tools.select({ pieceId: 'post:patio:1', buildingId: b.id });
     h.confirms.length = 0;
+    h.setOnOp(async operation => {
+      const next = applyLocal(h.getPlan(), operation).plan;
+      await h.view.settle(next);
+      h.setPlanOnly(next);
+      // Measure rebuilds caused by post-delete porch selection (refresh + cards.remove select).
+      cardRebuilds = 0;
+      h.tools.refresh();
+    });
     const delBtn = [...card.querySelectorAll('button')].find(btn => btn.textContent === 'Delete');
     click(delBtn); await flush();
+    h.setOnOp(null);
     assert.equal(h.confirms[0][0], 'Delete this post?');
     assert.equal(h.confirms[0][1], 'Undo restores the post.');
+    assert.equal(h.tools.selected()?.pieceId, 'patio');
+    assert.equal(h.tools.selection().room, null, 'deleting a post selects porch plainly (no focus)');
+    assert.equal(cardRebuilds, 0, 'selecting porch after post delete triggers zero view.rebuild');
 
     // Size for all posts sends ONE batch (record for real server route check!).
     h.tools.select({ pieceId: 'patio', buildingId: b.id });
@@ -610,10 +736,15 @@ await test('i2_undo_redo_selection_and_group_delete_batch', async () => {
     h.tools.refresh();
     assert.equal(h.tools.selected()?.pieceId, 'post:patio:1', 'I2 undo restores remembered deleted post');
 
-    // Redo (Post 2 disappears again) -> falls back to porch again!
+    // Redo (Post 2 disappears again) -> falls back to porch plainly (no focus, no rebuild)!
+    let fbRebuilds = 0;
+    const origFbRebuild = h.view.rebuild.bind(h.view);
+    h.view.rebuild = (...args) => { fbRebuilds++; return origFbRebuild(...args); };
     h.setPlanOnly(structuredClone(afterDelete));
     h.tools.refresh();
     assert.equal(h.tools.selected()?.pieceId, 'patio', 'I2 redo falls back to porch again');
+    assert.equal(h.tools.selection().room, null, 'undo/redo fallback is a plain selection (no focus)');
+    assert.equal(fbRebuilds, 0, 'undo/redo fallback triggers zero view.rebuild');
 
     // Now user manually selects Post 1 -> Undo brings Post 2 back, Post 1 STAYS selected!
     h.tools.select({ pieceId: 'post:patio:0', buildingId: b.id });

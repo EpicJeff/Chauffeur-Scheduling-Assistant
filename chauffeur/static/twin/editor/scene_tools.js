@@ -110,6 +110,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const isDelegateKind = kind => ['terraces', 'light_fixture', 'effect_fixture', 'device'].includes(kind);
   const isExcludedSetKind = kind => ['building', 'level', 'group', 'floor'].includes(kind);
   const stepBackOrClear = () => {
+    picker.reset();
     if (selectionStore.members().length > 1) selectionStore.clear();
     else roomSelection.back();
   };
@@ -397,15 +398,25 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   const picker = createPicker({ isPickable, sources: [
     (x, y) => { const item = delegate?.pick?.(x, y); return item ? [item] : []; },
     (x, y) => {
-      let floorDist = -Infinity;
-      return view.pickAll(x, y).filter(Boolean).map(item => {
+      const hits = view.pickAll(x, y).filter(Boolean).map(item => {
         const id = item.id ?? item.pieceId, building = item.building ?? item.buildingId ?? null;
-        const distance = Number.isFinite(item.distance) ? Math.max(floorDist, item.distance) : item.distance;
-        if (Number.isFinite(distance)) floorDist = distance;
-        const norm = { ...item, id, pieceId: id, building, buildingId: building, distance };
+        const norm = { ...item, id, pieceId: id, building, buildingId: building };
         if (norm.kind === 'porch_post' && (norm.parentPieceId || norm.porchId)) norm.porchId = norm.porchId ?? norm.parentPieceId;
         return norm;
-      }).filter(isPickable).map(sceneCandidate);
+      }).filter(isPickable);
+      const postDist = new Map();
+      return hits.map(item => {
+        if (item.kind === 'porch_post' && item.porchId && Number.isFinite(item.distance)) {
+          const k = JSON.stringify([item.building ?? null, item.porchId]);
+          if (!postDist.has(k)) postDist.set(k, item.distance);
+          return sceneCandidate(item);
+        }
+        const k = JSON.stringify([item.building ?? null, item.id]);
+        const minDist = postDist.get(k);
+        const adjusted = minDist !== undefined && Number.isFinite(item.distance) && item.distance < minDist
+          ? { ...item, distance: minDist } : item;
+        return sceneCandidate(adjusted);
+      });
     },
     (x, y) => siteHits ? siteHits(x, y) : [pickSite?.(x, y)].filter(Boolean),
     (x, y) => padHits?.(x, y) || [],
@@ -1018,7 +1029,6 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
           let nearest = null;
           try { nearest = picker.at(event.clientX, event.clientY)[0] || null; }
           finally { contextPicking = false; }
-          lockedHint(event.clientX, event.clientY, nearest);
           if (nearest?.kind === 'porch_post') {
             roofRooms.clear();
             const ref = toSelectionRef(nearest);
@@ -1029,6 +1039,8 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
             if (room) {
               if (roofRoomBuilding !== target.building.id || !roofRooms.size) roomSelection.select({ kind: 'room', id: room.id, building: target.building.id, level: room.level });
               roofRooms.add(room.id); roofRoomBuilding = target.building.id;
+            } else {
+              lockedHint(event.clientX, event.clientY, nearest);
             }
           }
         } else if (event.ctrlKey || event.metaKey) {
