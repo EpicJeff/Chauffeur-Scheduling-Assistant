@@ -48,7 +48,7 @@
 // Fractions use the authored A--B line; exactly 0/1 name exposed drip tips.
 // Off-corner distance uses authored feet, counting each tip as its vertex.
 // Main's first-face/clamped/<=1 ft corner tier wins unchanged when non-empty;
-// only empty tiers open the new corner/clearance and free-end fallbacks.
+// main's free ends follow, before any new corner/clearance tiers open.
 // Door avoidance always uses the original clamped wall distance.
 // Exact drops warn placed-off-corner, over-opening (0.5 ft), no-support (free).
 // mount:'free' is a full vertical pipe below the outlet with the normal outward
@@ -663,16 +663,16 @@ function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=fal
   // Landing is independent of mounting and opening clearance. Preserve a real
   // outside-corner drop even when every receiving surface needs attention.
   if(!chosen){if(!exact&&!corner?.convex)return null;chosen={...choices[0],sample:initial};}
-  const surface=mount.kind==='free'?support.height:Math.max(support.height,chosen.sample.height),outletTop=gutterBottom(ctx,segment,top);
-  // Only the receiver under the gutter can block an exact outlet. A high
-  // mount-side receiver rejects this support so another face/free can be tried.
-  if(exact&&outletTop[1]<=surface+2/12*FT)return null;
+  const surface=Math.max(support.height,chosen.sample.height),outletTop=gutterBottom(ctx,segment,top);
+  // Mounted exact routes meet the same minimum drop as automatic routes.
+  // Only a receiver under the gutter blocks the outlet itself (exactCandidate).
+  const minimumBottom=surface+.5*FT;
   const bottom=surface+(exact?Math.min(.5*FT,Math.max(0,(outletTop[1]-surface)*.4)):.5*FT);
   const openMount=openingCheck(ctx,mount,top,bottom,clearance,exact,legacy);
   const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom,clearance,exact,legacy):openMount;
   const opening={blocked:openMount.blocked||openDrop.blocked,door:openMount.door||openDrop.door};
   if(opening.blocked&&!exact){if(attempt)attempt.opening=true;return null;}
-  if(top[1]-.04*FT<=bottom+.1*FT&&!exact)return null;
+  if((!exact||mount.kind!=='free')&&top[1]-.04*FT<=minimumBottom+.1*FT)return null;
   const under=[...outletTop];
   under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
   // A dropped flat ceiling closes the eave face below the old soffit. Keep
@@ -685,7 +685,8 @@ function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=fal
     const ceiling=low-(section.thickness_ft??ROOF_THICKNESS)-section.underside.drop_ft;
     under[1]=Math.min(under[1],(ctx.f.base+ceiling)*FT-GUTTER.soffitClearIn/12*FT);
   }
-  if(under[1]<=bottom+.1*FT){if(!exact)return null;under[1]=outletTop[1];}
+  if(under[1]<=(exact&&mount.kind!=='free'?minimumBottom:bottom)+.1*FT){
+    if(!exact||mount.kind!=='free')return null;under[1]=outletTop[1];}
   const rimBotY=deckH!==null?Math.max(deckH+.06*FT,bottom+.35*FT):null;
   const rimTopY=rimBotY!==null?rimBotY+dropShift*FT:null;
   let upperAt=dropAt,useJog=false;
@@ -750,6 +751,15 @@ function exactCandidate(ctx,c,flags){
     if(value)return value;
   }
   return mountedCandidate(ctx,segment,at,null,[...flags,'no-support'],GUTTER.openingClearMinFt,free,true);
+}
+function keptCandidate(ctx,value){
+  // Reuse the full route; warn only for an opening beside a vertical leg of it.
+  const overOpening=value.path.some((p,i)=>{
+    const q=value.path[i-1];if(!q||Math.hypot(p[0]-q[0],p[2]-q[2])>EPS)return false;
+    return openingCheck(ctx,{at:ctx.f.local(p).slice(0,2)},[p[0],Math.max(p[1],q[1]),p[2]],
+      Math.min(p[1],q[1]),GUTTER.openingClearMinFt,true,false).blocked;
+  });
+  return {...value,flags:[...value.flags,...(overOpening?['over-opening']:[])]};
 }
 function edgeLine(ctx,segment){
   const r=ctx.b.roofs?.find(r=>r.id===segment.roof),area=r?.area;
@@ -856,13 +866,13 @@ export function downspouts(plan={},runs=[]){
       if(!value)legacyFailures.set(c,attempt);
       return {...c,value};})
       .filter(c=>c.value&&c.value.mount!=='hang');
+    const ends=()=>all.filter(c=>c.end&&!c.inner&&!c.cut());
     let valid=legacy(convex,[]);
+    if(!valid.length)valid=legacy(ends(),['no-outside-corner']);
     for(const clearance of valid.length?[]:[GUTTER.openingClearFt,GUTTER.openingClearMinFt]){
       valid=convex.map(c=>({...c,value:checked(c,[],clearance)})).filter(c=>c.value&&c.value.mount!=='hang');
       if(valid.length)break;
     }
-    const ends=()=>all.filter(c=>c.end&&!c.inner&&!c.cut());
-    if(!valid.length)valid=legacy(ends(),['no-outside-corner']);
     if(!valid.length)for(const clearance of [GUTTER.openingClearFt,GUTTER.openingClearMinFt]){
       valid=ends()
         .map(c=>({...c,value:checked(c,['no-outside-corner'],clearance)})).filter(c=>c.value&&c.value.mount!=='hang');
@@ -910,7 +920,9 @@ export function downspouts(plan={},runs=[]){
         &&!c.value.flags.some(f=>['no-safe-landing','outlet-blocked'].includes(f))&&nearRunCorner(state.ctx,segment,at,c));
       const flags=nearCorner?[]:['placed-off-corner'];
       const c={segment,at,key:`exact:${id}:${authoredIndex}`,exact:true,source:'override',overrideFraction:fraction,authoredIndex};
-      c.value=exactCandidate(state.ctx,c,flags);state.selected.push(c);continue;
+      const matching=state.valid.find(v=>v.segment.roof===segment.roof&&v.segment.edge===segment.edge
+        &&v.value.mount!=='hang'&&!v.value.flags.includes('stub')&&dist(v.value.top,gutterBottom(state.ctx,segment,at))<=.02*FT+EPS);
+      c.value=matching?keptCandidate(state.ctx,matching.value):exactCandidate(state.ctx,c,flags);state.selected.push(c);continue;
     }
     const choices=compiled.flatMap(state=>state.valid.filter(c=>`${state.run.building}:${segmentKey(c.segment)}`===id)
       .map(c=>({state,c,gap:Math.abs(edgeFraction(state.ctx,c.segment,c.at)-fraction)})))

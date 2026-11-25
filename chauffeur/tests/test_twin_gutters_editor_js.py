@@ -299,6 +299,31 @@ await test('test_add_disabled_at_8_and_fallback_on_no_free_corner',async()=>{
   roof().edges[0].downspouts=[{at:.5}];edge(0);
   assert.equal(button('Add downspout').disabled,true,'disabled when no place >= 1 ft from existing entries');
 });
+await test('test_add_omits_only_automatic_stubs_and_keeps_row_and_handle_until_add',async()=>{
+ setup();roof().edges[0].gutter=true;plan.buildings[0].levels[0].outline=[];
+ const C=await import(file('static/twin/editor/gutter_controls.js'));
+ const before=spouts();assert.ok(before.length);assert.ok(before.every(s=>s.flags.includes('stub')));
+ assert.deepEqual(C.downspoutValues(plan,'b','r',0),before.map(s=>s.edge.fraction),'stubs remain available to their rows and drag');
+ edge(0);assert.equal(host.querySelectorAll('[data-downspout-row]').length,before.length);
+ const rig=handleRig();try{assert.ok(rig.handles.handles().some(h=>h.kind==='downspout'&&h.spout===before[0].id));}
+ finally{rig.abort.abort();}
+ await press('Add downspout');assert.deepEqual(ops[0].downspouts,[{at:.5}]);
+ plan=structuredClone(plan);roof().edges[0].downspouts=ops[0].downspouts;
+ assert.equal(spouts().length,1);assert.equal(spouts()[0].exact,true);assert.ok(!spouts()[0].flags.includes('stub'));
+ // Explicitly authored requests remain, even when their current result is a stub.
+ roof().edges[0].downspouts=[0];assert.deepEqual(C.addDownspout(plan,'b','r',0),[0,{at:.5}]);
+});
+await test('test_exact_rounding_preserves_interior_and_explicit_endpoints',async()=>{
+ const C=await import(file('static/twin/editor/gutter_controls.js'));
+ for(const [f,want] of [[0,0],[1,1],[.000001,.0001],[.000049,.0001],[.999951,.9999],[.999999,.9999],[.123456,.1235]]){
+  assert.equal(C.roundAt(f),want);
+  setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=[{at:.5}];edge(0);
+  const input=control('Downspout 1 fraction');input.value=String(f);fire(input,'change');await tick();await cards.queue(()=>{});await tick();
+  assert.deepEqual(ops[0].downspouts,[{at:want}],'numeric edit preserves interior/end distinction');
+  assert.deepEqual(C.snapOrExact(plan,'b','r',0,f,[]),{at:want},'drag storage uses same rounding');
+ }
+});
+
 await test('test_convert_both_ways_numeric_edit_and_reset',async()=>{
   // Number row: "Keep exactly here" turns authored 0.2 (snapped to corner 0) into {at: 0}.
   setup();roof().edges[0].gutter=true;roof().edges[0].downspouts=[.2,{at:.55}];edge(0);

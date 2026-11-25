@@ -6,7 +6,10 @@ export const gutterSnapshot = gutterPlacement;
 
 const FT = .3048;
 const clamp = x => Math.max(0, Math.min(1, x));
-export const roundAt = x => Math.round(clamp(Number(x)) * 1e4) / 1e4;
+export const roundAt = x => {
+  const f = clamp(Number(x));
+  return f === 0 || f === 1 ? f : Math.max(.0001, Math.min(.9999, Math.round(f * 1e4) / 1e4));
+};
 
 export const edgeOperation = (building, roof, edge, change) => ({ op: 'set_roof_edge', building, roof, edge, ...change });
 
@@ -210,10 +213,17 @@ function exposedEdgeIntervals(plan, building, roof, edge, snapshot = null) {
 export function addDownspout(plan, building, roof, edge, snapshot = null, candidates = null) {
   const { r } = roofRecord(plan, building, roof);
   const snap = snapshot || gutterSnapshot(plan);
-  const values = downspoutValues(plan, building, roof, edge, snap);
+  // Materialise only full automatic drops. Keep diagnostic stubs in the normal
+  // row/handle snapshot until Add replaces them with a real authored outlet.
+  const ids = new Set(snap.runs.filter(run => run.building === building).map(run => run.id));
+  const full = Array.isArray(r?.edges?.[edge]?.downspouts) ? null : snap.spouts.filter(s =>
+    ids.has(s.run) && s.edge.roof === roof && s.edge.edge === edge && !(s.flags || []).includes('stub'));
+  const values = full ? full.map(s => s.exact ? { at: s.authoredFraction ?? s.edge.fraction } : s.edge.fraction)
+    : downspoutValues(plan, building, roof, edge, snap);
   if (values.length >= 8) return null;
   const seg = edgeSegment(r, edge);
-  const existing = values.map((entry, i) => placedFraction(plan, building, roof, edge, i, entry, snap)).filter(Number.isFinite);
+  const existing = (full ? full.map(s => s.edge.fraction)
+    : values.map((entry, i) => placedFraction(plan, building, roof, edge, i, entry, snap))).filter(Number.isFinite);
   const clear = f => existing.every(v => seg ? Math.abs(f - v) * seg.length >= 1 - 1e-6 : Math.abs(f - v) >= 1e-5);
   const free = edgeCandidates(plan, building, roof, edge, candidates).find(c => !c.occupied && !(c.nearExact?.length) && clear(c.fraction));
   if (free) return [...values, free.fraction];

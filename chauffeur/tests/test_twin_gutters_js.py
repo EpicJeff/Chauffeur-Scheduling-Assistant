@@ -376,6 +376,44 @@ for(const oh of [1,2])await test(`test_exact_candidate_references_cross_separate
  assert.equal(corner.occupied,false);assert.deepEqual(corner.nearExact,[{roof:'r',edge:0,index:1}]);
 });
 
+for(const oh of [0,1,2])for(const clearance of [1,.7])for(const entries of [null,[0],[1]])
+await test(`test_legacy_free_end_precedes_new_corner_overhang_${oh}_clear_${clearance}_entries_${entries}`,()=>{
+ const p=house(40),b=p.buildings[0];b.roofs=[];b.roof.sections=[];
+ roof(p,'r',[0,0,20,8],'shed',{low_side:'y0',overhang:oh});
+ b.openings=[{id:'window',wall:'w0',kind:'window',at:clearance+1,width:2,sill:3,head:7}];
+ if(entries)override(p,0,entries);
+ const old=mainCalc(p),now=calc(p);assert.equal(old.spouts.length,1);near(old.spouts[0].edge.fraction,1);
+ assert.deepEqual(old.spouts[0].flags,['no-outside-corner']);fullDrop(old.spouts[0]);
+ assert.deepEqual(priorFields(now),old,'legacy free-end run stays byte-identical');
+});
+for(const oh of [0,1,2])await test(`test_keep_reuses_full_candidate_route_on_other_face_overhang_${oh}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];
+ b.openings=[{id:'near',wall:'w0',kind:'window',at:1.8,width:2,sill:3,head:7},
+  {id:'far',wall:'w0',kind:'window',at:28.2,width:2,sill:3,head:7}];
+ override(p,0,[0]);const before=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(before);
+ assert.ok(before.path.at(-2)[0]<0,'automatic/numeric route uses west face');
+ override(p,0,[{at:before.edge.fraction}]);const kept=calc(p).spouts.find(s=>s.exact);
+ assert.deepEqual(kept.path,before.path,'Keep reuses every route point');
+ assert.deepEqual(kept.outlet,before.outlet);assert.deepEqual(kept.flags,before.flags);
+ assert.equal(kept.authoredIndex,0);assert.equal(kept.exact,true);
+});
+for(const oh of [1,2])await test(`test_exact_mount_uses_automatic_minimum_drop_overhang_${oh}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];override(p,0,[{at:.5}]);
+ const outlet=calc(p).spouts.find(s=>s.exact).top[1]/FT;
+ roof(p,'low',[-5,-.4,35,10],'flat',{plate:outlet-.4});
+ b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};
+ const s=calc(p).spouts.find(s=>s.exact);fullDrop(s);assert.equal(s.mount,'free');
+ assert.ok(!s.flags.includes('outlet-blocked'),'open outlet falls back rather than spilling at short mount');
+});
+for(const oh of [0,1,2])await test(`test_free_elbow_clears_higher_outward_ground_overhang_${oh}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];b.walls=[];b.levels[0].outline=rect(100,100,130,120);
+ override(p,0,[{at:.5}]);const bare=calc(p).spouts.find(s=>s.exact),mouth=local(p,bare.outlet.at);
+ p.site.terraces=[{id:'step',polygon:rect(10,mouth[1]-.2,20,mouth[1]+.2),height:2,blend:0}];
+ const s=calc(p).spouts.find(s=>s.exact);assert.equal(s.mount,'free');fullDrop(s);
+ near(local(p,s.path.at(-2))[2],2.5);near(local(p,s.outlet.at)[2],2+4/12);
+ assert.deepEqual(s.outlet.dir,bare.outlet.dir,'normal outward elbow is retained');
+});
+
 function attachedPorch(kind){
  const p=house(),b=p.buildings[0];b.roofs[0].edges.forEach(e=>e.gutter=false);b.roof.sections[0].gutters={};
  const s=roof(p,'porchroof',[5,-8,25,0],kind,{ridge:'y',plate:8,pitch:3,overhang:1});
