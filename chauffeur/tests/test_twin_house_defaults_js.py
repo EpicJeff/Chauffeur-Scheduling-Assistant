@@ -22,6 +22,9 @@ const sites=(out,kind)=>[...new Set([...out.pieces].filter(([k])=>k.startsWith('
  if(kind==='shower_tile'||kind==='shower_glass')return d.kind==='fixture'&&d.pieceId==='shower'&&m===(kind==='shower_tile'?'ceramic':'glass');
  return false;
 })))];
+// Columns have child piece ids. Aggregate the porch and its post registries
+// before comparing an entire porch across a material-induced bucket split.
+const porchPieces=out=>[...new Set([...out.pieces].filter(([key])=>key==='a:porch' || out.pieceBounds.get(key)?.data.parentPieceId==='porch').flatMap(([,objects])=>objects))].filter(o=>o.isMesh);
 // A changed material can split a merge bucket. Compare triangles in world
 // space, including the original UVs, independently of that batching.
 const triangles=(objects,keep=()=>true)=>objects.flatMap(o=>{
@@ -48,7 +51,7 @@ for(const kind of ['trim','fascia','casing','window_frame','pane','door','column
    assert.deepEqual(triangles(actual),triangles(expected,columns),'column default reaches only columns');
    const unchanged=piece(after,'porch').filter(o=>o.material.name==='trim'&&o.material.userData.materialId!=='choice');
    assert.deepEqual(triangles(unchanged),triangles(expected,supports),'porch supports keep their trim');
-   assert.deepEqual(triangles(piece(after,'porch')),triangles(piece(before,'porch')),'all porch positions and UVs unchanged');
+   assert.deepEqual(triangles(porchPieces(after)),triangles(porchPieces(before)),'all porch positions and UVs unchanged');
   }else assert.deepEqual(triangles(actual),triangles(expected),kind+' exact geometry at the intended sites');
  });
 }

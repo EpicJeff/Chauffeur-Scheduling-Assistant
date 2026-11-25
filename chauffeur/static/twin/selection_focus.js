@@ -50,15 +50,15 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
   function syncMaterials(sync) {
     for (const [source, cache] of variants) for (const material of cache.values()) sync(source, material);
   }
-  function apply(root, room, accent, wallTint, { pieces, site, yard = site, piecesRevision = pieces?.revision } = {}) {
+  function apply(root, room, accent, wallTint, { pieces, site, yard = site, piecesRevision = pieces?.revision, members = [] } = {}) {
     const sceneState = warmState();
-    const key = room && JSON.stringify([room, accent, wallTint, piecesRevision, sceneState]);
+    const key = JSON.stringify([room, members, accent, wallTint, piecesRevision, sceneState]);
     if (root === activeRoot && key === activeKey && yard === activeYard) return ready;
     restore();
-    if (!root || !room) return ready = Promise.resolve();
+    if (!root || !room && !members.length) return ready = Promise.resolve();
     activeRoot = root; activeKey = key; activeYard = yard;
     const stamp = revision, pending = [], warm = new THREE.Group(), warmKeys = new Set();
-    const allowed = new Set(room.allowed || []), walls = new Set(room.walls || []), eligible = new Set();
+    const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []), eligible = new Set();
     // Match the original focus scope: registered pieces and the site domain.
     for (const objects of pieces?.values() || []) for (const object of objects) eligible.add(object);
     site?.traverse(object => eligible.add(object));
@@ -84,10 +84,14 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
         for (let p = object; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${room.building}:${room.level}`;
         return false;
       };
-      const mode = data => room.kind === 'level' && inLevel() ? [null, null]
-        : data.buildingId === room.building && allowed.has(data.pieceId)
-          ? data.pieceId === room.id ? ['tint', accent] : walls.has(data.pieceId) ? ['tint', wallTint] : [null, null]
-          : ['ghost', null];
+      const mode = data => {
+        const selected=members.some(m=>(data.buildingId ?? null)===m.building && (m.kind==='building' || m.pieceId===data.pieceId));
+        if (!room) return selected ? ['tint',accent] : [null,null];
+        const inside=data.buildingId===room.building && (allowed.has(data.pieceId) || allowed.has(data.parentPieceId));
+        if (inside || room.kind==='level' && data.kind!=='porch_post' && inLevel())
+          return selected || data.pieceId===room.id ? ['tint',accent] : walls.has(data.pieceId) ? ['tint',wallTint] : [null,null];
+        return ['ghost',null];
+      };
       const partition = () => {
         followGeometry();
         const sources = [].concat(source), baseGroups = geometryBase.groups;

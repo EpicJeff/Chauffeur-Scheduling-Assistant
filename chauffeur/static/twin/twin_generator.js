@@ -950,7 +950,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   };
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new BuildingRegistry(), pieceBounds = new BuildingRegistry(), pickObjects = new BuildingRegistry(), roofSurfaces = new BuildingRegistry(), mergeGroups = [], ghostBatches = [];
-  const ghostRoofCover = new Map();
+  const ghostRoofCover = new Map(), postGeometry = new Map();
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
   const materialKitFor = refs => materialKitWithRefs(kit, refs);
@@ -2220,12 +2220,25 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           : first.elevation + first.ceiling;
         return supportCap(x, y, floor, height);
       };
+      const columnGeometry = c => {
+        const top=topAt(...c.at);
+        return solid && top<=floor ? null : boxRect(c.at[0]-c.size/2,c.at[1]-c.size/2,c.at[0]+c.size/2,c.at[1]+c.size/2,floor,top);
+      };
+      postGeometry.set(po.id, { group:local[first.id], material:()=>kindMat('column',po), columns(next) {
+        const result=new Map(), rows=[], finish=kindMat('column',po), ref=kindRef('column',po), seed=`${b.id}:${po.id}`;
+        for (const [i,c] of (next.columns || []).entries()) {
+          const geometry=columnGeometry(c);result.set(postRef(next,i),geometry);if(!geometry)continue;
+          if(ref?.uv)rows.push({geometry,material:finish,seed,offset:ref.uv,key:seed});
+          else offsetSurfaceUvs(geometry,finish,seed);
+        }
+        offsetSurfaceUvParts(rows);return result;
+      }, screenKey: next => JSON.stringify(screenSpans(next).map(({c,d,start,end})=>[c.at,d.at,start,end])) });
       for (const [columnIndex, c] of (po.columns || []).entries()) {
-        const top = topAt(...c.at);
-        if (solid && top <= floor) continue;
+        const geometry=columnGeometry(c);
+        if (!geometry) continue;
         const porchId = activePiece.pieceId;
         activePiece = { ...activePiece, kind: 'porch_post', pieceId: postRef(po, columnIndex), parentPieceId: porchId, part: 'column' };
-        tagPart(mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po), null, `${b.id}:${porchId}`, kindRef('column', po), 'column'), 'column');
+        tagPart(mesh(local[first.id], geometry, kindMat('column', po), null, `${b.id}:${porchId}`, kindRef('column', po), 'column'), 'column');
         if (!porchColumnBounds.has(porchId)) porchColumnBounds.set(porchId, new THREE.Box3());
         const bounds = records.get(`${b.id}:${activePiece.pieceId}`).box;
         const slab = records.get(`${b.id}:${porchId}`)?.box;
@@ -2239,40 +2252,45 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= floor
         && (levels[w.level]?.elevation ?? 0) + w.height > floor);
-      if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
-        const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
-        const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
-        if (!length) continue;
-        const project = p => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length;
-        const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
-        const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
-          && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
-        // Polygon corners close the ends too: an attached side needs a panel
-        // from the house wall to its single outside post (R19).
-        posts.unshift({ at: a, size: 0 });
-        posts.push({ at: endPoint, size: 0 });
-        for (let j = 1; j < posts.length; j++) {
-          const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
-          if (span <= (c.size + d.size) / 2) continue;
-          const basis = wallBasis(c.at, d.at, floor);
-          // Subtract wall spans so an attached side never receives a screen.
-          let gaps = [[c.size / 2, span - d.size / 2]];
-          for (const w of porchWalls) {
-            if (distance(w.from) > w.thickness + 0.1 || distance(w.to) > w.thickness + 0.1) continue;
-            const lo = Math.min(project(w.from), project(w.to)) - project(c.at), hi = Math.max(project(w.from), project(w.to)) - project(c.at);
-            gaps = gaps.flatMap(([s, e]) => hi <= s || lo >= e ? [[s, e]] : [[s, Math.max(s, lo)], [Math.min(e, hi), e]].filter(([u, v]) => v > u));
-          }
-          for (const [start, end] of gaps) {
-            const shape = new THREE.Shape(); shape.moveTo(start, 0); shape.lineTo(end, 0);
-            const count = Math.max(1, Math.ceil((end - start) * 2));
-            for (let k = count; k >= 0; k--) {
-              const t = start + (end - start) * k / count;
-              shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
+      function screenSpans(po) {
+        const result=[];
+        if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
+          const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
+          const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
+          if (!length) continue;
+          const project = p => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length;
+          const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
+          const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
+            && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
+          // Polygon corners close the ends too: an attached side needs a panel
+          // from the house wall to its single outside post (R19).
+          posts.unshift({ at: a, size: 0 });
+          posts.push({ at: endPoint, size: 0 });
+          for (let j = 1; j < posts.length; j++) {
+            const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
+            if (span <= (c.size + d.size) / 2) continue;
+            // Subtract wall spans so an attached side never receives a screen.
+            let gaps = [[c.size / 2, span - d.size / 2]];
+            for (const w of porchWalls) {
+              if (distance(w.from) > w.thickness + 0.1 || distance(w.to) > w.thickness + 0.1) continue;
+              const lo = Math.min(project(w.from), project(w.to)) - project(c.at), hi = Math.max(project(w.from), project(w.to)) - project(c.at);
+              gaps = gaps.flatMap(([s, e]) => hi <= s || lo >= e ? [[s, e]] : [[s, Math.max(s, lo)], [Math.min(e, hi), e]].filter(([u, v]) => v > u));
             }
-            shape.closePath();
-            tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po), null, null, kindRef('screen', po), 'screen'), 'screen');
+            for (const [start,end] of gaps) result.push({c,d,span,start,end});
           }
         }
+        return result;
+      }
+      for (const {c,d,span,start,end} of screenSpans(po)) {
+        const basis=wallBasis(c.at,d.at,floor);
+        const shape = new THREE.Shape(); shape.moveTo(start, 0); shape.lineTo(end, 0);
+        const count = Math.max(1, Math.ceil((end - start) * 2));
+        for (let k = count; k >= 0; k--) {
+          const t = start + (end - start) * k / count;
+          shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
+        }
+        shape.closePath();
+        tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po), null, null, kindRef('screen', po), 'screen'), 'screen');
       }
     }
     for (const [index, s] of (b.stairs || []).entries()) {
@@ -2637,6 +2655,6 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
   if (timing) detail.generate += Math.max(0, performance.now() - generationStart - (detail.materials - materialBefore) - (detail.batch - batchBefore));
-  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes,
+  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes, postGeometry,
     stale: false, get degraded() { return failedModel || [...materials.values()].some(m => m.userData.assetFailed); } };
 }

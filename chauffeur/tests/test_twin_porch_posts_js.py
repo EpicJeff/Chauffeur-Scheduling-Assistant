@@ -1,11 +1,129 @@
-"""Runtime JS contract for posts, bake identity and local edits."""
+"""Runtime post contract. Default: focused regressions and a sampled wall sweep.
+--full also runs every household wall/joint/room and split/pull case, both
+household bake tiers, and the inward/non-gutter porch settle variants.
+"""
 from test_twin_porch_posts_model import ROOT, patio, bridge, unittest, household, command, ops, twin_model
 import copy
 import json
+import sys
+import time
+FULL = "--full" in sys.argv
+if FULL: sys.argv.remove("--full")
+
+def sweep_rows(rows, building, key="id"):
+    if FULL: return rows
+    corners={j for r in building.get("rooms",[]) if r.get("kind")=="porch" for j in r.get("joints",[])}
+    porch=[r for r in rows if r.get("kind")=="porch" or r.get("id") in corners or any(j in corners for j in r.get("joints",[]))]
+    chosen=rows[:1]+porch[:1]+porch[-1:]
+    return list({r[key]:r for r in chosen}.values())
 from twin_editor_dom import PRELUDE, run_node
 
 
 class PostsJS(unittest.TestCase):
+    def run(self, result=None):
+        start=time.monotonic()
+        try:return super().run(result)
+        finally:print("POSTS_TEST_TIME "+self._testMethodName+" "+str(round(time.monotonic()-start,3)),flush=True)
+
+    def test_fix3_post_release_and_tint_ranges(self):
+        from test_twin_view_settle_js import PREFIX
+        code,out=run_node(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+try{
+const explicit=structuredClone(input.plan),plan=structuredClone(input.plan),bid=plan.buildings[0].id,id='post:patio:0';delete plan.buildings[0].porches[0].materials.column;plan.buildings[0].porches[0].floor=2;
+const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);
+const v=await mountTwin(host,{plan,kit,tier:'low',bake:false});
+try{
+ let initial=lastTwin;const geometryRows=(twin,piece)=>{const rows={};for(const o of twin.pieces.get(bid+':'+piece)||[]){for(const r of o.userData.snapRanges||[]){if(r.pieceId!==piece)continue;for(const [name,a] of Object.entries(o.geometry.attributes))if(['position','normal','uv'].includes(name))(rows[name]||=[]).push(...a.array.slice(r.start*a.itemSize,(r.start+r.count)*a.itemSize));}}return rows;};
+ const batches=(lastTwin.pieces.get(bid+':'+id)||[]).filter(o=>o.userData.snapRanges?.some(r=>r.pieceId!==id));assert.ok(batches.length,'post shares a material batch');assert.ok(batches.some(o=>o.userData.snapRanges.some(r=>r.kind!=='porch_post')),'posts share with trim, not just other posts');
+ const saved=batches.map(o=>({o,material:o.material,groups:JSON.stringify(o.geometry.groups)}));
+ const checkTint=()=>{for(const {o} of saved)for(const r of o.userData.snapRanges){const groups=o.geometry.groups.length?o.geometry.groups:[{start:0,count:o.geometry.attributes.position.count,materialIndex:0}];for(const g of groups)if(g.start<r.start+r.count&&r.start<g.start+g.count){const m=[].concat(o.material)[g.materialIndex];assert.equal(!!m.userData.selectionTint,r.pieceId===id,'only selected post tinted: '+r.pieceId);}}};
+ v.setSelection({selected:{kind:'porch_post',id,building:bid,level:'L1'}});await v.selectionReady;checkTint();
+ v.setSelection({selected:null});for(const row of saved){assert.equal(row.o.material,row.material);assert.equal(JSON.stringify(row.o.geometry.groups),row.groups);}
+ v.setSelection({selected:null,hover:{kind:'porch_post',id,building:bid,level:'L1'}});for(const row of saved)assert.equal(row.o.material,row.material,'hover cannot tint the entire batch');v.setSelection({selected:null});
+ await v.rebuild(explicit);initial=lastTwin;let current=explicit;
+ for(const change of [{at:[4,5]},{size:1.25},{at:[7,2],size:.5}]){
+  const next=structuredClone(current);Object.assign(next.buildings[0].porches[0].columns[0],change);
+  const proxy=lastTwin.pickObjects.get(bid+':'+id),arrays=new Map((lastTwin.pieces.get(bid+':'+id)||[]).map(o=>[o,o.geometry.attributes.position.array]));
+  if(change.at)v.rebuildLevel(bid,'L1',next,{walls:[],rooms:[],openings:[],anchors:[],items:[]});
+  const n=generations,result=await v.settle(next,{buildingId:bid,levelId:'L1'});assert.equal(result.path,'deform');assert.equal(generations,n);assert.equal(lastTwin,initial);
+  assert.equal(lastTwin.pickObjects.get(bid+':'+id),proxy);for(const [o,a] of arrays)assert.equal(o.geometry.attributes.position.array,a);
+  const fresh=buildTwin(structuredClone(next),kit,'low',{viewing:false});await fresh.ready;
+  for(const p of ['post:patio:0','post:patio:1']){const actual=geometryRows(lastTwin,p),expected=geometryRows(fresh,p);for(const name of ['position','normal','uv']){assert.equal(actual[name].length,expected[name].length);for(let i=0;i<actual[name].length;i++)assert.ok(Math.abs(actual[name][i]-expected[name][i])<2e-5,JSON.stringify({p,name,i,a:actual[name][i],e:expected[name][i]}));}}
+  assert.ok(lastTwin.pieceBounds.get(bid+':'+id).box.equals(fresh.pieceBounds.get(bid+':'+id).box));current=next;
+ }
+}finally{v.dispose();}
+}catch(error){console.error(error);process.exit(1);}finally{finish();}
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(patio())),timeout=90)
+        self.assertEqual(code,0,out)
+
+    def test_fix3_post_release_exceptions(self):
+        from test_twin_view_settle_js import PREFIX
+        code,out=run_node(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+try{
+for(const mode of ['screen','gutter','interior-screen']){
+ const p=structuredClone(input.plan),b=p.buildings[0],po=b.porches[0];po.screened=mode.includes('screen');po.gutter=mode==='gutter';b.walls=[];b.openings=[];b.anchors=[];
+ if(mode!=='interior-screen')po.columns.forEach((c,i)=>c.at=[i?16:0,0]);
+ const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);const v=await mountTwin(host,{plan:p,kit,tier:'low',bake:false});
+ try{
+  const before=lastTwin,next=structuredClone(p);next.buildings[0].porches[0].columns[0].at=mode==='interior-screen'?[4,5]:[4,0];
+  const result=await v.settle(next);assert.equal(result.path,mode==='interior-screen'?'deform':'rebuild',mode);
+  if(mode==='gutter')assert.ok(before.gutters.spouts.some(s=>s.mount==='post'),'gutter exception exercises a post-mounted downspout');
+  const fresh=buildTwin(structuredClone(next),kit,'low',{viewing:false});await fresh.ready;assert.deepEqual(lastTwin.gutters,fresh.gutters);
+  const parts=twin=>{const rows=[];twin.root.traverse(o=>{if(!o.isMesh||o.layers.isEnabled(31))return;for(const r of o.userData.snapRanges||[])if(r.pieceId==='patio'||r.parentPieceId==='patio')rows.push([r.pieceId,r.bakePart,r.count,Array.from(o.geometry.attributes.position.array.slice(r.start*3,(r.start+r.count)*3))]);});return rows;};
+  assert.deepEqual(parts(lastTwin),parts(fresh),mode+' fresh geometry');
+ }finally{v.dispose();}
+}
+}catch(error){console.error(error);process.exit(1);}finally{finish();}
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(patio())),timeout=90)
+        self.assertEqual(code,0,out)
+
+    def test_fix3_post_crosses_roof_floor(self):
+        from test_twin_view_settle_js import PREFIX
+        code,out=run_node(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+try{
+const p=input.plan,b=p.buildings[0],po=b.porches[0];po.floor=10.5;po.foundation.type='solid';po.columns[0].at=[4,6];po.columns[1].at=[8,0];
+const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);const v=await mountTwin(host,{plan:p,kit,tier:'low',bake:false});
+try{let current=p;const initial=lastTwin;
+ for(const [index,at] of [[0,[4,0]],[0,[4,7]],[1,[8,7]]]){
+  const next=structuredClone(current);next.buildings[0].porches[0].columns[index].at=at;
+  v.setSelection({selected:{kind:'porch_post',id:'post:patio:'+index,building:b.id,level:'L1'}});await v.selectionReady;
+  const n=generations;assert.equal((await v.settle(next)).path,'deform');assert.equal(lastTwin,initial);assert.equal(generations,n);
+  const fresh=buildTwin(structuredClone(next),kit,'low',{viewing:false});await fresh.ready;
+  const geometry=(twin,id)=>Object.fromEntries(['position','normal','uv'].map(name=>{const a=[];for(const o of twin.pieces.get(b.id+':'+id)||[])for(const r of o.userData.snapRanges||[])if(r.pieceId===id){const attr=o.geometry.attributes[name];a.push(...attr.array.slice(r.start*attr.itemSize,(r.start+r.count)*attr.itemSize));}return [name,a];}));
+  for(const id of ['post:patio:0','post:patio:1'])assert.deepEqual(geometry(lastTwin,id),geometry(fresh,id));current=next;
+ }
+}finally{v.dispose();}
+}catch(error){console.error(error);process.exit(1);}finally{finish();}
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(patio())),timeout=90)
+        self.assertEqual(code,0,out)
+
+    def test_fix3_focus_and_post_context(self):
+        from test_twin_view_settle_js import PREFIX
+        code,out=run_node(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+try{
+const {createRoomSelection}=await import(file('static/twin/editor/selection.js'));
+const {roomInQuestion}=await import(file('static/twin/editor/room_context.js'));
+const p=input.plan,b=p.buildings[0];b.levels.push({id:'L2',elevation:12,ceiling:8});
+const upper=structuredClone(b.porches[0]);upper.id='upper';upper.level='L2';upper.floor=12;b.porches.push(upper);b.rooms.push({...structuredClone(b.rooms[0]),id:'upper',level:'L2'});
+const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);const v=await mountTwin(host,{plan:p,kit,tier:'low',bake:false});
+try{
+ const post={kind:'porch_post',id:'post:upper:0',building:b.id,parentPieceId:'upper'};
+ assert.equal(roomInQuestion(p,post)?.room.id,'upper');
+ assert.ok(v.levelFocusMembers(b.id,'L2').includes(post.id));assert.ok(!v.levelFocusMembers(b.id,'L1').includes(post.id));
+ const s=createRoomSelection({view:v,getPlan:()=>p});s.focusRoom({kind:'level',id:'L2',building:b.id});await v.selectionReady;assert.ok(s.inside(post));assert.ok(!s.inside({kind:'porch_post',id:'post:patio:0',building:b.id}));
+ v.setSelection({room:{kind:'level',id:'L2',building:b.id,level:'L2',allowed:['upper'],walls:[]}});await v.selectionReady;
+ assert.ok(v.isInSelectionFocus(post));
+ for(const o of lastTwin.pieces.get(b.id+':'+post.id)||[])for(const r of o.userData.snapRanges||[]){if(r.pieceId!==post.id)continue;const g=o.geometry.groups.find(g=>g.start<=r.start&&g.start+g.count>r.start);assert.ok(![].concat(o.material)[g?.materialIndex||0].userData.styledFade,'upper post is in Focus');}
+ s.leaveRoom();assert.equal(s.current().room,null);
+}finally{v.dispose();}
+}catch(error){console.error(error);process.exit(1);}finally{finish();}
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(patio())),timeout=90)
+        self.assertEqual(code,0,out)
+
     def test_fix2_mounted_porch_settle_equals_fresh(self):
         from test_twin_view_settle_js import PREFIX
         from test_twin_house_save_stable import MemoryHouse
@@ -20,7 +138,8 @@ class PostsJS(unittest.TestCase):
                 self.assertEqual([(p['id'],p.get('columns',[])) for p in actual.get('porches',[])],[(p['id'],p.get('columns',[])) for p in b.get('porches',[])])
             return result
         model=twin_model.normalize(household())[0]; cases=[]
-        for bid,wall,by in [('main-house','separator-73',-2),('main-house','separator-73',2),('pool-house',None,[2,0])]:
+        moves=[('main-house','separator-73',-2),('main-house','separator-73',2),('pool-house',None,[2,0])] if FULL else [('pool-house',None,[2,0])]
+        for bid,wall,by in moves:
             b=next(b for b in model['buildings'] if b['id']==bid)
             if wall is None:
                 positions={j['id']:j['at'] for j in b['joints']}
@@ -96,12 +215,13 @@ for(const c of input.cases){const local=applyLocal(input.plan,c.operation);asser
 """,dict(root=ROOT.as_posix(),plan=bridge.flatten(split),cases=cases))
         self.assertEqual(code,0,out)
 
+    @unittest.skipUnless(FULL,"exhaustive sweep: run with --full; direct split/pull and wall cases run by default")
     def test_fix2_household_split_pull_sweep(self):
         import math
         model=twin_model.normalize(household(),preserve_room_polygons=True)[0];cases=[];refused=0;accepted=0
         for b in model['buildings']:
             positions={j['id']:j['at'] for j in b['joints']}
-            for wall in b['walls']:
+            for wall in sweep_rows(b['walls'],b):
                 split_op=dict(op='split_wall',building=b['id'],wall=wall['id'],at=math.dist(*(positions[j] for j in wall['joints']))/2)
                 try:split,_=ops.apply(model,split_op)
                 except ops.Refused:refused+=1;continue
@@ -136,19 +256,20 @@ console.log('FIX2_SPLIT_PULL_SWEEP '+JSON.stringify({splits:input.cases.length,l
 """,dict(root=ROOT.as_posix(),plan=bridge.flatten(model),cases=cases,accepted=accepted,refused=refused),timeout=180)
         self.assertEqual(code,0,out);print(out)
 
+    @unittest.skipUnless(FULL,"exhaustive sweep: run with --full; direct split/pull and wall cases run by default")
     def test_fix2_room_move_sweep_against_main(self):
         import subprocess,re
         model=twin_model.normalize(household(),preserve_room_polygons=True)[0];cases=[];refused=0;attempted=0
         for b in model['buildings']:
             operations=[]
-            for w in b['walls']:
+            for w in sweep_rows(b['walls'],b):
                 operations.extend(dict(op='move_wall',building=b['id'],wall=w['id'],by=sign) for sign in (-1,1))
-            for j in b['joints']:
+            for j in sweep_rows(b['joints'],b):
                 for axis in (0,1):
                     for sign in (-1,1):
                         point=list(j['at']);point[axis]+=sign
                         operations.append(dict(op='move_joint',building=b['id'],joint=j['id'],to=point))
-            for r in b['rooms']:
+            for r in sweep_rows(b['rooms'],b):
                 operations.extend(dict(op='move_room',building=b['id'],room=r['id'],by=[sign,sign]) for sign in (-1,1))
             for operation in operations:
                 attempted+=1
@@ -180,7 +301,7 @@ console.log('FIX2_ROOM_SWEEP '+JSON.stringify({attempted:input.attempted,accepte
         model = twin_model.normalize(household(), preserve_room_polygons=True)[0]
         cases = []; refused = 0; max_distance = 0
         for b in model['buildings']:
-            for wall in b['walls']:
+            for wall in sweep_rows(b['walls'],b):
                 for sign in (-1, 1):
                     operation = dict(op='move_wall', building=b['id'], wall=wall['id'], by=sign)
                     try: after, _ = ops.apply(model, operation)
@@ -235,11 +356,12 @@ console.log('FIX1_QUEUE '+input.cases.length+' scenarios');
 """,dict(root=ROOT.as_posix(),cases=cases))
         self.assertEqual(code,0,out);print(out)
 
+    @unittest.skipUnless(FULL,"exhaustive sweep: run with --full; direct split/pull and wall cases run by default")
     def test_fix1_household_splits_leave_posts_and_preview_cost(self):
         model=twin_model.normalize(household(),preserve_room_polygons=True)[0];cases=[];refused=0
         for b in model['buildings']:
             positions={j['id']:j['at'] for j in b['joints']}
-            for wall in b['walls']:
+            for wall in sweep_rows(b['walls'],b):
                 import math
                 operation=dict(op='split_wall',building=b['id'],wall=wall['id'],at=math.dist(*(positions[j] for j in wall['joints']))/2)
                 try: after,_=ops.apply(model,operation)
@@ -319,7 +441,7 @@ for(let i=0;i<values.length;i+=3){assert.ok(values[i]>=proxy.geometry.boundingBo
 
     def test_household_drawn_bytes_and_keys_equal_main(self):
         from twin_porch_posts_evidence import compare
-        evidence = compare(bridge.flatten(household()),measure=False)
+        evidence = compare(bridge.flatten(household()),measure=False,tiers=None if FULL else ['high'])
         self.assertTrue(evidence['posts'])
         print('HOUSEHOLD_EVIDENCE '+json.dumps(evidence))
 

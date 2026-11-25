@@ -1,3 +1,4 @@
+import { gutterPlacement } from './gutters.js';
 import { porchPosts, postRef } from './porch_posts.js';
 import { createSelectionFocus } from './selection_focus.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
@@ -5,7 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mountEditorCamera } from './editor/camera_controls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles, allPorches } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles, allPorches, boxGeometry } from './twin_generator.js';
 import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
@@ -162,11 +163,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   syncStage(plan);
   scene.add(sky.object);
   let twin = null, disposed = false, revision = 0, bakeSignature = null;
-  let generatedPorches = new Map();
-  const porchGeometry = building => JSON.stringify([
-    (building.rooms || []).filter(r => r.kind === 'porch').map(r => [r.id,r.polygon]),
-    allPorches(building).map(p => [p.id,p.polygon,(p.columns || []).map((c,i) => [postRef(p,i),c.at,c.size])]),
-  ]);
+  let generatedPorches = new Map(), generatedColumns = new Map();
+  const porchGeometry = building => {
+    const porches=allPorches(building),ids=new Set(porches.map(p=>p.id));
+    return JSON.stringify([
+      (building.rooms || []).filter(r=>r.kind==='porch' && ids.has(r.id)).map(r=>[r.id,r.polygon]),
+      porches.map(p=>[p.id,p.polygon]),
+    ]);
+  };
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
@@ -266,40 +270,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
     selectionPiecesRevision = twin.pieces.revision;
+    const tints = members.filter(m => !['room','porch','level'].includes(m.kind)).flatMap(m => {
+      const id=m.id ?? m.pieceId, building=m.building ?? m.buildingId ?? null;
+      const ids=m.kind === 'roof' ? [id,...(plan.buildings?.find(b=>b.id===building)?.roof?.sections || []).filter(s=>s.roof===id).map(s=>s.id)] : [id];
+      return ids.map(pieceId=>({kind:m.kind,building,pieceId}));
+    });
     view.selectionReady = focusStyle.apply(twin.root, room, accent.getHex(), wallTint.getHex(),
-      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision });
-    if (!room) {
-      const matchesMember = (data, objects, m) => {
-        const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
-        if (data.buildingId !== mb) return false;
-        if (data.pieceId === mid || m.kind === 'building') return true;
-        if (m.kind === 'roof') {
-          const section = plan.buildings?.find(b => b.id === mb)?.roof?.sections?.find(s => s.id === data.pieceId);
-          if (section?.roof === mid) return true;
-        }
-        if (m.kind === 'level') {
-          return objects.some(o => {
-            for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${mb}:${mid}`;
-            return false;
-          });
-        }
-        return false;
-      };
-      const styled = new Set();
-      for (const [key, objects] of twin.pieces) {
-        const data = twin.pieceBounds.get(key)?.data;
-        if (!data || !members.some(m => !['room', 'porch', 'level'].includes(m.kind) && matchesMember(data, objects, m))) continue;
-        for (const object of objects) {
-          if (styled.has(object) || !object.material) continue;
-          styled.add(object); selectedMaterials.set(object, object.material);
-          const clone = material => {
-            const next = material.clone(); selectionMaterials.add(next);
-            next.color?.lerp(accent, .32); next.userData.selectionTint = accent.getHex(); return next;
-          };
-          object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
-        }
-      }
-    }
+      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision, members:room ? tints.filter(m=>m.kind==='porch_post') : tints });
     const single = members.length <= 1;
     for (const member of members) outline(member, false, { single });
     outline(hover, true, { single: true });
@@ -392,7 +369,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           && bldg?.levels.some(l => l.id === id)
           && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${buildingId}:${id}`));
     for (const [key] of keys) {
-      const proxy = twin.pickObjects.get(key); if (!proxy) continue;
+      const proxy = twin.pickObjects.get(key); if (!proxy?.geometry.attributes.position?.count) continue;
       const material = new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
       let geometry;
       const b = bldg, r = b?.rooms?.find(r => r.id === id);
@@ -935,17 +912,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     levelFocusMembers(building, level) {
       const ids = new Set([level]);
       twin?.groups.levels[`${building}:${level}`]?.traverse(object => {
-        if (object.userData.pieceId) ids.add(object.userData.pieceId);
+        if (object.userData.pieceId && object.userData.kind !== 'porch_post') ids.add(object.userData.pieceId);
         for (const range of object.userData.snapRanges || object.geometry?.userData.snapRanges || [])
-          if (range.buildingId === building) ids.add(range.pieceId);
+          if (range.buildingId === building && range.kind !== 'porch_post') ids.add(range.pieceId);
       });
+      const b=plan.buildings.find(b=>b.id===building);
+      for (const post of porchPosts(b || {})) if ((b.rooms?.find(r=>r.id===post.porchId)?.level || post.porch.level || b.levels?.[0]?.id) === level) ids.add(post.id);
       return [...ids];
     },
     selectionFloor() { const room = selectedFrame(); return room ? `${room.building}:${room.level}` : editableLevel || state.view; },
     interactionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
     isInSelectionFocus(candidate) {
       const room = selectionStyle?.room;
-      return !room || (candidate.buildingId ?? candidate.building) === room.building && room.allowed.includes(candidate.pieceId ?? candidate.id);
+      return !room || (candidate.buildingId ?? candidate.building) === room.building && (room.allowed.includes(candidate.pieceId ?? candidate.id) || room.allowed.includes(candidate.parentPieceId ?? candidate.porchId));
     },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
     selectionWorldBounds() { return currentSelectionBoxes().list.map(row => ({ ...row, box: row.box.clone() })); },
@@ -1528,13 +1507,80 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (!old || same(old.polygon, room.polygon)) continue;
         update(room.id, (x, y, z) => [x, y, z], room);
       }
-      const postsBefore = new Map(porchPosts(before).map(p=>[p.id,p]));
-      for (const post of porchPosts(after)) {
-        const old = postsBefore.get(post.id);
-        const room = after.rooms.find(r=>r.id===post.porchId);
-        if (!old || (room?.level || post.porch.level || after.levels[0].id) !== levelId || same(old.piece.at,post.piece.at)) continue;
-        const by = post.piece.at.map((v,i)=>v-old.piece.at[i]);
-        update(post.id,(x,y,z)=>[x+by[0],y+by[1],z]);
+      let postTopology=false;
+      const restorePostStyle=()=>{if(!postTopology){restoreSelection();postTopology=true;}};
+      const oldPorches=new Map(allPorches(before).map(p=>[p.id,p]));
+      for (const porch of allPorches(after)) {
+        const old=oldPorches.get(porch.id), owner=after.rooms.find(r=>r.id===porch.id);
+        if(!old || (owner?.level || porch.level || after.levels[0].id)!==levelId || same(old.columns,porch.columns))continue;
+        const generate=twin.buildings.get(buildingId)?.model.postGeometry.get(porch.id);
+        if(!generate)continue;
+        // Explicit UV transforms share the porch's UV centre. Regenerate that
+        // small set together, copying only its owned ranges into retained batches.
+        for(const [id,fresh] of generate.columns(porch)) {
+          const key=`${buildingId}:${id}`, model=twin.buildings.get(buildingId).model;
+          let record=twin.pieceBounds.get(key),proxy=twin.pickObjects.get(key);
+          if(!proxy && fresh){
+            restorePostStyle();
+            const data={kind:'porch_post',pieceId:id,parentPieceId:porch.id,buildingId,part:'column',bakePart:'column'};
+            const finish=generate.material();let batch=null;
+            generate.group.traverse(o=>{if(!batch && o.isMesh && !o.layers.isEnabled(PICK_LAYER) && o.material===finish && o.userData.snapRanges)batch=o;});
+            if(!batch){const geometry=new THREE.BufferGeometry();for(const [name,size] of [['position',3],['normal',3],['uv',2]])geometry.setAttribute(name,new THREE.BufferAttribute(new Float32Array(0),size));
+              batch=new THREE.Mesh(geometry,finish);Object.assign(batch.userData,data,{merged:true,snapRanges:[]});generate.group.add(batch);}
+            batch.userData.snapRanges.push({...data,start:batch.geometry.attributes.position.count,count:0});
+            model.pieces.set(key,[batch]);record={data,group:generate.group,box:new THREE.Box3()};model.pieceBounds.set(key,record);
+            proxy=new THREE.Mesh(new THREE.BufferGeometry(),model.materials.get('pick'));Object.assign(proxy.userData,data);proxy.layers.set(PICK_LAYER);generate.group.add(proxy);model.pickObjects.set(key,proxy);twin.pieces.touch();
+          }
+          if(!record || !proxy){fresh?.dispose();continue;}
+          const expanded=fresh?.index?fresh.toNonIndexed():fresh;
+          const visited=new Set();
+          for(const object of twin.pieces.get(key) || []) {
+            const geometry=object.geometry;if(!geometry || visited.has(geometry))continue;visited.add(geometry);
+            const owned=(object.userData.snapRanges || geometry.userData.snapRanges || []).filter(r=>r.pieceId===id && r.buildingId===buildingId);
+            if(!owned.length)continue;
+            for(const range of owned){
+              const count=expanded?.attributes.position.count || 0;
+              if(range.count!==count){
+                restorePostStyle();
+                const start=range.start,oldCount=range.count,shift=count-oldCount,groups=geometry.groups.map(g=>({...g}));
+                for(const [name,target] of Object.entries(geometry.attributes)){
+                  const size=target.itemSize,source=expanded?.attributes[name],next=new target.array.constructor(target.array.length+shift*size);
+                  next.set(target.array.subarray(0,start*size));
+                  if(source)next.set(source.array,start*size);
+                  next.set(target.array.subarray((start+oldCount)*size),(start+count)*size);
+                  geometry.setAttribute(name,new THREE.BufferAttribute(next,size,target.normalized).setUsage(target.usage));
+                }
+                const ranges=object.userData.snapRanges || geometry.userData.snapRanges;
+                let passed=false;for(const row of ranges){if(row===range){row.count=count;passed=true;}else if(passed)row.start+=shift;}
+                geometry.clearGroups();
+                for(const g of groups){
+                  const end=g.start+g.count;
+                  if(g.start<start)geometry.addGroup(g.start,Math.min(end,start)-g.start,g.materialIndex);
+                  if(end>start+oldCount)geometry.addGroup(Math.max(g.start,start+oldCount)+shift,end-Math.max(g.start,start+oldCount),g.materialIndex);
+                }
+                if(count && groups.length)geometry.addGroup(start,count,(groups.find(g=>g.start<=start && g.start+g.count>start) || groups.at(-1)).materialIndex);
+                geometry.groups.sort((a,b)=>a.start-b.start);
+                geometry.computeBoundingBox();
+              }else for(const name of ['position','normal','uv']) {
+                const source=expanded?.attributes[name],target=geometry.attributes[name];if(!source || !target)continue;
+                target.array.set(source.array,range.start*target.itemSize);target.addUpdateRange(range.start*target.itemSize,range.count*target.itemSize);target.needsUpdate=true;
+              }
+            }
+            if(!geometry.boundingBox)geometry.computeBoundingBox();
+            if(fresh){fresh.computeBoundingBox();geometry.boundingBox.union(fresh.boundingBox);}
+            geometry.boundingBox.getBoundingSphere(geometry.boundingSphere ||= new THREE.Sphere());
+          }
+          if(fresh){
+            fresh.computeBoundingBox();record.box.copy(fresh.boundingBox);
+            const size=record.box.getSize(new THREE.Vector3()),centre=record.box.getCenter(new THREE.Vector3());
+            const pick=boxGeometry(Math.max(.01,size.x),Math.max(.01,size.y),Math.max(.01,size.z)).translate(...centre.toArray());
+            if(proxy.geometry.attributes.position?.count===pick.attributes.position.count)for(const name of ['position','normal','uv'])proxy.geometry.attributes[name].copyArray(pick.attributes[name].array).needsUpdate=true;
+            else proxy.geometry.copy(pick);
+            proxy.geometry.computeBoundingBox();proxy.geometry.computeBoundingSphere();pick.dispose();proxy.visible=true;
+          }else{record.box.makeEmpty();proxy.geometry.copy(new THREE.BufferGeometry());proxy.visible=false;}
+          for(const {object} of proxy.userData.partObjects || [])object.geometry.copy(fresh || new THREE.BufferGeometry());
+          changedPieces.add(key);if(expanded!==fresh)expanded.dispose();fresh?.dispose();
+        }
       }
       for (const list of ['openings', 'anchors', 'items']) {
         const piecesBefore = new Map((before[list] || []).map(p => [p.id, p]));
@@ -1590,7 +1636,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
       pieceVisibility?.apply(scene);
-      focusStyle.refreshRanges(changedPieces);
+      if(postTopology)paintSelection();else focusStyle.refreshRanges(changedPieces);
       invalidateSelectionBounds();
       sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
@@ -1611,6 +1657,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           || b.levels?.[0]?.id) === id);
       const ids = list => list.map(p => p.id).sort();
       const changed = [];
+      let nextGutters=null;
       let rebuild = previous.size !== (nextPlan.buildings || []).length || !same(beforePlan.materials, nextPlan.materials);
       for (const after of nextPlan.buildings || []) {
         if (generatedPorches.get(after.id) !== porchGeometry(after)) {
@@ -1619,11 +1666,31 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           // mounts. Invalidate only this building's retained generation.
           if (twin?.buildings?.has(after.id)) twin.buildings.get(after.id).model.stale = true;
         }
+        const priorColumns=generatedColumns.get(after.id) || [], posts=allPorches(after);
+        const columnKey=rows=>JSON.stringify(rows.map(p=>[p.id,(p.columns || []).map((c,i)=>[postRef(p,i),c.at,c.size])]));
+        if(columnKey(priorColumns)!==columnKey(posts)) {
+          const oldIds=priorColumns.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
+          const newIds=posts.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
+          let regenerate=!same(oldIds,newIds);
+          for(const porch of posts) {
+            const old=priorColumns.find(p=>p.id===porch.id), model=twin?.buildings.get(after.id)?.model.postGeometry.get(porch.id);
+            if(old && model && model.screenKey(old)!==model.screenKey(porch))regenerate=true;
+            const level=after.rooms.find(r=>r.id===porch.id)?.level || porch.level || after.levels[0]?.id;
+            const shown=allPorches(previous.get(after.id) || {}).find(p=>p.id===porch.id);
+            if(level && !same(shown?.columns,porch.columns) && !changed.some(c=>c.buildingId===after.id && c.levelId===level))changed.push({buildingId:after.id,levelId:level});
+          }
+          nextGutters ||= gutterPlacement(nextPlan);
+          if(!same(nextGutters,twin.gutters))regenerate=true;
+          if(regenerate) {
+            rebuild=true;
+            if(twin?.buildings.has(after.id))twin.buildings.get(after.id).model.stale=true;
+          }
+        }
         const before = previous.get(after.id);
         if (!before || !same(ids(before.levels || []), ids(after.levels || []))) { rebuild = true; continue; }
         // Changes outside the deformable level records still need the complete
         // generator (roofs, placement, materials, fixtures, and so on).
-        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)));
+        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)).map(([k,v])=>[k,k==='porches' ? v.map(({columns,src,...p})=>p) : k==='porch' && v ? (({columns,src,...p})=>p)(v) : v]));
         if (!same(fixed(before), fixed(after))) rebuild = true;
         for (const level of after.levels || []) {
           for (const list of ['walls', 'rooms', 'openings'])
@@ -1668,6 +1735,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         view.rebuildLevel(change.buildingId, change.levelId, nextPlan, hint, { keep: true });
       }
       plan = nextPlan; view.plan = nextPlan; syncStage(plan);
+      generatedColumns=new Map(nextPlan.buildings.map(b=>[b.id,structuredClone(allPorches(b))]));
       pieceVisibility?.apply(scene);
       invalidateSelectionBounds();
       view.ready = !disposed && !!twin;
@@ -1784,6 +1852,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
       generatedPorches = new Map(nextPlan.buildings.map(b => [b.id,porchGeometry(b)]));
+      generatedColumns = new Map(nextPlan.buildings.map(b => [b.id,structuredClone(allPorches(b))]));
       freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.

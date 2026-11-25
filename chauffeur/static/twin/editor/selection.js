@@ -203,6 +203,9 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
       const ids = new Set([pick.id, ...(view?.levelFocusMembers?.(b.id, pick.id) || [])]);
       for (const list of ['walls', 'rooms', 'joints', 'fixtures', 'lights', 'stairs', 'awnings', 'porches', 'solar_zones'])
         for (const p of b[list] || []) if (p.level === pick.id) ids.add(p.id);
+      for (const post of porchPosts(b)) if ((b.rooms?.find(r=>r.id===post.porchId)?.level || post.porch.level || b.levels[0]?.id) === pick.id) ids.add(post.id);
+      for (const detail of b.porches_detail || []) if ((b.rooms?.find(r=>r.id===detail.id)?.level || detail.level || b.levels[0]?.id) === pick.id)
+        for (let i=0;i<(detail.columns || []).length;i++) ids.add(postRef(detail,i));
       for (const list of ['openings', 'anchors', 'items']) for (const p of b[list] || [])
         if (p.level === pick.id || ids.has(p.wall || p.host?.wall || p.host?.floor || p.host?.ceiling)) ids.add(p.id);
       return { kind: 'level', id: pick.id, building: b.id, level: pick.id, walls: [], allowed: [...ids] };
@@ -230,7 +233,7 @@ export function createRoomSelection({ view, getModel, getPlan, onChange, onSync,
     };
   }
 
-  const inside = pick => !room || (pick && (pick.buildingId ?? pick.building ?? null) === room.building && allowed.includes(pick.pieceId ?? pick.id));
+  const inside = pick => !room || (pick && (pick.buildingId ?? pick.building ?? null) === room.building && (allowed.includes(pick.pieceId ?? pick.id) || allowed.includes(pick.parentPieceId ?? pick.porchId)));
   const clearRoom = () => { room = null; walls = []; allowed = []; };
 
   function paint() {
