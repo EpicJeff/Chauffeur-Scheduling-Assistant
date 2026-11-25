@@ -28,6 +28,68 @@ def command(kind, **kw):
 
 
 class Posts(unittest.TestCase):
+    def test_fix2_real_save_fulfilled_post_delete(self):
+        from test_twin_house_save_stable import MemoryHouse
+        from services import twin_edit,twin_store
+        members=[dict(op='move_wall',building='pool-cottage',wall='w0',by=[0,-2]),dict(op='delete',building='pool-cottage',id='patio'),command('delete',post='post:patio:0')]
+        expected,_=ops.apply(patio(),dict(op='batch',ops=members))
+        with MemoryHouse(patio(),persist=True):
+            result=twin_edit.save(dict(op='batch',ops=members),'tester')
+            self.assertEqual(result['model'],expected)
+            self.assertFalse(result['model']['buildings'][0]['porches_detail'])
+
+        model=twin_model.normalize(household())[0]
+        for bid,wall,by in [('main-house','separator-70',[0,-2]),('main-house','separator-73',-2),('pool-house',None,[2,0])]:
+            b=next(b for b in model['buildings'] if b['id']==bid)
+            if wall is None:
+                positions={j['id']:j['at'] for j in b['joints']}
+                wall=next(w['id'] for w in b['walls'] if all(abs(positions[j][0]-38)<.01 for j in w['joints']))
+            edge=next(w for w in b['walls'] if w['id']==wall)
+            room=next(r for r in b['rooms'] if r.get('kind')=='porch' and all(j in r['joints'] for j in edge['joints']))
+            members=[dict(op='move_wall',building=bid,wall=wall,by=by),dict(op='delete',building=bid,id=room['id']),dict(op='delete_porch_post',building=bid,porch=room['id'],post='post:'+room['id']+':0')]
+            expected,_=ops.apply(model,dict(op='batch',ops=members))
+            with MemoryHouse(model,persist=True):
+                result=twin_edit.save(dict(op='batch',ops=members),'tester')
+                for e in bridge.flatten(expected)['buildings']:
+                    actual=next(v for v in bridge.flatten(result['model'])['buildings'] if v['id']==e['id'])
+                    self.assertEqual([(r['id'],r['polygon']) for r in actual['rooms']],[(r['id'],r['polygon']) for r in e['rooms']])
+                    self.assertEqual([(p['id'],p.get('columns',[])) for p in actual.get('porches',[])],[(p['id'],p.get('columns',[])) for p in e.get('porches',[])])
+                self.assertFalse(any(p['id']==room['id'] for v in result['model']['buildings'] for p in v.get('porches_detail',[])))
+
+    def test_fix2_first_delete_add_log_values_and_mint_collision(self):
+        from test_twin_house_save_stable import MemoryHouse
+        from services import twin_edit,twin_store,twin_porch_posts
+        original=patio()
+        with MemoryHouse(original,persist=True):
+            start=len(twin_store.fixes())
+            result=twin_edit.save(dict(op='batch',ops=[command('delete',post='post:patio:0'),command('add',at=[4,4])]),'tester')
+            columns=[c for c in twin_store.fixes()[start:] if '.columns[' in c['path']]
+            self.assertEqual(len(columns),2)
+            deleted=next(c for c in columns if c['after'] is None)
+            self.assertEqual(deleted['before'],original['buildings'][0]['porches_detail'][0]['columns'][0])
+            added=next(c for c in columns if c['before'] is None)
+            self.assertEqual(added['after'],result['model']['buildings'][0]['porches_detail'][0]['columns'][-1])
+        b=patio()['buildings'][0];b['porches_detail'][0]['columns'][1]['id']='post:patio:0'
+        snapshot=copy.deepcopy(b)
+        with self.assertRaisesRegex(ops.Refused,'That post id is already in use.'):
+            twin_porch_posts.mint_columns(b,b['porches_detail'][0])
+        self.assertEqual(b,snapshot)
+
+    def test_fix2_unhashable_conversion_refused(self):
+        with self.assertRaises(ops.BatchRefused) as caught:
+            ops.apply(patio(),dict(op='batch',ops=[dict(op='set_room_kind',building='pool-cottage',room=[],kind='porch'),command('add')]))
+        self.assertEqual(caught.exception.member,0)
+
+    def test_fix2_nonpost_batch_copies_house_once(self):
+        model=twin_model.normalize(patio(),preserve_room_polygons=True)[0]
+        original=ops.deepcopy;copies=[]
+        def track(value):
+            if value is model:copies.append(value)
+            return original(value)
+        with patch.object(ops,'deepcopy',side_effect=track):
+            ops.apply_batch(model,dict(op='batch',ops=[dict(op='move_room',building='pool-cottage',room='patio',by=[2,0]),dict(op='move_room',building='pool-cottage',room='patio',by=[-2,0])]),_normalized=(model,[]))
+        self.assertEqual(len(copies),1)
+
     def test_fix1_stable_refs_and_loader(self):
         model = patio()
         changed, _ = ops.apply(model, command('update', post='post:patio:0', at=[2, 3]))

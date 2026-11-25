@@ -144,7 +144,7 @@ export function movePreview(plan, gesture, by, follow = true) {
   // A collapsed wall has no direction and would deform the scene into NaN.
   if (building.walls.some(w => wallIds.has(w.id) && Math.hypot(...delta(w.to, w.from)) < 1e-6)) return null;
   for (const room of building.rooms) if (roomIds.has(room.id) && room.joints?.every(id => positions.has(id)))
-    room.polygon = movedPolygon(b, building, room);
+    room.polygon = room.joints.map(id => [...positions.get(id)]);
   for (const l of building.levels) {
     const original = b.levels.find(row => row.id === l.id);
     if (l.footprint?.every(id => positions.has(id))) l.outline = l.footprint.map(id => [...positions.get(id)]);
@@ -197,11 +197,10 @@ function splitWall(plan, operation) {
   const [a, z] = wall.joints.map(id => b.joints.find(j => j.id === id).at), length = Math.hypot(...delta(z, a)), at = operation.at;
   if (!Number.isFinite(at) || at < 1 - EPS || length - at < 1 - EPS) return null;
   // The graph keeps a wall whole at a T inside an opening's span (R55).
-  const keepWhole = b.openings?.some(o => o.wall === wall.id && Math.abs(o.at - at) < o.width / 2 - EPS);
+  if (b.openings?.some(o => o.wall === wall.id && Math.abs(o.at - at) < o.width / 2 - EPS)) return null;
   const point = a.map((v, i) => v + (z[i] - v) * at / length);
   let joint = b.joints.find(j => j.level === wall.level && Math.hypot(...delta(j.at, point)) < EPS);
   if (!joint) { joint = { id: `local:split:${wall.id}:${at}`, level: wall.level, at: point }; b.joints.push(joint); }
-  if (keepWhole) return { plan:preview,building:b.id,level:wall.level,touched:null };
   let suffix = 2; while (b.walls.some(w => w.id === `${wall.id}~${suffix}`)) ++suffix;
   const second = structuredClone(wall), end = wall.joints[1]; second.id = `${wall.id}~${suffix}`;
   wall.joints[1] = joint.id; wall.to = [...point]; second.joints = [joint.id, end]; second.from = [...point]; second.to = [...z];
@@ -237,7 +236,7 @@ export function applyLocal(plan, operation) {
   const members = structuredClone(operation.ops);
   for (const member of members) if (['add_porch_post', 'update_porch_post', 'delete_porch_post'].includes(member.op)) {
     const b = result.plan.buildings.find(b => b.id === member.building), porch = b && allPorches(b).find(p => p.id === member.porch);
-    if (porch) for (const [i,c] of (porch.columns || []).entries()) c.id ||= `post:${porch.id}:${i}`;
+    if (porch && !mintColumns(b,porch)) return null;
   }
   for (const member of members) {
     const before = FOLLOW_OPS.includes(member.op) ? structuredClone(result.plan) : null;
@@ -249,13 +248,22 @@ export function applyLocal(plan, operation) {
   return result;
 }
 
-function postIds(building) {
+function postIds(building, derived = true) {
   const ids = new Set();
   const collect = value => { if (Array.isArray(value)) value.forEach(collect); else if (value && typeof value === 'object') {
     if (typeof value.id === 'string') ids.add(value.id); Object.values(value).forEach(collect);
   } }; collect(building);
-  for (const p of allPorches(building)) for (const [i,c] of (p.columns || []).entries()) ids.add(postRef(p,i));
+  if (derived) for (const p of allPorches(building)) for (const [i,c] of (p.columns || []).entries()) ids.add(postRef(p,i));
   return ids;
+}
+function mintColumns(building, porch) {
+  const used=postIds(building,false),pending=[];
+  for(const [i,c] of (porch.columns||[]).entries())if(!c.id){
+    const ref=`post:${porch.id}:${i}`;if(used.has(ref))return false;
+    used.add(ref);pending.push([c,ref]);
+  }
+  for(const [c,ref] of pending)c.id=ref;
+  return true;
 }
 const FOLLOW_OPS = ['move_joint', 'move_joints', 'move_wall', 'move_room'];
 function mintPostId(detail) {
@@ -268,13 +276,6 @@ function projectPost(p,a,b) {
   const d=delta(b,a),length2=dot(d,d),t=length2?Math.max(0,Math.min(1,dot(delta(p,a),d)/length2)):0;
   const q=shifted(a,d.map(v=>v*t));return {distance:Math.hypot(...delta(p,q)),t,q};
 }
-function movedPolygon(before, after, room) {
-  const old = before.rooms.find(r=>r.id===room.id), positions=new Map(after.joints.map(j=>[j.id,j.at]));
-  return old.polygon.map(p=>{
-    const joint=before.joints.find(j=>old.joints?.includes(j.id)&&Math.hypot(...delta(p,j.at))<=.01);
-    return [...(joint&&positions.get(joint.id)||p)];
-  });
-}
 function followLocalPosts(before, after) {
   for(const b of after.buildings||[]) {
     const old=before.buildings?.find(v=>v.id===b.id);if(!old)continue;
@@ -282,7 +283,9 @@ function followLocalPosts(before, after) {
       const prior=old.rooms?.find(r=>r.id===room.id&&r.kind==='porch');
       if(!prior||room.kind!=='porch')continue;
       const c=room.polygon;
-      const a=prior.polygon.map(p=>old.joints.find(j=>prior.joints?.includes(j.id)&&Math.hypot(...delta(p,j.at))<=.01)?.at || p);
+      const oldPositions=new Map(old.joints.map(j=>[j.id,j.at]));
+      const cycle=(prior.joints||[]).map(id=>oldPositions.get(id));
+      const a=cycle.length>=3&&cycle.every(Boolean)?cycle:prior.polygon;
       if([[a,c],[c,a]].every(([points,q])=>points.every(p=>Math.min(...q.map((v,i)=>projectPost(p,v,q[(i+1)%q.length]).distance))<=.01)))continue;
       const detail=allPorches(b).find(p=>p.id===room.id);
       if(!detail)continue;
@@ -346,7 +349,7 @@ function applyOne(plan, operation, mutable = false) {
       at = 'at' in operation ? [...operation.at] : defaultPostAt(building, detail, size);
       if (!at) return null;
     }
-    for (const [i,c] of columns.entries()) c.id ||= `post:${detail.id}:${i}`;
+    if (!mintColumns(building,detail)) return null;
     detail.columns = columns;
     if (adding) { const id = 'id' in operation ? operation.id : mint(); if (!('id' in operation) && ids.has(id)) return null; columns.push({ id, at, size }); }
     else if (operation.op === 'delete_porch_post') columns.splice(index, 1);
@@ -377,7 +380,6 @@ function applyOne(plan, operation, mutable = false) {
     return {plan:preview,building:b.id,level:room.level,touched:null};
   }
   if (operation.op === 'move_joints') {
-    const oldBuilding = structuredClone(plan.buildings.find(v=>v.id===operation.building));
     const preview = copy(), b = preview.buildings.find(b => b.id === operation.building);
     if (!b) throw new LocalMissing(`Missing building: ${operation.building}`);
     for (const { joint, to } of operation.joints) {
@@ -393,7 +395,7 @@ function applyOne(plan, operation, mutable = false) {
         delta(i === 0 || i === 3 ? from : to, i === 0 || i === 3 ? wall.from : wall.to)));
       wall.from = [...from]; wall.to = [...to];
     }
-    for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = movedPolygon(oldBuilding, b, room);
+    for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = room.joints.map(id => [...positions.get(id)]);
     for (const level of b.levels) if (level.footprint?.every(id => positions.has(id))) level.outline = level.footprint.map(id => [...positions.get(id)]);
     for (const p of [...(b.items || []), ...(b.anchors || [])]) if (p.host) {
       try { p.position = hostPoint(b, p.host, p.offset || 0); } catch { /* The server judges it. */ }

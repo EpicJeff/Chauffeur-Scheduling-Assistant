@@ -101,7 +101,7 @@ def default_at(building, porch, size):
     return best[1]
 
 
-def _used_ids(building):
+def _used_ids(building, *, derived=True):
     def walk(value):
         if isinstance(value, dict):
             if isinstance(value.get('id'), str):
@@ -111,13 +111,21 @@ def _used_ids(building):
         elif isinstance(value, list):
             for child in value:
                 yield from walk(child)
-    return set(walk(building)) | {post_ref(p,i) for p in building.get('porches_detail', []) for i in range(len(p.get('columns', [])))}
+    return set(walk(building)) | ({post_ref(p,i) for p in building.get('porches_detail', []) for i in range(len(p.get('columns', [])))} if derived else set())
 
 
 def mint_columns(building, detail):
-    for i, column in enumerate(detail.get('columns', [])):
+    used = _used_ids(building, derived=False)
+    pending = []
+    for i,column in enumerate(detail.get('columns', [])):
         if not column.get('id'):
-            column['id'] = f"post:{detail['id']}:{i}"
+            ref = f"post:{detail['id']}:{i}"
+            if ref in used:
+                _fail('That post id is already in use.')
+            used.add(ref)
+            pending.append((column,ref))
+    for column,ref in pending:
+        column['id'] = ref
 
 
 def next_id(detail):
@@ -208,11 +216,11 @@ def follow_posts(before, after):
         detail = next((p for p in after.get('porches_detail', []) if p['id'] == room['id']), None)
         if detail is None:
             continue
-        targets = corner_targets(before, after, old, room)
-        # Flat plans round polygon coordinates; graph positions retain the
-        # precise corner used by the operation on both sides of the bridge.
-        joints = [j for j in before.get('joints', []) if j['id'] in old.get('joints', [])]
-        a = [next((j['at'] for j in joints if math.dist(p,j['at']) <= .01),p) for p in a]
+        positions = {j['id']:j['at'] for j in before.get('joints', [])}
+        cycle = [positions.get(j) for j in old.get('joints', [])]
+        if len(cycle) >= 3 and all(p is not None for p in cycle):
+            a = cycle
+        targets = corner_targets(before, after, {**old, 'polygon':a}, room)
         vectors = [[q[i]-p[i] for i in (0,1)] for p,q in zip(a,targets)]
         translation = all(math.dist(v,vectors[0]) <= 1e-8 for v in vectors)
         moved = False

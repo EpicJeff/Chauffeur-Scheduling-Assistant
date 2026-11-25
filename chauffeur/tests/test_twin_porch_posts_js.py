@@ -6,6 +6,176 @@ from twin_editor_dom import PRELUDE, run_node
 
 
 class PostsJS(unittest.TestCase):
+    def test_fix2_mounted_porch_settle_equals_fresh(self):
+        from test_twin_view_settle_js import PREFIX
+        from test_twin_house_save_stable import MemoryHouse
+        from services import twin_edit
+        def saved(model, operation):
+            expected,_=ops.apply(model,operation)
+            with MemoryHouse(model,persist=True):
+                result=twin_edit.save(operation,'tester')['model']
+            for b in bridge.flatten(expected)['buildings']:
+                actual=next(v for v in bridge.flatten(result)['buildings'] if v['id']==b['id'])
+                self.assertEqual([(r['id'],r['polygon']) for r in actual['rooms']],[(r['id'],r['polygon']) for r in b['rooms']])
+                self.assertEqual([(p['id'],p.get('columns',[])) for p in actual.get('porches',[])],[(p['id'],p.get('columns',[])) for p in b.get('porches',[])])
+            return result
+        model=twin_model.normalize(household())[0]; cases=[]
+        for bid,wall,by in [('main-house','separator-73',-2),('main-house','separator-73',2),('pool-house',None,[2,0])]:
+            b=next(b for b in model['buildings'] if b['id']==bid)
+            if wall is None:
+                positions={j['id']:j['at'] for j in b['joints']}
+                wall=next(w['id'] for w in b['walls'] if all(abs(positions[j][0]-38)<.01 for j in w['joints']))
+            operation=dict(op='move_wall',building=bid,wall=wall,by=by)
+            after=saved(model,operation)
+            cases.append(dict(operation=operation,after=bridge.flatten(after)))
+        gutter_model=copy.deepcopy(model);b=gutter_model['buildings'][0]
+        porch=next(p for p in b['porches_detail'] if p['id'].startswith('porch:0af'))
+        porch['gutter']=True
+        porch['columns'][0]['at']=[14.33,66]
+        porch['columns'][-1]['at']=[30.67,66]
+        operation=dict(op='move_wall',building=b['id'],wall='separator-73',by=-2)
+        after=saved(gutter_model,operation)
+        cases.append(dict(operation=operation,plan=bridge.flatten(gutter_model),after=bridge.flatten(after),postSpout=True))
+        def run_mounted(driver,payload,timeout):
+            import subprocess
+            try:return run_node(driver,payload,timeout=timeout)
+            except subprocess.TimeoutExpired as error:self.fail(str(error.stdout)+str(error.stderr))
+        code,out=run_mounted(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+const {moveGesture,movePreview}=await import(file('static/twin/editor/local_ops.js'));
+const parts=(out,bid)=>{const rows={};out.root.traverse(object=>{
+ if(!object.isMesh||object.layers.isEnabled(31)||!object.geometry?.attributes.position)return;
+ const p=object.geometry.attributes.position,ranges=object.userData.snapRanges||[{...object.userData,start:0,count:p.count}];
+ for(const r of ranges){const id=r.parentPieceId||r.pieceId;
+ if(r.buildingId!==bid||!id?.startsWith('porch:'))continue;
+ const part=r.part||r.bakePart||'floor',key=id+':'+part,row=rows[key]||={triangles:0,min:Infinity,max:-Infinity};
+ row.triangles+=r.count/3;for(let i=r.start;i<r.start+r.count;i++){row.min=Math.min(row.min,p.getY(i));row.max=Math.max(row.max,p.getY(i));}
+ }});return rows;};
+for(const c of input.cases){const plan=structuredClone(c.plan||input.plan),host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);
+const v=await mountTwin(host,{plan,kit,tier:'low',bake:false});try{
+ const before=globalThis.lastTwin,other=plan.buildings.find(b=>b.id!==c.operation.building).id,retained=before.buildings.get(other).model;
+ const gesture=moveGesture(plan,{kind:'wall',building:c.operation.building,id:c.operation.wall}),by=Array.isArray(c.operation.by)?c.operation.by:gesture.normal.map(v=>v*c.operation.by);
+ const preview=movePreview(plan,gesture,by);v.rebuildLevel(c.operation.building,gesture.piece.level,preview,gesture.touched);
+ // Settle can receive exactly the plan already drawn by the last preview.
+ v.rebuildLevel(c.operation.building,gesture.piece.level,c.after,gesture.touched);
+const result=await v.settle(c.after,{buildingId:c.operation.building,levelId:gesture.piece.level,touched:gesture.touched});
+assert.equal(result.path,'rebuild','porch must regenerate after the preview');
+ const settled=globalThis.lastTwin,fresh=buildTwin(structuredClone(c.after),kit,'low',{viewing:false});await fresh.ready;
+ console.log('FIX2_REUSE '+JSON.stringify({other,same:settled.buildings.get(other).model===retained,degraded:retained.degraded,rebuilt:settled.buildingsRebuilt,reused:settled.buildingsReused}));
+ if(!retained.degraded)assert.ok(settled.buildings.get(other).model===retained,'reuse the other building when its assets are healthy');
+ assert.deepEqual(parts(settled,c.operation.building),parts(fresh,c.operation.building),'parts triangles and heights');
+ assert.deepEqual(JSON.parse(JSON.stringify(settled.gutters)),JSON.parse(JSON.stringify(fresh.gutters)),'downspouts match fresh placement');
+ if(c.postSpout){const spouts=settled.gutters.spouts.filter(s=>s.mount==='post' && s.edge.porch?.startsWith('porch:0af'));assert.ok(spouts.length,'downspout mounted on followed porch post');console.log('FIX2_POST_SPOUTS '+spouts.length);}
+ console.log('FIX2_SETTLE '+JSON.stringify({building:c.operation.building,by:c.operation.by,parts:parts(settled,c.operation.building)}));
+ }finally{v.dispose();}}
+finish();
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(model),cases=cases),timeout=180)
+        self.assertEqual(code,0,out);print(out)
+
+    def test_fix2_split_then_pull_follow(self):
+        base=twin_model.normalize(household(),preserve_room_polygons=True)[0]
+        b=next(b for b in base['buildings'] if b['id']=='pool-house');p=b['porches_detail'][0]
+        p['columns']=[dict(at=[37.67,5.5],size=.67),dict(at=[37.67,16.5],size=.67)]
+        positions={j['id']:j['at'] for j in b['joints']}
+        wall=next(w for w in b['walls'] if all(abs(positions[j][0]-38)<.01 for j in w['joints']))
+        import math
+        split,_=ops.apply(base,dict(op='split_wall',building=b['id'],wall=wall['id'],at=11))
+        sb=next(v for v in split['buildings'] if v['id']==b['id']);positions={j['id']:j['at'] for j in sb['joints']}
+        upper=next(w for w in sb['walls'] if all(abs(positions[j][0]-38)<.01 for j in w['joints']) and max(positions[j][1] for j in w['joints'])>21 and min(positions[j][1] for j in w['joints'])>10)
+        middle=next(j for j in sb['joints'] if math.dist(j['at'],[38,11])<.01)
+        cases=[]
+        for operation,expected_x in [(dict(op='move_wall',building=b['id'],wall=upper['id'],by=[3,0]),[39.17,40.67]),(dict(op='move_joint',building=b['id'],joint=middle['id'],to=[41,11]),[39.17,39.17])]:
+            after,_=ops.apply(split,operation);columns=next(v for v in after['buildings'] if v['id']==b['id'])['porches_detail'][0]['columns']
+            for c,x in zip(columns,expected_x):self.assertAlmostEqual(c['at'][0],x)
+            cases.append(dict(operation=operation,expected=bridge.flatten(after)))
+        code,out=run_node(PRELUDE+r"""
+const {applyLocal}=await import(file('static/twin/editor/local_ops.js'));
+for(const c of input.cases){const local=applyLocal(input.plan,c.operation);assert.ok(local);const a=local.plan.buildings.find(b=>b.id==='pool-house').porches[0].columns,b=c.expected.buildings.find(b=>b.id==='pool-house').porches[0].columns;
+ for(let i=0;i<a.length;i++)for(let axis=0;axis<2;axis++)assert.ok(Math.abs(a[i].at[axis]-b[i].at[axis])<1e-8,JSON.stringify([c.operation,a,b]));
+ const polygon=local.plan.buildings.find(b=>b.id==='pool-house').rooms.find(r=>r.kind==='porch').polygon;assert.ok(polygon.some(p=>Math.hypot(p[0]-41,p[1]-11)<.01),'split joint stays in the preview cycle');}
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(split),cases=cases))
+        self.assertEqual(code,0,out)
+
+    def test_fix2_household_split_pull_sweep(self):
+        import math
+        model=twin_model.normalize(household(),preserve_room_polygons=True)[0];cases=[];refused=0;accepted=0
+        for b in model['buildings']:
+            positions={j['id']:j['at'] for j in b['joints']}
+            for wall in b['walls']:
+                split_op=dict(op='split_wall',building=b['id'],wall=wall['id'],at=math.dist(*(positions[j] for j in wall['joints']))/2)
+                try:split,_=ops.apply(model,split_op)
+                except ops.Refused:refused+=1;continue
+                sb=next(v for v in split['buildings'] if v['id']==b['id']);old_ids={w['id'] for w in b['walls']}
+                halves=[w for w in sb['walls'] if w['id']==wall['id'] or w['id'] not in old_ids]
+                group=dict(split=split_op,plan=bridge.flatten(split),moves=[])
+                for half in halves:
+                    for sign in (-1,1):
+                        operation=dict(op='move_wall',building=b['id'],wall=half['id'],by=sign)
+                        try:after,_=ops.apply(split,operation)
+                        except ops.Refused:refused+=1;continue
+                        for prior in sb.get('porches_detail',[]):
+                            target=next(v for v in after['buildings'] if v['id']==b['id'])
+                            post=next(p for p in target['porches_detail'] if p['id']==prior['id'])
+                            for c,d in zip(prior.get('columns',[]),post.get('columns',[])):
+                                self.assertLessEqual(math.dist(c['at'],d['at']),1.000001,(operation,c,d))
+                        flat=bridge.flatten(after)
+                        group['moves'].append(dict(operation=operation,expected=[dict(id=v['id'],porches=v.get('porches',[])) for v in flat['buildings']]))
+                        accepted+=1
+                cases.append(group)
+        code,out=run_node(PRELUDE+r"""
+const {applyLocal}=await import(file('static/twin/editor/local_ops.js'));let localSplits=0,openingDeclines=0,compared=0;
+for(const c of input.cases){const split=applyLocal(input.plan,c.split);if(split)localSplits++;else{const b=input.plan.buildings.find(b=>b.id===c.split.building);assert.ok(b.openings.some(o=>o.wall===c.split.wall&&Math.abs(o.at-c.split.at)<o.width/2-1e-9));openingDeclines++;}
+ for(const move of c.moves){for(const plan of [c.plan,...(split?[split.plan]:[])]){
+ const serverBuilding=c.plan.buildings.find(b=>b.id===move.operation.building),target=serverBuilding.walls.find(w=>w.id===move.operation.wall),b=plan.buildings.find(b=>b.id===move.operation.building);
+ const wall=b.walls.find(w=>Math.hypot(w.from[0]-target.from[0],w.from[1]-target.from[1])<.01&&Math.hypot(w.to[0]-target.to[0],w.to[1]-target.to[1])<.01);
+ assert.ok(wall,JSON.stringify(move.operation));const result=applyLocal(plan,{...move.operation,wall:wall.id});assert.ok(result);compared++;
+ for(const e of move.expected)for(const p of e.porches){const columns=result.plan.buildings.find(b=>b.id===e.id).porches.find(v=>v.id===p.id).columns;assert.equal(columns.length,p.columns.length);
+ for(let i=0;i<columns.length;i++)for(let axis=0;axis<2;axis++)assert.ok(Math.abs(columns[i].at[axis]-p.columns[i].at[axis])<1e-8,JSON.stringify({split:c.split,move:move.operation,post:i,columns,expected:p.columns}));}
+ }}}
+console.log('FIX2_SPLIT_PULL_SWEEP '+JSON.stringify({splits:input.cases.length,localSplits,openingDeclines,acceptedMoves:input.accepted,refused:input.refused,localComparisons:compared}));
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(model),cases=cases,accepted=accepted,refused=refused),timeout=180)
+        self.assertEqual(code,0,out);print(out)
+
+    def test_fix2_room_move_sweep_against_main(self):
+        import subprocess,re
+        model=twin_model.normalize(household(),preserve_room_polygons=True)[0];cases=[];refused=0;attempted=0
+        for b in model['buildings']:
+            operations=[]
+            for w in b['walls']:
+                operations.extend(dict(op='move_wall',building=b['id'],wall=w['id'],by=sign) for sign in (-1,1))
+            for j in b['joints']:
+                for axis in (0,1):
+                    for sign in (-1,1):
+                        point=list(j['at']);point[axis]+=sign
+                        operations.append(dict(op='move_joint',building=b['id'],joint=j['id'],to=point))
+            for r in b['rooms']:
+                operations.extend(dict(op='move_room',building=b['id'],room=r['id'],by=[sign,sign]) for sign in (-1,1))
+            for operation in operations:
+                attempted+=1
+                try:after,_=ops.apply(model,operation)
+                except ops.Refused:refused+=1;continue
+                flat=bridge.flatten(after)
+                cases.append(dict(operation=operation,rooms=[dict(building=v['id'],rooms=[dict(id=r['id'],polygon=r['polygon']) for r in v['rooms']]) for v in flat['buildings']]))
+        def source(ref):
+            value=subprocess.check_output(['git','show',ref+':chauffeur/static/twin/editor/local_ops.js'],cwd=ROOT,text=True,encoding='utf-8')
+            return re.sub(r"(from\s*['\"])(\.[^'\"]+)(['\"])",lambda m:m[1]+(ROOT/'static/twin/editor'/m[2]).resolve().as_uri()+m[3],value)
+        code,out=run_node(PRELUDE+r"""
+const {applyLocal}=await import(file('static/twin/editor/local_ops.js'));
+const baseline=await import('data:text/javascript;base64,'+Buffer.from(input.mainLocal).toString('base64'));
+const reviewed=await import('data:text/javascript;base64,'+Buffer.from(input.reviewedLocal).toString('base64'));
+const project=(p,a,b)=>{const d=[b[0]-a[0],b[1]-a[1]],l=d[0]**2+d[1]**2,t=l?Math.max(0,Math.min(1,((p[0]-a[0])*d[0]+(p[1]-a[1])*d[1])/l)):0;return Math.hypot(p[0]-a[0]-t*d[0],p[1]-a[1]-t*d[1]);};
+const shape=(a,b)=>Math.max(...[[a,b],[b,a]].flatMap(([p,q])=>p.flatMap((v,i)=>[v,[(v[0]+p[(i+1)%p.length][0])/2,(v[1]+p[(i+1)%p.length][1])/2]]).map(v=>Math.min(...q.map((w,i)=>project(v,w,q[(i+1)%q.length]))))));
+let compared=0,worse=0,oldWorse=0,maxError=0;
+for(const c of input.cases){const current=applyLocal(input.plan,c.operation),main=baseline.applyLocal(input.plan,c.operation),old=reviewed.applyLocal(input.plan,c.operation);assert.ok(current);assert.ok(main);
+ for(const e of c.rooms){const a=current.plan.buildings.find(b=>b.id===e.building),m=main.plan.buildings.find(b=>b.id===e.building),o=old.plan.buildings.find(b=>b.id===e.building);
+ for(const room of e.rooms){const local=a.rooms.find(r=>r.id===room.id),prior=m.rooms.find(r=>r.id===room.id),review=o.rooms.find(r=>r.id===room.id);if(!local||!prior)continue;
+ const error=shape(local.polygon,room.polygon),mainError=shape(prior.polygon,room.polygon);compared++;maxError=Math.max(maxError,error);
+ if(error>mainError+1e-8)worse++;if(shape(review.polygon,room.polygon)>mainError+1e-8)oldWorse++;
+ assert.ok(error<=mainError+1e-8,JSON.stringify({op:c.operation,room:room.id,error,mainError}));}}}
+console.log('FIX2_ROOM_SWEEP '+JSON.stringify({attempted:input.attempted,accepted:input.cases.length,refused:input.refused,roomComparisons:compared,worseThanMain:worse,reviewedWorseThanMain:oldWorse,maxError}));
+""",dict(root=ROOT.as_posix(),plan=bridge.flatten(model),cases=cases,attempted=attempted,refused=refused,mainLocal=source('main'),reviewedLocal=source('0958de67')),timeout=180)
+        self.assertEqual(code,0,out);print(out)
+
     def test_fix1_household_wall_sweep(self):
         model = twin_model.normalize(household(), preserve_room_polygons=True)[0]
         cases = []; refused = 0; max_distance = 0
@@ -79,7 +249,8 @@ console.log('FIX1_QUEUE '+input.cases.length+' scenarios');
                 cases.append(dict(operation=operation,expected=bridge.flatten(after)))
         code,out=run_node(PRELUDE+r"""
 const {applyLocal,moveGesture,movePreview}=await import(file('static/twin/editor/local_ops.js'));
-for(const c of input.cases){const result=applyLocal(input.plan,c.operation);assert.ok(result,JSON.stringify(c.operation));
+for(const c of input.cases){const result=applyLocal(input.plan,c.operation);
+ if(!result){const b=input.plan.buildings.find(b=>b.id===c.operation.building);assert.ok(b.openings.some(o=>o.wall===c.operation.wall&&Math.abs(o.at-c.operation.at)<o.width/2-1e-9));continue;}
  for(const b of c.expected.buildings)for(const p of b.porches||[])assert.deepEqual(result.plan.buildings.find(v=>v.id===b.id).porches.find(v=>v.id===p.id).columns,p.columns);}
 const times=[];
 for(const b of input.plan.buildings)for(const room of b.rooms.filter(r=>r.kind==='porch')){
@@ -132,7 +303,7 @@ assert.ok(v.pickAll(...pixel,{skip:['room']}).every(p=>p.kind!=='porch_post'&&p.
 v.dispose();
 const front=structuredClone(plan);front.buildings[0].walls.push({id:'in-front',level:'L1',from:[0,1],to:[2,1],height:15,thickness:.5,exterior:false,state:'settled'});
 v=await mount(front);pixel=v.screenOfFloor(1,1,b.id+':L1');hits=v.pickAll(...pixel);
-assert.equal(hits[0].id,'in-front');assert.equal(hits[1].kind,'porch_post');assert.equal(hits[2].id,'patio');v.dispose();
+assert.equal(hits[0].id,'in-front');assert.equal(v.pick(...pixel)?.id,'in-front');assert.equal(hits[1].kind,'porch_post');assert.equal(hits[2].id,'patio');v.dispose();
 front.buildings[0].walls.at(-1).height=1;v=await mount(front);pixel=v.screenOfFloor(1,1,b.id+':L1');
 assert.equal(v.pickAll(...pixel)[0]?.kind,'porch_post');assert.equal(v.pick(...pixel)?.kind,'porch_post');v.dispose();
 const screened=structuredClone(plan);screened.buildings[0].walls=[];screened.buildings[0].porches[0].screened=true;screened.buildings[0].porches[0].columns=[{at:[1,0],size:.5},{at:[15,0],size:.5},{at:[8,4],size:.5}];
@@ -265,6 +436,8 @@ let result=applyLocal(input.plan,{op:'update_porch_post',building:'pool-cottage'
 assert.ok(result);assert.deepEqual(porchPosts(result.plan.buildings[0])[0].piece.at,[2,3]);
 const minted=structuredClone(original);minted.buildings[0].porches[0].columns.forEach((c,i)=>c.id='post:'+String(i).padStart(32,'0'));
 assert.equal(authoredGeometry(minted),key);
+const collision=structuredClone(original);collision.buildings[0].porches[0].columns[1].id='post:patio:0';const untouched=structuredClone(collision);
+assert.equal(applyLocal(collision,{op:'update_porch_post',building:'pool-cottage',porch:'patio',post:'post:patio:0',size:.6}),null);assert.deepEqual(collision,untouched);
 assert.deepEqual(input.plan,original);
 """, {'root':ROOT.as_posix(), 'plan':bridge.flatten(patio())})
         self.assertEqual(code, 0, out)
@@ -284,6 +457,8 @@ assert.equal(v.pick(...pixel)?.id,'post:patio:0');assert.equal(v.pick(...pixel)?
 assert.equal(v.pickAll(...pixel)[0]?.id,'post:patio:0');assert.equal(v.pickAll(...pixel)[0]?.parentPieceId,'patio');
 v.setSelection({selected:{kind:'room',id:'patio',building:b.id,level:'L1'},room:{id:'patio',building:b.id,level:'L1',allowed:['patio'],walls:[]}});
 assert.equal(v.pickAll(...pixel)[0]?.id,'post:patio:0');
+v.setSelection({selected:{kind:'porch_post',id:'post:patio:0',building:b.id,level:'L1'},room:{id:'patio',building:b.id,level:'L1',allowed:['post:patio:0'],walls:[]}});
+assert.ok(v.pickAll(...pixel).every(p=>p.id!=='patio'),'excluded parent is not synthesized');
 v.setHiddenPieces(['patio'],[]);assert.ok(v.pickAll(...pixel).every(p=>p.kind!=='porch_post'));
 v.setHiddenPieces([],[]);
 v.dispose();

@@ -596,7 +596,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
 
 
 @_edit_timed('apply')
-def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_inplace=False):
+def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_inplace=False, _column_changes=None):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model, twin_objects
@@ -606,7 +606,7 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
     op = edit.get('op')
     if op == 'batch':
         return ops.apply_batch(model, edit, ha_catalogue=ha_catalogue,
-                               _normalized=_normalized, apply_member=apply_model)
+                               _normalized=_normalized, apply_member=apply_model, _column_changes=_column_changes)
     if (op == 'set' and edit.get('field') == 'ha_area' or op == 'place_device'
             or edit.get('list') == 'yard_rooms' and 'ha_area' in edit) and ha_catalogue is None:
         from services import twin_ha
@@ -940,7 +940,8 @@ def save(edit, actor_id, reason=''):
         preserve_polygons = twin_model_ops.preserves_room_geometry(edit)
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
                       else twin_model.normalize(current, preserve_room_polygons=preserve_polygons))
-        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
+        column_changes = []
+        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized, _column_changes=column_changes)
         if model == current and (edit.get('op') == 'set_roof_support' or twin_model_ops.roof_support_noop(current, edit)):
             round_id = twin_store._state()['current']
             return {'round': round_id, 'lighting': twin_store.round_lighting(round_id), 'summary': summary, 'model': current}
@@ -992,31 +993,32 @@ def save(edit, actor_id, reason=''):
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
                    for path in twin_plan.diff_paths(logged_before, after)
                    if twin_store._fix_kind(path) is not None and not _derived_path(path)]
-        if any(m.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS for m in members):
-            # Following is derived. In mixed batches log each explicit column
-            # edit at its own operation boundary, before later corner transport.
+        # Following is derived. Batch column edits were observed inside the
+        # successful compose; never replay an edit just to describe its log.
+        if any(m.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS for m in members) or column_changes:
             changes = [c for c in changes if '.columns[' not in c['path']]
-            if any(m.get('op') in (*twin_model_ops.twin_porch_posts.OPS, 'move_posts_to_roof') for m in members):
-                work = deepcopy(normalized[0])
-                for member in members:
-                    prior = twin_model_bridge.flatten(work)
-                    work, _ = apply_model(work, member, ha_catalogue=ha_catalogue, _normalized=(work, []))
-                    if member.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS:
+            for prior, current_flat in column_changes:
+                for path in twin_plan.diff_paths(prior,current_flat):
+                    if '.columns[' not in path or _derived_path(path):
                         continue
-                    current_flat = twin_model_bridge.flatten(work)
-                    changes.extend({'path': path, 'kind': twin_store._fix_kind(path),
-                                    'before': twin_store._leaf(prior,path), 'after': twin_store._leaf(current_flat,path),
-                                    'reason': reason.strip() or summary, 'actor_id':actor_id}
-                                   for path in twin_plan.diff_paths(prior,current_flat)
-                                   if '.columns[' in path and twin_store._fix_kind(path) is not None and not _derived_path(path))
-        # The first deletion mints the surviving columns. Its old index may
-        # now point at a different survivor; the removed leaf has no after.
-        post_deletes = [m for m in members if isinstance(m, dict) and m.get('op') == 'delete_porch_post']
-        for change in changes:
-            if change['before'] is not None and re.search(r'\.columns\[[^\]]+\]$', change['path']) and any(
-                    f"buildings[id={m['building']}].porches[id={m['porch']}].columns[" in change['path']
-                    for m in post_deletes):
-                change['after'] = None
+                    old_value, new_value = twin_store._leaf(prior,path), twin_store._leaf(current_flat,path)
+                    if isinstance(old_value,dict) and isinstance(old_value.get('id'),str):
+                        # Minted metadata did not exist on the person's old
+                        # column. Keep the before value faithful to that round.
+                        raw = twin_store._leaf(logged_before,path)
+                        if raw is None:
+                            old_value = {k:v for k,v in old_value.items() if k != 'id'}
+                    changes.append({'path':path,'kind':twin_store._fix_kind(path),
+                                    'before':old_value,'after':new_value,
+                                    'reason':reason.strip() or summary,'actor_id':actor_id})
+        # An id-less first deletion uses its old index. Its replacement at that
+        # index is not an after value for the removed row.
+        post_deletes = [m for m in members if isinstance(m,dict) and m.get('op') == 'delete_porch_post']
+        if not column_changes:
+            for change in changes:
+                if change['before'] is not None and re.search(r'\.columns\[[^\]]+\]$',change['path']) and any(
+                        f"buildings[id={m['building']}].porches[id={m['porch']}].columns[" in change['path'] for m in post_deletes):
+                    change['after'] = None
         def metadata(row):
             if place_row is not None:
                 row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']

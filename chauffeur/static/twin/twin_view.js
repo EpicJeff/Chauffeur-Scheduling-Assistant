@@ -1,4 +1,5 @@
-import { porchPosts } from './porch_posts.js';
+import { porchPosts, postRef } from './porch_posts.js';
+import { allPorches } from './gutter_presence.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -161,6 +162,11 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   syncStage(plan);
   scene.add(sky.object);
   let twin = null, disposed = false, revision = 0, bakeSignature = null;
+  let generatedPorches = new Map();
+  const porchGeometry = building => JSON.stringify([
+    (building.rooms || []).filter(r => r.kind === 'porch').map(r => [r.id,r.polygon]),
+    allPorches(building).map(p => [p.id,p.polygon,(p.columns || []).map((c,i) => [postRef(p,i),c.at,c.size])]),
+  ]);
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
@@ -500,7 +506,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     for (const [key, post] of parents) {
       const ownerHits = hits.filter(h => `${h.object.userData.buildingId}:${h.object.userData.pieceId}` === key);
       const owner = twin.pickObjects.get(key);
-      const parent = ownerHits[0] || (owner && {...post,object:owner}); if (!parent) continue;
+      const parent = ownerHits[0] || (owner && candidates.includes(owner) && {...post,object:owner}); if (!parent) continue;
       const exactHits = [];
       for (const {object,group} of parent.object.userData.partObjects || []) {
         if (!visible(group) || viewing?.faded(group)) continue;
@@ -1020,8 +1026,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     pick(clientX, clientY, { skip = [], water = false } = {}) {
       const { hits, waterHits } = pickIntersections(clientX, clientY, { skip, water });
-      const hasPost = hits.some(h => h.object.userData.kind === 'porch_post');
-      let hit = state.camera === 'top' && !hasPost ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
+      const wall = state.camera === 'top' && hits.find(h => h.object.userData.kind === 'wall');
+      const post = hits.find(h => h.object.userData.kind === 'porch_post');
+      let hit = wall && (!post || wall.distance <= hits[0].distance) ? wall : hits[0];
       if (waterHits[0] && (!hit || waterHits[0].distance < hit.distance)) {
         const water = waterHits[0], { kind, pieceId, part } = water.object.userData;
         return { kind, id: pieceId, pieceId, part, point: water.point.toArray() };
@@ -1564,6 +1571,12 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const changed = [];
       let rebuild = previous.size !== (nextPlan.buildings || []).length || !same(beforePlan.materials, nextPlan.materials);
       for (const after of nextPlan.buildings || []) {
+        if (generatedPorches.get(after.id) !== porchGeometry(after)) {
+          rebuild = true;
+          // Preview deforms do not regenerate screens, foundations or gutter
+          // mounts. Invalidate only this building's retained generation.
+          if (twin?.buildings?.has(after.id)) twin.buildings.get(after.id).model.stale = true;
+        }
         const before = previous.get(after.id);
         if (!before || !same(ids(before.levels || []), ids(after.levels || []))) { rebuild = true; continue; }
         // Changes outside the deformable level records still need the complete
@@ -1728,6 +1741,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      generatedPorches = new Map(nextPlan.buildings.map(b => [b.id,porchGeometry(b)]));
       freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.

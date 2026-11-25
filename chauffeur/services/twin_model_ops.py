@@ -119,6 +119,8 @@ def _batch_preflight(model, members):
                         detail.setdefault('columns',[]).append({'id':ref})
                 continue
             if kind == 'set_room_kind' and member.get('kind') == 'porch':
+                if not isinstance(member.get('room'), str):
+                    raise Refused('Choose a piece id.')
                 porch_conversions.add((scope, member.get('room')))
             name = member.get('list')
             if name is not None and kind in (*_SITE_OPS, 'set_object', 'make_yard_room'):
@@ -194,7 +196,7 @@ def _batch_owners(value, pid, scope):
                     for pieces in building.values() if isinstance(pieces, list) for piece in pieces))}
 
 
-def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=None, apply_member=None):
+def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=None, apply_member=None, _column_changes=None):
     """Compose in one private copy; publish nowhere and finalize only once."""
     members = op.get('ops')
     if not isinstance(members, list) or not members:
@@ -225,7 +227,7 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
 
     # Stable refs are minted before deletions can shift id-less indices.
     members = deepcopy(members)
-    prepared = deepcopy(original[0])
+    prepared = deepcopy(original[0]) if any(m.get('op') in twin_porch_posts.OPS for m in members) else original[0]
     for member in members:
         if member.get('op') in twin_porch_posts.OPS:
             target = next(b for b in prepared['buildings'] if b['id'] == member['building'])
@@ -234,10 +236,18 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
                 twin_porch_posts.mint_columns(target, detail)
 
     references, fixture_authors = {}, {}
+    column_changes = []
+
+    def column_snapshot(value, member):
+        building = next(b for b in value['buildings'] if b['id'] == member['building'])
+        detail = next((p for p in building.get('porches_detail', []) if p['id'] == member['porch']), {})
+        return {'buildings':[{'id':building['id'],'porches':[{'id':member['porch'],
+                'columns':deepcopy(detail.get('columns', []))}]}]}
 
     def compose(inplace):
         from services import twin_fixtures
         work = deepcopy(prepared)
+        column_changes.clear()
         deleted = False
         for index, member in enumerate(members):
             if member.get('op') == 'delete_porch_post':
@@ -250,7 +260,11 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
                 # A selected dependant removed by an earlier delete is fulfilled.
                 if len(owners) == 1 and not _batch_owners(work, pid, next(iter(owners))):
                     continue
+            observe_columns = _column_changes is not None and member.get('op') in (*twin_porch_posts.OPS, 'move_posts_to_roof')
+            prior_columns = column_snapshot(work, member) if observe_columns else None
             work, _ = checked(work, member, index, (work, []), inplace)
+            if observe_columns:
+                column_changes.append((prior_columns,column_snapshot(work, member)))
             if inplace:
                 fixture_id = twin_fixtures.remember_batch_references(work, member, references)
                 if fixture_id is not None:
@@ -291,6 +305,8 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
         # example an unrelated pre-existing terrain crossing), keep their
         # result rather than inventing a refusal against the last member.
         work = compose(False)
+    if _column_changes is not None:
+        _column_changes.extend(column_changes)
     return work, 'Applied the changes.'
 
 
