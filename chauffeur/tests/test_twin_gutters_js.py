@@ -414,6 +414,46 @@ for(const oh of [0,1,2])await test(`test_free_elbow_clears_higher_outward_ground
  assert.deepEqual(s.outlet.dir,bare.outlet.dir,'normal outward elbow is retained');
 });
 
+for(const oh of [1,2])for(const gap of [.05,.3])for(const delta of [0,.15,-1])
+await test(`test_free_drop_ignores_outward_neighbour_roof_overhang_${oh}_gap_${gap}_height_${delta}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];b.walls=[];b.levels[0].outline=rect(100,100,130,120);
+ override(p,0,[{at:.5}]);const bare=calc(p).spouts.find(s=>s.exact),drip=local(p,bare.top);
+ roof(p,'neighbour',[5,drip[1]-5,25,drip[1]-gap],'flat',{plate:drip[2]+delta});
+ b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};
+ const s=calc(p).spouts.find(s=>s.exact);assert.equal(s.mount,'free');
+ assert.ok((s.top[1]-s.outlet.at[1])/FT>8,'open ground receives a full drop, never a roof-height pipe');
+ near(local(p,s.path.at(-2))[2],.5);near(local(p,s.outlet.at)[2],4/12);
+ assert.ok(s.path.every((v,i)=>v.every(Number.isFinite)&&(!i||v[1]<=s.path[i-1][1]+1e-8)),'finite downward route');
+ assert.ok(!s.flags.includes('outlet-blocked'));
+});
+for(const oh of [1,2])for(const height of [.5,2,7])
+await test(`test_free_drop_still_clears_outward_terrace_overhang_${oh}_height_${height}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];b.walls=[];b.levels[0].outline=rect(100,100,130,120);
+ override(p,0,[{at:.5}]);const bare=calc(p).spouts.find(s=>s.exact),mouth=local(p,bare.outlet.at);
+ p.site.terraces=[{id:'step',polygon:rect(10,mouth[1]-.2,20,mouth[1]+.2),height,blend:0}];
+ const s=calc(p).spouts.find(s=>s.exact);assert.equal(s.mount,'free');
+ near(local(p,s.path.at(-2))[2],height+.5);near(local(p,s.outlet.at)[2],height+4/12);
+ assert.deepEqual(s.outlet.dir,bare.outlet.dir);
+});
+for(const oh of [1,2])for(const gap of [.25,.4,.6,1])
+await test(`test_direct_receiver_keeps_wall_support_overhang_${oh}_gap_${gap}`,()=>{
+ const p=overhang(house(),oh),b=p.buildings[0];override(p,0,[{at:.5}]);
+ const height=calc(p).spouts.find(s=>s.exact).top[1]/FT-gap;
+ roof(p,'receiver',[-10,-10,40,30],'flat',{plate:height});
+ b.roofs.at(-1).edges.forEach(e=>e.gutter=false);b.roof.sections.at(-1).gutters={};
+ const s=calc(p).spouts.find(s=>s.exact);assert.equal(s.mount,'wall','direct receiver cannot discard a reachable wall');
+ assert.ok(!s.flags.some(f=>['no-support','outlet-blocked','hang','stub'].includes(f)));
+ assert.ok(s.top[1]>s.outlet.at[1]);
+});
+for(const oh of [0,1,2])for(const clearance of [.5,.5001])
+await test(`test_keep_half_foot_candidate_adds_no_opening_warning_overhang_${oh}_clearance_${clearance}`,()=>{
+ const p=overhang(openingEnds(clearance),oh);override(p,0,[0]);
+ const before=calc(p).spouts.find(s=>s.edge.edge===0);fullDrop(before);assert.deepEqual(before.flags,[]);
+ override(p,0,[{at:before.edge.fraction}]);const kept=calc(p).spouts.find(s=>s.exact);
+ assert.deepEqual(kept.path,before.path);assert.deepEqual(kept.outlet,before.outlet);
+ assert.deepEqual(kept.flags,before.flags,'accepted clearance gains no warning on Keep');
+});
+
 function attachedPorch(kind){
  const p=house(),b=p.buildings[0];b.roofs[0].edges.forEach(e=>e.gutter=false);b.roof.sections[0].gutters={};
  const s=roof(p,'porchroof',[5,-8,25,0],kind,{ridge:'y',plate:8,pitch:3,overhang:1});

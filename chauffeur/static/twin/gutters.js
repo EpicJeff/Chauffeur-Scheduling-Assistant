@@ -629,7 +629,7 @@ function candidate(ctx,segment,top,corner,flags=[],clearance=GUTTER.openingClear
   }
   return null;
 }
-function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=false,attempt=null,legacy=false){
+function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=false,attempt=null,legacy=false,outletSurface=null){
   const p=ctx.f.local(top),n=mount.normal;
   if(mount.kind==='hang')return null;
   let dropShift=0,deckH=null;
@@ -663,16 +663,7 @@ function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=fal
   // Landing is independent of mounting and opening clearance. Preserve a real
   // outside-corner drop even when every receiving surface needs attention.
   if(!chosen){if(!exact&&!corner?.convex)return null;chosen={...choices[0],sample:initial};}
-  const surface=Math.max(support.height,chosen.sample.height),outletTop=gutterBottom(ctx,segment,top);
-  // Mounted exact routes meet the same minimum drop as automatic routes.
-  // Only a receiver under the gutter blocks the outlet itself (exactCandidate).
-  const minimumBottom=surface+.5*FT;
-  const bottom=surface+(exact?Math.min(.5*FT,Math.max(0,(outletTop[1]-surface)*.4)):.5*FT);
-  const openMount=openingCheck(ctx,mount,top,bottom,clearance,exact,legacy);
-  const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom,clearance,exact,legacy):openMount;
-  const opening={blocked:openMount.blocked||openDrop.blocked,door:openMount.door||openDrop.door};
-  if(opening.blocked&&!exact){if(attempt)attempt.opening=true;return null;}
-  if((!exact||mount.kind!=='free')&&top[1]-.04*FT<=minimumBottom+.1*FT)return null;
+  const outletTop=gutterBottom(ctx,segment,top);
   const under=[...outletTop];
   under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
   // A dropped flat ceiling closes the eave face below the old soffit. Keep
@@ -685,8 +676,23 @@ function mountedCandidate(ctx,segment,top,corner,flags,clearance,mount,exact=fal
     const ceiling=low-(section.thickness_ft??ROOF_THICKNESS)-section.underside.drop_ft;
     under[1]=Math.min(under[1],(ctx.f.base+ceiling)*FT-GUTTER.soffitClearIn/12*FT);
   }
-  if(under[1]<=(exact&&mount.kind!=='free'?minimumBottom:bottom)+.1*FT){
-    if(!exact||mount.kind!=='free')return null;under[1]=outletTop[1];}
+  let surface=Math.max(support.height,chosen.sample.height);
+  // A roof beside a free leg is not its receiver. Raised ground still clears
+  // the mouth unless it would leave less than the automatic minimum drop.
+  if(mount.kind==='free'&&(chosen.sample.kind==='roof'&&chosen.sample.height>support.height+EPS
+    ||top[1]-.04*FT<=surface+.5*FT+.1*FT||under[1]<=surface+.5*FT+.1*FT))surface=support.height;
+  const minimumBottom=surface+.5*FT;
+  const bottom=surface+(exact?Math.min(.5*FT,Math.max(0,(outletTop[1]-surface)*.4)):.5*FT);
+  const openMount=openingCheck(ctx,mount,top,bottom,clearance,exact,legacy);
+  const openDrop=dropShift>EPS?openingCheck(ctx,{...mount,at:dropAt},top,bottom,clearance,exact,legacy):openMount;
+  const opening={blocked:openMount.blocked||openDrop.blocked,door:openMount.door||openDrop.door};
+  if(opening.blocked&&!exact){if(attempt)attempt.opening=true;return null;}
+  // Retry only a high mount-side receiver; a receiver under the outlet itself
+  // can shorten a supported exact route without making its wall disappear.
+  const requireMinimum=!exact||mount.kind!=='free'&&outletSurface<surface-EPS;
+  if(requireMinimum&&top[1]-.04*FT<=minimumBottom+.1*FT)return null;
+  if(under[1]<=(requireMinimum?minimumBottom:bottom)+.1*FT){
+    if(requireMinimum)return null;under[1]=outletTop[1];}
   const rimBotY=deckH!==null?Math.max(deckH+.06*FT,bottom+.35*FT):null;
   const rimTopY=rimBotY!==null?rimBotY+dropShift*FT:null;
   let upperAt=dropAt,useJog=false;
@@ -747,7 +753,7 @@ function exactCandidate(ctx,c,flags){
   if(top[1]<=hit.height+2/12*FT){const mount=mounts.find(m=>m.kind!=='hang')||free;
     return exactBlocked(ctx,c,mount.kind==='free'?[...flags,'no-support']:flags,mount);}
   for(const mount of mounts){if(mount.kind==='hang')continue;
-    const value=mountedCandidate(ctx,segment,at,null,flags,GUTTER.openingClearMinFt,mount,true);
+    const value=mountedCandidate(ctx,segment,at,null,flags,GUTTER.openingClearMinFt,mount,true,null,false,hit.height);
     if(value)return value;
   }
   return mountedCandidate(ctx,segment,at,null,[...flags,'no-support'],GUTTER.openingClearMinFt,free,true);
@@ -757,7 +763,7 @@ function keptCandidate(ctx,value){
   const overOpening=value.path.some((p,i)=>{
     const q=value.path[i-1];if(!q||Math.hypot(p[0]-q[0],p[2]-q[2])>EPS)return false;
     return openingCheck(ctx,{at:ctx.f.local(p).slice(0,2)},[p[0],Math.max(p[1],q[1]),p[2]],
-      Math.min(p[1],q[1]),GUTTER.openingClearMinFt,true,false).blocked;
+      Math.min(p[1],q[1]),GUTTER.openingClearMinFt,false,false).blocked;
   });
   return {...value,flags:[...value.flags,...(overOpening?['over-opening']:[])]};
 }
