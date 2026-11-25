@@ -28,7 +28,7 @@ _NEUTRAL = _DISPLAY | {'src'}
 _CHILDREN = _PIECES | _SINGLE
 _CONTEXTS = {
     'model': {'buildings': 'building', 'site': 'site'},
-    **{kind: dict.fromkeys(_CHILDREN, 'piece') for kind in ('building', 'site', 'piece')},
+    **{kind: {**dict.fromkeys(_CHILDREN, 'piece'), 'columns': 'column'} for kind in ('building', 'site', 'piece')},
 }
 
 
@@ -40,7 +40,7 @@ def _canonical(value, context='unknown'):
                 _canonical(v, context) if type(v) in (dict, list) else v for v in value]
     if type(value) is not dict:
         return value
-    neutral = _NEUTRAL if context in ('piece', 'building') else ('camera_views',) if context == 'model' else ()
+    neutral = _NEUTRAL if context in ('piece', 'building') else ('id',) if context == 'column' else ('camera_views',) if context == 'model' else ()
     children = _CONTEXTS.get(context, {})
     result = {}
     for key, item in sorted(value.items()):

@@ -575,6 +575,10 @@ def _details(building, levels, notes):
             for index, column in enumerate(_items(porch, 'columns', notes)):
                 if (isinstance(column, dict) and _point(column.get('at'))
                         and _number(column.get('size')) and column['size'] > 0):
+                    if 'id' in column and (not isinstance(column['id'], str)
+                            or not column['id'].startswith('post:') or len(column['id']) > 120):
+                        column.pop('id')
+                        notes.append(f'Stripped invalid id from porch column {index}.')
                     columns.append(column)
                 else:
                     notes.append(f'Dropped porch column {index}: invalid at or size.')
@@ -1162,6 +1166,37 @@ def diff_paths(a: dict, b: dict) -> list[str]:
                 walk(left.get(key, missing), right.get(key, missing),
                      f'{path}.{key}' if path else key)
         elif isinstance(left, list) and isinstance(right, list):
+            if path.endswith('.columns'):
+                # Ids are optional metadata. Match surviving columns across
+                # the first mint and deletion without reporting shifted rows.
+                old, new = list(enumerate(left)), list(enumerate(right))
+                clean = lambda c: {k:v for k,v in c.items() if k != 'id'} if isinstance(c, dict) else c
+                def pair(i, item, match):
+                    old.remove((i,item)); new.remove(match)
+                    key = f"id={item['id']}" if isinstance(item, dict) and item.get('id') else str(i)
+                    walk(clean(item), clean(match[1]), f'{path}[{key}]')
+                # Reserve every identified survivor before content can consume it.
+                for i,item in list(old):
+                    match = next(((j,c) for j,c in new if isinstance(item,dict) and isinstance(c,dict)
+                                  and item.get('id') and item.get('id') == c.get('id')), None)
+                    if match is not None:
+                        pair(i,item,match)
+                for i,item in list(old):
+                    if isinstance(item,dict) and item.get('id'):
+                        continue
+                    match = next(((j,c) for j,c in new if clean(item) == clean(c)), None)
+                    if match is not None:
+                        pair(i,item,match)
+                # A changed survivor has the same index before the first mint.
+                if len(old) == len(new) and all(not isinstance(item,dict) or not item.get('id') for _,item in old):
+                    for (i,item), (_,other) in zip(old,new):
+                        walk(clean(item), clean(other), f'{path}[{i}]')
+                else:
+                    for rows, removed in ((old, True), (new, False)):
+                        for i,item in rows:
+                            key = f"id={item['id']}" if isinstance(item, dict) and item.get('id') else str(i)
+                            walk(item if removed else missing, missing if removed else item, f'{path}[{key}]')
+                return
             old, new = indexed(left), indexed(right)
             for key in old.keys() | new.keys():
                 walk(old.get(key, missing), new.get(key, missing), f'{path}[{key}]')

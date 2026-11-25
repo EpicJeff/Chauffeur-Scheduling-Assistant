@@ -679,7 +679,7 @@ def _parse_draft(kind, answer, v, context=None):
         return v.fields(value, path, {'polygon': polygon}, {
             'id': v.text, 'screened': boolean,
             'floor': signed, 'columns': lambda x, p: v.items(x, p, lambda x, p: v.fields(
-                x, p, {'at': point, 'size': positive}))})
+                x, p, {'at': point, 'size': positive}, {'id': v.text}))})
 
     def anchor(value, path):
         def fraction_point(value, path):

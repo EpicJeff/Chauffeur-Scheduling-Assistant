@@ -890,7 +890,7 @@ def _tombstone(kind, piece, building):
 
 # Caches the model derives from walls and joints (a person never edits them),
 # and provenance marks (who owns a piece is not a reader's error).
-_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|porches\[[^\]]+\]\.polygon|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
+_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|porches\[[^\]]+\]\.polygon|porches_detail|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
 
 
 def _derived_path(path):
@@ -992,6 +992,31 @@ def save(edit, actor_id, reason=''):
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
                    for path in twin_plan.diff_paths(logged_before, after)
                    if twin_store._fix_kind(path) is not None and not _derived_path(path)]
+        if any(m.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS for m in members):
+            # Following is derived. In mixed batches log each explicit column
+            # edit at its own operation boundary, before later corner transport.
+            changes = [c for c in changes if '.columns[' not in c['path']]
+            if any(m.get('op') in (*twin_model_ops.twin_porch_posts.OPS, 'move_posts_to_roof') for m in members):
+                work = deepcopy(normalized[0])
+                for member in members:
+                    prior = twin_model_bridge.flatten(work)
+                    work, _ = apply_model(work, member, ha_catalogue=ha_catalogue, _normalized=(work, []))
+                    if member.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS:
+                        continue
+                    current_flat = twin_model_bridge.flatten(work)
+                    changes.extend({'path': path, 'kind': twin_store._fix_kind(path),
+                                    'before': twin_store._leaf(prior,path), 'after': twin_store._leaf(current_flat,path),
+                                    'reason': reason.strip() or summary, 'actor_id':actor_id}
+                                   for path in twin_plan.diff_paths(prior,current_flat)
+                                   if '.columns[' in path and twin_store._fix_kind(path) is not None and not _derived_path(path))
+        # The first deletion mints the surviving columns. Its old index may
+        # now point at a different survivor; the removed leaf has no after.
+        post_deletes = [m for m in members if isinstance(m, dict) and m.get('op') == 'delete_porch_post']
+        for change in changes:
+            if change['before'] is not None and re.search(r'\.columns\[[^\]]+\]$', change['path']) and any(
+                    f"buildings[id={m['building']}].porches[id={m['porch']}].columns[" in change['path']
+                    for m in post_deletes):
+                change['after'] = None
         def metadata(row):
             if place_row is not None:
                 row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']

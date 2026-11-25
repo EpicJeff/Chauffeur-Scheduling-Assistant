@@ -6,6 +6,7 @@ import math
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs
 from services.twin_model_supports import carry_fields, edge_pairs, normalize_host, normalize_support, is_supported
+from services import twin_porch_posts
 
 
 _EPS = 1e-9
@@ -36,6 +37,9 @@ def _batch_preflight(model, members):
                           for p in rows if isinstance(p, dict) and 'id' in p}
            for bid, b in buildings.items()}
     legacy_ids = None
+    added_posts = set()
+    post_details = {}
+    porch_conversions = set()
 
     def present(pid, scope=None):
         nonlocal legacy_ids
@@ -97,6 +101,25 @@ def _batch_preflight(model, members):
                 raise Refused('Choose an operation.')
             if scope is not None and (not isinstance(scope, str) or scope not in buildings):
                 raise Refused('That building is missing.')
+            if kind in twin_porch_posts.OPS:
+                key = (scope, member.get('porch'), member.get('post'))
+                created = isinstance(member.get('post'), str) and isinstance(member.get('porch'), str) and key in added_posts
+                if not isinstance(member.get('porch'), str) or (scope, member.get('porch')) not in porch_conversions:
+                    twin_porch_posts.validate_target(model, {**member, 'op':'add_porch_post'} if created else member)
+                if kind == 'add_porch_post':
+                    porch_key = (scope, member.get('porch'))
+                    if porch_key not in post_details:
+                        detail = next((p for p in buildings[scope].get('porches_detail', []) if p['id'] == member.get('porch')), None)
+                        post_details[porch_key] = deepcopy(detail) if detail is not None else dict(id=member.get('porch'),columns=[])
+                        twin_porch_posts.mint_columns(buildings[scope],post_details[porch_key])
+                    detail = post_details[porch_key]
+                    ref = member.get('id',twin_porch_posts.next_id(detail))
+                    if isinstance(ref,str):
+                        added_posts.add((scope,member.get('porch'),ref))
+                        detail.setdefault('columns',[]).append({'id':ref})
+                continue
+            if kind == 'set_room_kind' and member.get('kind') == 'porch':
+                porch_conversions.add((scope, member.get('room')))
             name = member.get('list')
             if name is not None and kind in (*_SITE_OPS, 'set_object', 'make_yard_room'):
                 if not isinstance(name, str):
@@ -200,13 +223,27 @@ def apply_batch(model, op, actor='person', *, ha_catalogue=None, _normalized=Non
         return checked(model, members[0], 0, original)
     _batch_preflight(original[0], members)
 
+    # Stable refs are minted before deletions can shift id-less indices.
+    members = deepcopy(members)
+    prepared = deepcopy(original[0])
+    for member in members:
+        if member.get('op') in twin_porch_posts.OPS:
+            target = next(b for b in prepared['buildings'] if b['id'] == member['building'])
+            detail = next((p for p in target.get('porches_detail', []) if p['id'] == member['porch']), None)
+            if detail is not None:
+                twin_porch_posts.mint_columns(target, detail)
+
     references, fixture_authors = {}, {}
 
     def compose(inplace):
         from services import twin_fixtures
-        work = deepcopy(original[0]) if inplace else original[0]
+        work = deepcopy(prepared)
         deleted = False
         for index, member in enumerate(members):
+            if member.get('op') == 'delete_porch_post':
+                b = next(b for b in work['buildings'] if b['id'] == member['building'])
+                if not any(p['id'] == member['porch'] for p in b.get('porches_detail', [])):
+                    continue  # An earlier porch delete fulfilled this post delete.
             if deleted and member.get('op') == 'delete':
                 pid, scope = member.get('piece', member.get('id')), member.get('building')
                 owners = _batch_owners(original[0], pid, scope)
@@ -833,7 +870,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('set_roof_support', 'move_roof', 'add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = twin_porch_posts.OPS + ('set_roof_support', 'move_roof', 'add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'move_posts_to_roof', 'accept_proposal', 'dismiss_proposal',
@@ -2133,7 +2170,7 @@ def preserves_room_geometry(op):
     """A rename, like a slot write, must not re-derive cached room polygons."""
     if isinstance(op, dict) and op.get('op') == 'batch':
         return bool(op.get('ops')) and isinstance(op['ops'], list) and all(preserves_room_geometry(member) for member in op['ops'])
-    return material_only(op) or isinstance(op, dict) and (op.get('op') == 'move_posts_to_roof' or op.get('op') == 'set' and op.get('field') == 'name')
+    return material_only(op) or isinstance(op, dict) and (op.get('op') in (*twin_porch_posts.OPS, 'move_posts_to_roof') or op.get('op') == 'set' and op.get('field') == 'name')
 
 
 def _already_walled(roof, op):
@@ -2204,12 +2241,16 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     if kind == 'move_posts_to_roof':
         from services.twin_model_posts import validate_move_posts
         validate_move_posts(model, op)  # Refuse proposal state before normalization discards it.
+    if kind in twin_porch_posts.OPS:
+        twin_porch_posts.validate_target(model, op)
     # save() also needs the normalized pre-edit model for its fix log. Reuse
     # that exact input's result, but keep our mutable working copy private.
     if _batch_inplace:
         notes = []
     else:
         model, notes = twin_model.normalize(model, preserve_room_polygons=preserves_room_geometry(op)) if _normalized is None else deepcopy(_normalized)
+    if kind in twin_porch_posts.OPS:
+        return model, twin_porch_posts.apply_op(model, op, actor)
     if kind == 'move_posts_to_roof':
         from services.twin_model_posts import move_posts_to_roof
         return model, move_posts_to_roof(model, op, actor)
@@ -2516,6 +2557,8 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
         hosts.carry_split(building, before)
     if not preserves_room_geometry(op):
         notes.extend(twin_model.derive(building))
+    if kind in twin_porch_posts.FOLLOW_OPS:
+        twin_porch_posts.follow_posts(previous, building)
     if kind == 'add_porch':
         room = _find(building, 'rooms', porch_id)
         if not twin_model._same_outline(room['polygon'], polygon):

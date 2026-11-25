@@ -845,6 +845,10 @@ def _centroid(points):
                 for a, b in edges) / (3 * area2) for i in (0, 1)]
 
 
+def _porch_level(piece, house):
+    return piece.get('level') or next((l['id'] for l in (house or {}).get('levels', [])), None)
+
+
 def _matches(a, b, kind, house, *, original=False):
     if kind == 'roof' and is_supported(a) != is_supported(b):
         return a['id'] == b['id']
@@ -854,7 +858,7 @@ def _matches(a, b, kind, house, *, original=False):
                 return next((w['level'] for w in house['walls'] if w['id'] == p['wall']), None)
             return next((s.get('level') for s in house['roof']['sections']
                          if s['id'] == p.get('section')), None)
-        return p.get('level')
+        return _porch_level(p, house) if kind == 'porch' else p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
     if kind == 'fixture' and (twin_plan.fixture_kind(a.get('kind')) != twin_plan.fixture_kind(b.get('kind'))
@@ -883,6 +887,10 @@ def _matches(a, b, kind, house, *, original=False):
 def _match_geometry(piece, kind, house):
     if piece.get('src', {}).get('person') and piece.get('read_geometry'):
         return piece['read_geometry']
+    if kind == 'porch' and piece.get('src', {}).get('person'):
+        room = next((r for r in (house or {}).get('rooms', []) if r['id'] == piece['id']), None)
+        if room and room.get('read_geometry'):
+            return room['read_geometry']
     return _geometry(piece, kind, house)
 
 
@@ -932,6 +940,14 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
                 continue
         old = next((p for p in sorted(merged, key=lambda p: not protected(p))
                     if (_matches(piece, p, kind, house)
+                        or (kind == 'porch' and protected(p) and not p.get('read_geometry')
+                            and _porch_level(p, house) == _porch_level(piece, house)
+                            and p.get('src', {}).get('step') == piece.get('src', {}).get('step')
+                            and ((p.get('name') and p.get('name') == piece.get('name')
+                                  and sum(q.get('name') == p.get('name') and _porch_level(q, house) == _porch_level(p, house) for q in incoming) == 1
+                                  and sum(q.get('name') == p.get('name') and _porch_level(q, house) == _porch_level(p, house) for q in existing) == 1)
+                                 or (sum(_porch_level(q, house) == _porch_level(p, house) for q in incoming) == 1
+                                     and sum(_porch_level(q, house) == _porch_level(p, house) for q in existing) == 1)))
                         or (kind == 'wall' and not protected(p) and p.get('level') == piece.get('level')
                             and p.get('src', {}).get('step') != piece.get('src', {}).get('step')
                             and _near_geometry(_geometry(p, kind, house), _geometry(piece, kind, house), kind))

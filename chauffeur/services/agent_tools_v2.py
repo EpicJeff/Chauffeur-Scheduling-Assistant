@@ -7756,6 +7756,7 @@ class HouseDesignTool(BaseModel):
         "edge is a 0-based area index, at is feet from that edge's first point. "
         "add_level (name, elevation, ceiling); move_building (to:[x,y] in lot feet); "
         "rotate_building (rotation, about?:[x,y] in lot feet); "
+        "add_porch_post(building,porch,at?,size?,id?); update_porch_post(building,porch,post,at?,size?); delete_porch_post(building,porch,post). "
         "move_posts_to_roof (building, porch, roof): only by explicit request after explaining posts move to the roof, the porch floor stays, and the roof stops shaping walls and gables under it; requires porch columns, an overlapping shed roof on the same floor, and no existing roof supports; keeps positions, size and column material; one undo step. "
         "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{roof, part:support}|{roof, part:underside}|{level, role}|{building, role}, "
         "material:{id, color} or null clears override); "
@@ -9786,6 +9787,19 @@ def handle_house_design(args: dict, actor=None) -> dict:
             plan = twin_store.current()
             if plan is None:
                 raise ValueError('Build a house before describing a piece.')
+            from services.twin_porch_posts import post_ref
+            from services.twin_plan import porches
+            post_matches = [(b, p) for b in plan['buildings'] if params.building in (None, b['id'])
+                            for p in porches(b) if p['id'] == params.piece
+                            or any(post_ref(p, i) == params.piece for i in range(len(p.get('columns', []))))]
+            if len(post_matches) > 1:
+                raise ValueError('Choose a building for that piece.')
+            posts = None
+            if post_matches:
+                b, p = post_matches[0]
+                posts = [dict(ref=post_ref(p, i), at=c['at'], size=c['size']) for i,c in enumerate(p.get('columns', []))]
+                if params.piece != p['id'] or not any(r['id'] == p['id'] for r in b.get('rooms', [])):
+                    return {'status':'ok', 'summary': f"Porch {p.get('name', p['id'])} in {b['id']}: {posts}.", 'posts':posts}
             yard = next((r for r in plan.get('site', {}).get('yard_rooms', []) if r['id'] == params.piece), None) if params.building is None else None
             if yard:
                 extra, devices = _house_design_room_devices(yard)
@@ -9821,6 +9835,9 @@ def handle_house_design(args: dict, actor=None) -> dict:
             fields = '; '.join(f"{key.replace('_', ' ')}: {words(key, value)}"
                                for key, value in piece.items() if key != 'src')
             out = {'status': 'ok', 'summary': f"{kind.capitalize()} in {building['id']}: {fields}."}
+            if posts is not None:
+                out['posts'] = posts
+                out['summary'] += f' Posts: {posts}.'
             if kind == 'room':
                 extra, devices = _house_design_room_devices(piece)
                 out['summary'] += extra
