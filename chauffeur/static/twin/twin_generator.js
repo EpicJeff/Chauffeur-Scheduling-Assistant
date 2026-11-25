@@ -9,12 +9,14 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { supportMaterialSurface } from './support_material.js';
+import { undersideMaterialSurface } from './underside_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes } from './twin_roof.js';
 import { isSupported, supportPoints, supportGeometry, supportFrame, roofPoint } from './roof_supports.js';
+import { prepareUnderside, undersideGeometry } from './roof_underside.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
 import { solarZones, solarPoint, solarRect } from './twin_solar.js';
 import { groundAt, buildingBase, foundationShape } from './twin_ground.js';
@@ -1658,10 +1660,52 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         const object=mesh(roofGroup,roofGeometry(empty),plain('solar_zone','#285888')); object.material.transparent=true; object.material.opacity=.2;}
     }
     for (const {sections, indices, roofLayers, visibleRoof, exclude, roofSidePlanes, roofIdentity, supported, group: roofGroup} of roofGroups) {
+    const boxSection = supported ? sections[sections.length - 1] : null;
+    const boxRecord = boxSection ? b.roofs?.find(r => r.id === (boxSection.roof || boxSection.id)) || boxSection : null;
+    const boxThickness = boxSection?.thickness_ft ?? ROOF_THICKNESS;
+    const rawSlabBottomAt = (x, y) => {
+      const z = heightAt(sections, x, y);
+      return z === null ? null : z - boxThickness;
+    };
+    const supportWallFaceAt = (x, y, out) => {
+      let best = 0;
+      for (const { w, dx, dy } of supportingWalls) {
+        if (!w.footprint?.length) continue;
+        const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+        if (!(len > 1e-6)) continue;
+        if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
+        const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
+        const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
+        if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
+        const proj = Math.max(...w.footprint.map(p => (p[0] - x) * out[0] + (p[1] - y) * out[1]));
+        if (proj > best && proj <= (w.thickness || 0.5) + 0.1) best = proj;
+      }
+      return best;
+    };
+    const underShape = boxSection ? { ...boxRecord, ...boxSection, area: boxRecord.area || boxSection.area,
+      ends: boxRecord.ends ?? boxSection.ends, underside: boxRecord.underside ?? boxSection.underside } : null;
+    const prepared = underShape ? prepareUnderside(underShape, {
+      THREE, slabBottomAt: rawSlabBottomAt, wallFaceAt: supportWallFaceAt, recordEdges: boxRecord.edges,
+    }) : null;
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       const thickness = supported ? section.thickness_ft ?? ROOF_THICKNESS : ROOF_THICKNESS;
       const bare = supported && section.fascia === false;
+      const supRec = supported ? (b.roofs?.find(r => r.id === (section.roof || section.id)) || section) : null;
+      const supUnder = supRec?.underside ?? section.underside;
+      const supEnds = supRec?.ends ?? section.ends;
+      const flatDrop = supUnder?.kind === 'flat' && Number.isFinite(supUnder.drop_ft) ? Math.max(0, Math.min(3, supUnder.drop_ft)) : 0;
+      const coplanarFlatUnderside = supported && supUnder?.kind === 'flat' && flatDrop === 0
+        && ((section.kind || supRec?.kind) === 'flat' || !(section.pitch || 0));
+      // Only an end that draws its own frame replaces the default rake board,
+      // and only a box closed on every side hides the slab's underside.
+      const framedEndAt = (a, c, axis, sign) => !!prepared && prepared.isFramedShedEnd.some((framed, i) => {
+        if (!framed || prepared.outs[i][axis] * sign < 0.99) return false;
+        const p = prepared.drawnPoly[i], q = prepared.drawnPoly[(i + 1) % prepared.n], along = 1 - axis;
+        const lo = Math.min(p[along], q[along]) - 1e-3, hi = Math.max(p[along], q[along]) + 1e-3;
+        return [a, c].every(v => Math.abs(v[axis] - p[axis]) < 1e-3 && v[along] >= lo && v[along] <= hi);
+      });
+      const fullyClosedShedBox = !!prepared?.hasFlat && !prepared.hasAnyOpenEnd && (section.kind || supRec?.kind) === 'shed';
       use(section, 'roof', `roof:${indices[index]}`);
       const finishes = new Map(), triangleFinishes = [];
       for (let t = 0; t < roofLayers.section.length; t++) if (roofLayers.section[t] === index) {
@@ -1672,7 +1716,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         finish.positions.push(...triangle); positions.push(...triangle); triangleFinishes.push(finish);
       }
       const planePart = edge => `roof-plane:${section.roof || section.id || indices[index]}:${edge}`;
-      const boxed = bare && finishes.size === 1 && positions.length === 18
+      const boxed = !coplanarFlatUnderside && bare && finishes.size === 1 && positions.length === 18
         && [0,3,6,9,12,15].every(i => {
           const r=roofBounds(section.roof_frame?{...section,roof_frame:null}:section);
           const p=section.roof_frame?roofPoint(section,positions.slice(i,i+2),true):positions.slice(i,i+2);
@@ -1736,7 +1780,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         // here would occupy the same plane (and fight for double-sided looks).
         if (!shared) band(a, c, finish.stitching);
       }
-      if (!boxed && underside.length) mesh(roofGroup, roofGeometry(underside), bare ? mat('roof', roofLevel(section), roofRef(section)) : kindMat('soffit', section), null, null, bare ? roofRef(section) : kindRef('soffit', section), bare ? planePart(finishes.values().next().value?.edge) : '');
+      if (!boxed && !coplanarFlatUnderside && !fullyClosedShedBox && underside.length) mesh(roofGroup, roofGeometry(underside), bare ? mat('roof', roofLevel(section), roofRef(section)) : kindMat('soffit', section), null, null, bare ? roofRef(section) : kindRef('soffit', section), bare ? planePart(finishes.values().next().value?.edge) : '');
       // These outward-facing shell edges are the visible covering thickness.
       for (const finish of finishes.values()) if (!boxed && finish.stitching.length)
         mesh(roofGroup, roofGeometry(finish.stitching), finish.material, null, null, finish.ref, planePart(finish.edge));
@@ -1751,6 +1795,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const edgeA = section.roof_frame ? roofPoint(section,a,true) : a,
             edgeC = section.roof_frame ? roofPoint(section,c,true) : c;
           for (let axis = 0; axis < 2; axis++) for (const sign of [-1, 1]) {
+            if (framedEndAt(edgeA, edgeC, axis, sign)) continue;
             const end = rect[axis + (sign > 0 ? 2 : 0)];
             if (Math.abs(edgeA[axis] - end) > 1e-5 || Math.abs(edgeC[axis] - end) > 1e-5) continue;
             const mid = [(edgeA[0] + edgeC[0]) / 2, (edgeA[1] + edgeC[1]) / 2];
@@ -1854,13 +1899,35 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       if (supported && index === sections.length - 1) {
         const record = b.roofs?.find(r => r.id === (section.roof || section.id)) || section;
-        const shape = {...record, ...section, area: record.area || section.area};
+        const shape = { ...record, ...section, area: record.area || section.area };
         const bAngle = (b.rotation || 0) * Math.PI / 180, cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
         const roofPorches = allPorches(b);
-        const slabBottomAt = (x, y) => {
-          const z = heightAt(sections, x, y);
-          return z === null ? null : z - thickness;
+        const supportWallTopAt = (x, y, out = null) => {
+          let best = -Infinity;
+          for (const { w, l, dx, dy, panels } of supportingWalls) {
+            const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
+            if (!(len > 1e-6)) continue;
+            if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
+            const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
+            const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
+            if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
+            const uc = Math.max(0, Math.min(len, ux));
+            let h = w.height;
+            if (panels?.length) {
+              const p = panels.find(([a, c]) => uc >= a - 1e-4 && uc <= c + 1e-4)
+                || panels.reduce((q, r) => Math.abs((r[0] + r[1]) / 2 - uc) < Math.abs((q[0] + q[1]) / 2 - uc) ? r : q);
+              h = p[1] > p[0] ? p[2] + (p[3] - p[2]) * Math.max(0, Math.min(1, (uc - p[0]) / (p[1] - p[0]))) : Math.max(p[2], p[3]);
+            }
+            const top = l.elevation + h;
+            if (top > best) best = top;
+          }
+          return best > -Infinity ? best : null;
         };
+        const roofSidingRef = surfaceRef('siding', roofLevel(section), record.materials?.siding);
+        const roofSidingAsset = materialKitFor({ siding: roofSidingRef }).materials.siding?.asset || materialKit.materials.siding?.asset;
+        const sidingIsBatten = roofSidingAsset === 'board_and_batten';
+        const ceilingHeight = prepared?.hasFlat && Number.isFinite(prepared.ceilingZ) ? prepared.ceilingZ : null;
+        const slabBottomAt = Number.isFinite(ceilingHeight) ? () => ceilingHeight : rawSlabBottomAt;
         const supportGroundAt = (x, y) => {
           const limit = slabBottomAt(x, y) ?? (section.plate - thickness);
           let floor = -Infinity;
@@ -1887,44 +1954,33 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const wx = position[0] + x * cosB - y * sinB, wy = position[1] + x * sinB + y * cosB;
           return groundAt(plan, wx, wy) - base;
         };
-        const supportWallTopAt = (x, y, out = null) => {
-          let best = -Infinity;
-          for (const { w, l, dx, dy, panels } of supportingWalls) {
-            const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
-            if (!(len > 1e-6)) continue;
-            if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
-            const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
-            const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
-            if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
-            const uc = Math.max(0, Math.min(len, ux));
-            let h = w.height;
-            if (panels?.length) {
-              const p = panels.find(([a, c]) => uc >= a - 1e-4 && uc <= c + 1e-4)
-                || panels.reduce((q, r) => Math.abs((r[0] + r[1]) / 2 - uc) < Math.abs((q[0] + q[1]) / 2 - uc) ? r : q);
-              h = p[1] > p[0] ? p[2] + (p[3] - p[2]) * Math.max(0, Math.min(1, (uc - p[0]) / (p[1] - p[0]))) : Math.max(p[2], p[3]);
-            }
-            const top = l.elevation + h;
-            if (top > best) best = top;
+        const underParts = prepared ? undersideGeometry(underShape, {
+          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt,
+          slabBottomAt: rawSlabBottomAt, wallFaceAt: supportWallFaceAt,
+          cuts: exclude.flat(), recordEdges: record.edges, sidingIsBatten, _prepared: prepared,
+        }) : [];
+        for (const part of underParts) {
+          let partRef, partMat;
+          if (part.slot === 'underside') {
+            const ownRef = resolveSlot('underside', { item: record, building: b, level: roofLevel(section) }) || plan.materials?.underside;
+            partRef = ownRef ? resolveSurfaceMaterial(plan, undersideMaterialSurface(plan, b, record, kit)).ref : kindRef('soffit', record);
+            partMat = ownRef ? mat('porch_ceiling', roofLevel(section), partRef) : kindMat('soffit', record);
+          } else if (part.slot === 'fascia') {
+            partRef = kindRef('fascia', record);
+            partMat = kindMat('fascia', record);
+          } else if (part.slot === 'siding') {
+            partRef = roofSidingRef;
+            partMat = mat('siding', roofLevel(section), record.materials?.siding);
+          } else {
+            partRef = kindRef('trim', record);
+            partMat = kindMat('trim', record);
           }
-          return best > -Infinity ? best : null;
-        };
-        const supportWallFaceAt = (x, y, out) => {
-          let best = 0;
-          for (const { w, dx, dy } of supportingWalls) {
-            if (!w.footprint?.length) continue;
-            const len = Math.hypot(w.to[0] - w.from[0], w.to[1] - w.from[1]);
-            if (!(len > 1e-6)) continue;
-            if (out && Math.abs(dx * out[0] + dy * out[1]) > 0.25) continue;
-            const ux = (x - w.from[0]) * dx + (y - w.from[1]) * dy;
-            const dist = Math.abs((x - w.from[0]) * dy - (y - w.from[1]) * dx);
-            if (dist > (w.thickness || 0.5) / 2 + 0.15 || ux < -0.25 || ux > len + 0.25) continue;
-            const proj = Math.max(...w.footprint.map(p => (p[0] - x) * out[0] + (p[1] - y) * out[1]));
-            if (proj > best && proj <= (w.thickness || 0.5) + 0.1) best = proj;
-          }
-          return best;
-        };
+          tagPart(mesh(roofGroup, part.geometry, partMat, null, null, partRef, part.part), part.part);
+        }
+        const supportSlabBottomAt = record.support?.kind === 'cable' ? rawSlabBottomAt : slabBottomAt;
         for (const part of supportGeometry(shape, supportPoints(record), {
-          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt, slabBottomAt, wallFaceAt: supportWallFaceAt,
+          THREE, groundAt: supportGroundAt, wallTopAt: supportWallTopAt,
+          slabBottomAt: supportSlabBottomAt, wallFaceAt: supportWallFaceAt,
         })) {
           const partSlot = part.slot || 'support';
           const postDefault = partSlot === 'column' && !record.materials?.support;
@@ -2529,8 +2585,10 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     });
     for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
       for (const space of group.children) space.traverse(o => {
+        const partName = o.userData.part || '';
         if (o.userData.kind === 'roof' && !o.layers.isEnabled(PICK_LAYER) && supportedIds.has(o.userData.pieceId)
-            && !(o.userData.part || '').startsWith('support:')) capture(o, positions, false, space);
+            && !partName.startsWith('support:') && partName !== 'underside'
+            && partName !== 'underside:front' && !partName.startsWith('end:')) capture(o, positions, false, space);
         if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
       });
     if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,
