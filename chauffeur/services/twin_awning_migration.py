@@ -249,16 +249,20 @@ def _awning(model, building, awning, parent, walls, pid, notes):
 
 
 def _shed(extension, parent, pid):
-    if not all(_number(extension.get(k)) for k in ('to_x', 'pitch')) or extension['to_x'] <= parent['rect'][2]:
-        return None
+    malformed = not all(_number(extension.get(k)) for k in ('to_x', 'pitch')) or extension['to_x'] <= parent['rect'][2]
     from services.twin_model_roofs import from_section
     x0, y0, x1, y1 = parent['rect']
     value = {k: deepcopy(v) for k, v in extension.items() if k not in ('section', 'to_x', 'kind')}
-    value.update(id=pid, kind='shed', low_side='x1', rect=[x1, y0, extension['to_x'], y1],
-                 plate=parent['plate']-(extension['to_x']-x1)*extension['pitch']/12,
+    end = x1+1 if malformed else extension['to_x']
+    pitch = extension['pitch'] if _number(extension.get('pitch')) else 3
+    value.update(id=pid, kind='shed', low_side='x1', rect=[x1, y0, end, y1], pitch=pitch,
+                 plate=parent['plate']-(end-x1)*pitch/12,
                  overhang=0, level=parent.get('level'),
                  edges=[dict(overhang_ft=v) for v in (parent.get('overhang', 0), extension.get('overhang', 0),
                                                       parent.get('overhang', 0), 0)])
+    if malformed:
+        value.update(state='ghost', why='This shed roof needs an outer edge beyond its parent. Place it again or delete it.',
+                     position=[x1, (y0+y1)/2], support=dict(kind='bracket', count=0))
     return from_section(value)
 
 
@@ -314,8 +318,10 @@ def migrate_awnings(model):
                       else _shed(extension, parent, pid))
             if record is None:
                 kept.append(extension); continue
+            if extension['kind'] == 'shed_continuation' and record.get('why'):
+                _flag(building, record, notes, record['why'].rstrip('.'))
             used.add(pid)
-            if parent.get('id') == 'roof-main' and parent.get('kind') == 'gable' and parent.get('ridge') == 'y':
+            if not record.get('why') and parent.get('id') == 'roof-main' and parent.get('kind') == 'gable' and parent.get('ridge') == 'y':
                 parent['gable_beam'] = True
                 if native:
                     original = next((r for r in building['roofs'] if r['id'] == (parent.get('roof') or parent['id'])), None)

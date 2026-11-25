@@ -7750,6 +7750,8 @@ class HouseDesignTool(BaseModel):
         "roof_over (rooms:[ids] or null for top floor); set_roof_edge (roof, edge, setting?:sloped|gable|clip, pitch?, clip?, gutter?:bool, downspouts?:<=8 fractions from the edge's first point, replaces list, []=none, null=auto); gutter needs a sloped eave; guttered edge to gable/clip: ask first, then batch [gutter:false+downspouts:null, setting]; porch gutter: set field:gutter; awnings are roofs and use set_roof_edge roof,edge,gutter. "
         "Acknowledge gutter issues: set_roof_edge gutter_ack:[flags], or porch set field:gutter_ack; awnings use set_roof_edge gutter_ack; flags:hang|stub|no-outside-corner|inner-end|clipped-end|no-safe-landing|no-outlet|outlet-blocked|merged-override; changing gutter/downspouts clears acknowledgement. "
         "move_roof_edge (roof, edge, by, detach? clears wall attachment), positive by grows roof; "
+        "set_roof_support (building,id,support?:{kind:walls|bracket|corbel|brace|cable|post,count:integer 0..40,inset_ft:0..6,size_ft:.05..3,style},host?:{wall,edge}|null,thickness_ft?:.05..2,fascia?:bool,at?:{index:[x,y]}); patches named settings and point indices; at:{} resets all points; invalid edits are refused without saving; lowering count keeps remaining positions; walls removes awning settings and restores wall following, preserving area and roof_frame. Awning means a roof with supports. Stored spacing_ft is a legacy hint, not an active placement control. "
+        "move_roof (building,id,by:[dx,dy] feet in building axes) moves roof, supports, gutters and panels together in one undo step; draw_roof also accepts support,host,thickness_ft,fascia,roof_frame:{origin:[x,y],angle:radians}; delete uses its roof id. "
         "add_dormer (roof, edge, at, width, pitch); move_dormer (id, at?, width?); "
         "edge is a 0-based area index, at is feet from that edge's first point. "
         "add_level (name, elevation, ceiling); move_building (to:[x,y] in lot feet); "
@@ -9640,7 +9642,9 @@ REGISTRY_EXCEPTIONS = {
 
 def _house_design_building_summary(building) -> str:
     levels = ', '.join(level.get('name') or level['id'] for level in building['levels'])
-    roofs = ', '.join(f"{section['id']} ({section['kind']}, {section['pitch']:g} in 12)"
+    roofs = ', '.join((f"{section.get('name') or section['id']} (Awning, {section['support']['kind']}, host {section.get('host', {}).get('wall', 'None')}, {section['kind']}, {section['pitch']:g} in 12)"
+                      if section.get('support', {}).get('kind') not in (None, 'walls') else
+                      f"{section.get('name') or section['id']} ({section['kind']}, {section['pitch']:g} in 12)")
                       for section in building['roof']['sections']) or 'none'
     return (
         f"{building.get('name') or building['id']}: levels {levels or 'none'}; "

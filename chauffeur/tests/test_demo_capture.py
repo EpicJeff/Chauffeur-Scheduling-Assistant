@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools' / 'demo_capture.py'
-NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters']
+NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -33,8 +33,9 @@ window.__editor = {ready:true, selected:()=>({pieceId:'r1',buildingId:'synth-hou
 window.__twin = {ready:true, plan:{buildings:[{id:'synth-house'}]}, stats:()=>({triangles:100})};
 window.__demoGutterFrame = {run:'demo-run', spout:'demo-spout'};
 for (const shot of input.shots) {
+  window.__editor.selected = () => ({pieceId:shot==='twin-awning-editor'?'demo-awning':'r1',buildingId:'synth-house'});
   nodes.clear();
-  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (shot==='twin-editor'?'editor':'twin')
+  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor'].includes(shot)?'editor':'twin')
      : shot==='wall-board'?'/home':'/app'};
   for(const selector of ['.pwa-brief-greet','.pwa-brief-day [data-kind]',
      '#plan-head .pwa-plan-title','.pwa-tl .pwa-ev','[x-data="homeBoard()"]',
@@ -50,7 +51,7 @@ for (const shot of input.shots) {
   location.pathname='/account/login';
   assert.equal(check({shot,final:true}).ready,false,shot+' wrong route');
 }
-console.log('all six surfaces reject visible pairing/sign-in overlays and wrong routes');
+console.log('all seven surfaces reject visible pairing/sign-in overlays and wrong routes');
 '''
         code, output = run_node(driver, {'root': ROOT.as_posix(), 'guard': SURFACE_STATE, 'shots': NAMES})
         self.assertEqual(code, 0, output)

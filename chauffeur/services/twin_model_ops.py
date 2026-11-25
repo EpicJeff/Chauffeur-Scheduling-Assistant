@@ -5,7 +5,7 @@ import math
 
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs
-from services.twin_model_supports import carry_fields, edge_pairs, normalize_host, normalize_support
+from services.twin_model_supports import carry_fields, edge_pairs, normalize_host, normalize_support, is_supported
 
 
 _EPS = 1e-9
@@ -827,7 +827,7 @@ def _mark_touched(building, previous, op):
                 _person(piece)
 
 
-MORE_OPS = ('add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
+MORE_OPS = ('set_roof_support', 'move_roof', 'add_porch', 'set_room_kind', 'add_stair', 'update_stair', 'set_object', 'add_solar_zone', 'update_solar_zone', 'set_solar_source', 'add_equipment', 'add_opening', 'move_hosted', 'resize_opening', 'add_anchor', 'add_item',
             'draw_roof', 'roof_over', 'set_roof_edge', 'move_roof_edge', 'add_dormer',
             'move_dormer', 'add_level', 'move_building', 'rotate_building', 'set',
             'set_material', 'accept_proposal', 'dismiss_proposal',
@@ -1495,6 +1495,71 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
             if field in op:
                 piece[field] = _positive(op[field]) if field in ('width', 'head') else _number(op[field])
         _rehost(building, piece, host, opening)
+    elif kind == 'set_roof_support':
+        roof = _find(building, 'roofs', op.get('id'))
+        from services.twin_model_supports import validate_edit, support_points, _SIZES
+        validate_edit(roof, building, op, Refused)
+        previous_support = deepcopy(roof.get('support', {}))
+        remaining = support_points(roof) if is_supported(roof) else []
+        if 'support' in op:
+            if not isinstance(op['support'], dict):
+                raise Refused('Choose roof support settings.')
+            roof['support'] = {**roof.get('support', {}), **deepcopy(op['support'])}
+            if 'count' in roof['support']:
+                roof['support']['count'] = int(roof['support']['count'])
+            new = roof['support']
+            old_kind, new_kind = previous_support.get('kind'), new.get('kind')
+            if old_kind != new_kind and new_kind in _SIZES and 'size_ft' not in op['support'] and previous_support.get('size_ft') == _SIZES.get(old_kind):
+                new['size_ft'] = _SIZES[new_kind]
+            if new.get('count', 2) < previous_support.get('count', 2):
+                new['at'] = {str(i): p['at'] for i, p in enumerate(remaining[:new['count']])}
+            if new_kind == 'walls':
+                for field in ('support', 'host', 'thickness_ft', 'fascia'):
+                    roof.pop(field, None)
+                for edge in roof['edges']:
+                    for key in ('wall', 'wall_offset', 'wall_along_offset'):
+                        edge.pop(key, None)
+                roof.update(roofs.attach_edges(roof, building['walls'], building['joints']))
+        if 'at' in op:
+            if not isinstance(roof.get('support'), dict) or not isinstance(op['at'], dict):
+                raise Refused('Choose support points on a supported roof.')
+            roof['support']['at'] = {**roof['support'].get('at', {}), **deepcopy(op['at'])} if op['at'] else {}
+        for field in ('thickness_ft', 'fascia'):
+            if field in op:
+                roof[field] = deepcopy(op[field])
+        if 'host' in op:
+            indices = {h['edge'] for h in (roof.get('host'), op['host']) if isinstance(h, dict)}
+            for index in indices:
+                edge = roof['edges'][index]
+                for key in ('wall', 'wall_offset', 'wall_along_offset'):
+                    edge.pop(key, None)
+            roof.pop('host', None)
+            if op['host'] is not None:
+                roof['host'] = deepcopy(op['host'])
+        if op.get('support', {}).get('kind') == 'walls':
+            roof.pop('thickness_ft', None)
+            roof.pop('fascia', None)
+    elif kind == 'move_roof':
+        roof = _find(building, 'roofs', op.get('id'))
+        by = op.get('by')
+        if not isinstance(by, (list, tuple)) or len(by) != 2:
+            raise Refused('Move the roof by two distances in feet.')
+        by = [_number(v) for v in by]
+        for point in roof['area']:
+            point[:] = [point[i] + by[i] for i in (0, 1)]
+        for point in roof.get('support', {}).get('at', {}).values():
+            point[:] = [point[i] + by[i] for i in (0, 1)]
+        if roof.get('roof_frame'):
+            point = roof['roof_frame']['origin']
+            point[:] = [point[i] + by[i] for i in (0, 1)]
+        for index, edge in enumerate(roof['edges']):
+            a, b = roofs._segments(roof['area'])[index]
+            axis = 0 if abs(a[0]-b[0]) <= _EPS else 1
+            for key, coordinate in (('wall_offset', axis), ('wall_along_offset', 1-axis)):
+                if key in edge:
+                    edge[key] += by[coordinate]
+        # The ordinary solar refit below carries its panels, and gutter
+        # fractions stay attached to the translated edges without edits.
     elif kind in ('draw_roof', 'roof_over'):
         level = max(building['levels'], key=lambda l: l['elevation'])
         if kind == 'roof_over':
@@ -1532,6 +1597,14 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
                 'plate': _positive(op.get('plate', level['elevation'] + level['ceiling'])),
                 'pitch': pitch, 'overhang': overhang, 'state': 'settled',
                 'edges': [{'setting': 'sloped', 'pitch': pitch} for _ in area]}
+        if kind == 'draw_roof':
+            from services.twin_model_supports import validate_edit
+            validate_edit(roof, building, op, Refused)
+            for field in ('support', 'host', 'thickness_ft', 'fascia', 'roof_frame'):
+                if field in op:
+                    roof[field] = deepcopy(op[field])
+            if isinstance(roof.get('support'), dict) and 'count' in roof['support']:
+                roof['support']['count'] = int(roof['support']['count'])
         building['roofs'].append(roofs.attach_edges(roof, building['walls'], building['joints']))
     elif kind in ('set_roof_edge', 'move_roof_edge'):
         roof = _find(building, 'roofs', op.get('roof'))
@@ -1595,9 +1668,21 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
             if op.get('detach'):
                 edge.pop('wall', None)
                 edge.pop('wall_offset', None)
+                edge.pop('wall_along_offset', None)
+                if roof.get('host', {}).get('edge') == index:
+                    roof.pop('host', None)
             elif 'wall_offset' in edge:
                 axis = 0 if abs(a[0] - b[0]) <= _EPS else 1
                 edge['wall_offset'] += delta[axis]
+            # An end edge can move the host's first corner. Refresh both
+            # caches from the edited outline before follow_walls runs.
+            host_index = roof.get('host', {}).get('edge')
+            if is_supported(roof) and type(host_index) is int:
+                host_edge = roof['edges'][host_index]
+                ha, hb = roofs._segments(roof['area'])[host_index]
+                host_axis = 0 if abs(ha[0]-hb[0]) <= _EPS else 1
+                if host_index in (index, (index+1) % len(roof['area'])) and 'wall_along_offset' in host_edge:
+                    host_edge['wall_along_offset'] += delta[1-host_axis]
     elif kind in ('add_dormer', 'move_dormer'):
         if kind == 'add_dormer':
             roof = _find(building, 'roofs', op.get('roof'))
@@ -1642,6 +1727,7 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
     return {'add_opening': 'Added the opening.', 'move_hosted': 'Moved the piece.',
             'resize_opening': 'Resized the opening.', 'add_anchor': 'Added the anchor.',
             'add_item': 'Added the item.', 'draw_roof': 'Drew the roof.', 'roof_over': 'Added the roof.',
+            'set_roof_support': 'Changed the roof supports.', 'move_roof': 'Moved the roof.',
             'set_roof_edge': 'Changed the roof edge.', 'move_roof_edge': 'Moved the roof edge.',
             'add_dormer': 'Added the dormer.', 'move_dormer': 'Moved the dormer.',
             'add_level': 'Added the floor.', 'move_building': 'Moved the building.',
@@ -2383,7 +2469,7 @@ def _apply(model, op: dict, actor: str = 'person', *, ha_catalogue=None, _normal
     for roof in building['roofs']:
         normalize_support(roof, notes)
         normalize_host(roof, building, notes)
-    building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'])
+    building['roofs'] = [roofs.follow_walls(r, building['walls'], building['joints'], previous)
                          for r in building.get('roofs', [])]
     notes.extend(hosts.follow(building, before))
     _follow_roof_points(building, previous)

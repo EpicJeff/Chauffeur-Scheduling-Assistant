@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { hostPoint, parkingPoint } from '../twin_hosts.js';
 import { groundAt, buildingGround } from '../twin_ground.js';
 import { roofEdge } from './roof_tools.js';
+import { isSupported, supportPoints, roofPoint } from '../roof_supports.js';
 import { vertexHandles, editVertex } from './polygon_handles.js';
 import { shapeKey, shapeCentre, transformShape, shapeOperation, closedShape } from './site_shapes.js';
 import { pathOutline } from '../path_shapes.js';
@@ -142,6 +143,12 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       const { a, b } = roofEdge(roof, index);
       add('roof_edge', roof.id, [...a.map((v, i) => (v + b[i]) / 2), roof.plate], roof.level, { edge: index });
     });
+    if (roof && roof.state !== 'ghost' && isSupported(roof)) {
+      for (const [index, p] of supportPoints(roof).entries())
+        add('roof_support', roof.id, [...p.at, roof.plate], roof.level, { index });
+      const centre = roofPoint(roof, [0, 1].map(i => roof.area.reduce((n, p) => n+p[i], 0)/roof.area.length));
+      add('roof_height', roof.id, [...centre, roof.plate], roof.level, { offset: [0, -32] });
+    }
     if (roof && roof.state !== 'ghost' && roof.edges.some(e => e.gutter)) {
       const snapshot = gutterSnapshot(gesture?.handle.kind === 'downspout' ? gesture.source : getPlan());
       const runs = new Set(snapshot.runs.filter(r => r.building === building.id).map(r => r.id));
@@ -178,6 +185,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     let count = 0;
     for (const handle of handles) {
       const pixel = project(building, handle.at); if (!pixel) continue;
+      if (handle.offset) for (const i of [0, 1]) pixel[i] += handle.offset[i];
       let row = rows[count++];
       if (!row) {
         const node = document.createElement('span'); layer.append(node); row = { node }; rows.push(row);
@@ -186,7 +194,8 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       row.node.className = `editor-handle editor-handle-${handle.kind}`;
       row.node.style.left = `${pixel[0]}px`; row.node.style.top = `${pixel[1]}px`;
       row.node.setAttribute('aria-hidden', 'true');
-      if (handle.kind === 'site_insert') row.node.textContent = '+';
+      if (handle.kind === 'roof_height') row.node.textContent = '\u2195';
+      else if (handle.kind === 'site_insert') row.node.textContent = '+';
       else row.node.textContent = '';
     }
     while (rows.length > count) rows.pop().node.remove();
@@ -222,6 +231,15 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (!canEdit() || !handle) return false;
     lastFrameMs = null; drag.clearDragFrame?.();
     const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'roof_support' || handle.kind === 'roof_height') {
+      const piece = building.roofs.find(r => r.id === handle.id);
+      // Height uses a vertical plane facing the camera, points use the roof plane.
+      const normal = handle.kind === 'roof_height' ? local(building, view.camera.position).sub(new THREE.Vector3(...handle.at)).setZ(0).normalize().toArray() : [0, 0, 1];
+      const start = onPlane(event, building, handle.at, normal); if (!start) return false;
+      gesture = { handle, source, building, piece, list: 'roofs', normal, start, event, operation: null };
+      typed.show('length', handle.kind === 'roof_height' ? piece.plate : 0, [event.clientX, event.clientY]);
+      return true;
+    }
     if (handle.kind === 'downspout') {
       const piece = building.roofs.find(r => r.id === handle.id), normal = [0, 0, 1];
       const start = onPlane(event, building, handle.at, normal); if (!start) return false;
@@ -307,6 +325,24 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       showValue('length', drag.value()); return;
     }
     let point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'roof_support' || handle.kind === 'roof_height') {
+      if (handle.kind === 'roof_support') {
+        const at = point.slice(0, 2).map((v, i) => handle.at[i]+move(v-g.start[i]));
+        g.operation = sameValue(at, handle.at.slice(0, 2)) ? null : { op: 'set_roof_support', building: building.id, id: piece.id,
+          at: { [handle.index]: at } };
+        g.supportAt = at;
+      } else {
+        const value = Number.isFinite(exact) ? exact : piece.plate+inch(point[2]-g.start[2]);
+        g.operation = value === piece.plate ? null : { op: 'set', building: building.id, id: piece.id, field: 'plate', value };
+        g.plate = value;
+        showValue('length', value);
+      }
+      preview = structuredClone(g.source);
+      const next = preview.buildings.find(b => b.id === building.id).roofs.find(r => r.id === piece.id);
+      if (handle.kind === 'roof_support') next.support.at = { ...(piece.support.at || {}), [handle.index]: g.supportAt };
+      else next.plate = g.plate;
+      onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now()-started); return;
+    }
     if (handle.kind === 'downspout') {
       const a = piece.area[handle.edge], b = piece.area[(handle.edge + 1) % piece.area.length], d = b.map((v, i) => v - a[i]);
       const fraction = Math.max(0, Math.min(1, d.reduce((n, v, i) => n + (point[i] - a[i]) * v, 0) / (d[0] ** 2 + d[1] ** 2 || 1)));
@@ -384,12 +420,14 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       g.operation = operation; preview = structuredClone(g.source);
       const nextBuilding = preview.buildings.find(b => b.id === building.id), next = nextBuilding[g.list].find(p => p.id === piece.id);
       if (handle.kind === 'roof_edge') {
+        const angle = -(piece.roof_frame?.angle || 0), c = Math.cos(angle), s = Math.sin(angle);
+        const normal = [c*frame.normal[0]-s*frame.normal[1], s*frame.normal[0]+c*frame.normal[1]];
         for (const index of [edge, (edge + 1) % next.area.length])
-          next.area[index] = next.area[index].map((v, i) => v + frame.normal[i] * operation.by);
+          next.area[index] = next.area[index].map((v, i) => v + normal[i] * operation.by);
       } else { next.at = operation.at; if ('width' in operation && operation.width > 0) next.width = operation.width; }
       // Preview the edited boundary without rebuilding the yard and roof union
       // on every pointer event. The committed model rebuilds the roof planes.
-      const boundary = handle.kind === 'roof_edge' ? next.area : [
+      const boundary = handle.kind === 'roof_edge' ? next.area.map(p => roofPoint(next, p)) : [
         frame.a.map((v, i) => v + frame.axis[i] * (next.at - next.width / 2)),
         frame.a.map((v, i) => v + frame.axis[i] * (next.at + next.width / 2))];
       document.getElementById('editor-drag-outline')?.setAttribute('points', boundary.map(p => project(building, [...p, handle.at[2]]))
@@ -479,7 +517,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       finally { refresh(); }
       return;
     }
-    if (g.handle.kind === 'roof_edge' || g.handle.kind.startsWith('dormer_') || g.handle.kind.startsWith('solar_')) {
+    if (g.handle.kind.startsWith('roof_') || g.handle.kind.startsWith('dormer_') || g.handle.kind.startsWith('solar_')) {
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       if (clicked && g.handle.kind === 'roof_edge') onClick?.(g.handle);
       const saving = !cancel && g.operation;
@@ -526,6 +564,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       const all = descriptors(), roof = all.filter(h => h.kind === 'roof_edge' || h.kind.startsWith('dormer_'));
       return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
         .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at],
+          ...(handle.offset ? { offset: [...handle.offset] } : {}),
           ...(handle.kind === 'downspout' ? { building: handle.building, edge: handle.edge, spout: handle.spout } : {}) }));
     },
     clearDragFrame() { lastFrameMs = null; drag.clearDragFrame?.(); },

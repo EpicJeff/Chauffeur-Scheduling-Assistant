@@ -10,13 +10,14 @@ import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
 import { applyLocal } from './local_ops.js';
 import { groupTransform, transformOperations, previewTransforms } from './group_transform.js';
+import { isSupported, roofPoint, supportPoints } from '../roof_supports.js';
 
 const FT = .3048, clamp = v => Math.max(.05, Math.min(20, v));
 const wrap = v => (v % 360 + 360) % 360;
 const same = (a, b) => typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) < 1e-8
   : a && b && typeof a === 'object' && typeof b === 'object' ? Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(k => same(a[k], b[k])) : a === b;
 // One handle source for placed things. Structural controls stay in handles.js.
-export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPickable = () => true, getTool, view, layer, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), typed = createTypedValue(layer), canEdit = () => true, onPreview }) {
+export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPickable = () => true, getStructuralHandles = () => [], getTool, view, layer, op, applyBatch = (ops, options) => op({ op: 'batch', ops }, options), typed = createTypedValue(layer), canEdit = () => true, onPreview }) {
   const canvas = view.renderer3.domElement, raycaster = new THREE.Raycaster();
   const root = document.createElement('div'); root.className = 'editor-handles'; layer.append(root);
   let rows = [], lines = [], gesture = null, preview = null, ring = [], lastFrameMs = null, groupCache = null;
@@ -34,6 +35,11 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     }
     groupCache = null;
     const selected = getSelection(); if (!selected?.id || !plan) return null;
+    if (selected.kind === 'roof' && tool === 'move' && isPickable(selected)) {
+      const building = plan.buildings.find(b => b.id === selected.building);
+      const piece = building?.roofs?.find(r => r.id === selected.id);
+      return piece && isSupported(piece) && piece.state !== 'ghost' ? { piece, building, list: 'roofs', level: piece.level, roof: true } : null;
+    }
     if (selected.kind === 'light_fixture') {
       const entity_id = selected.entity_id || Object.keys(plan.light_fixtures || {}).find(id => plan.light_fixtures[id].some(f => f.id === selected.id));
       const piece = plan.light_fixtures?.[entity_id]?.find(f => f.id === selected.id);
@@ -78,6 +84,7 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
   function centre(r, plan = getPlan()) {
     if (r.group) return gesture?.previewCentre || r.group.centre;
     const p = r.piece;
+    if (r.roof) return [...roofPoint(p, [0, 1].map(i => p.area.reduce((n, q) => n+q[i], 0)/p.area.length)), p.plate];
     if (r.fixture) return [p.at[0], p.at[1], p.at[2] + fixtureReference(plan, p, p.at) + (p.offset_ft || 0)];
     if (r.building) { const at = hostPoint(r.building, p.host, p.offset || 0); at[2] += p.elevation || 0; return at; }
     const at = r.shape ? shapeCentre(p) : p.at;
@@ -93,6 +100,19 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     if (!r || r.fixture && tool === 'scale'
       || view.groups?.levels?.[`${r.building?.id || r.piece.building}:${r.level}`]?.visible === false) { clear(); return; }
     let c; try { c = r.group ? centre(r) : preview ? centre({ ...r, piece: pieceIn(preview, r) }, preview) : centre(r); } catch { clear(); return; }
+    if (r.roof) {
+      // Dock outside all structural controls in screen space. The 100 px
+      // clearance includes the 52 px arrows and their hit radius at any zoom.
+      const structural = getStructuralHandles();
+      const points = structural.length ? structural : [
+        ...r.piece.area.map(p => ({ at: [...roofPoint(r.piece, p), c[2]] })),
+        ...supportPoints(r.piece).map(p => ({ at: [...p.at, c[2]] }))];
+      const pixels = points.map(h => { const p = project(r.building, h.at); return p && p.map((v,i) => v+(h.offset?.[i] || 0)); }).filter(Boolean);
+      if (pixels.length) {
+        const dock = point({ clientX: Math.max(...pixels.map(p => p[0]))+100, clientY: Math.max(...pixels.map(p => p[1]))+100 }, { record: r, centre: c });
+        if (dock) c = dock;
+      }
+    }
     const middle = project(r.building, c); if (!middle) { clear(); return; }
     const radius = [0, 1].map(i => {
       const p = project(r.building, c.map((v, k) => v + (i === k ? 1 : 0)));
@@ -214,7 +234,12 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
         by = by.map((v, i) => axis !== null ? (axis === i ? exact : 0) : exact * (length ? v / length : i === 0 ? 1 : 0));
       } else by = by.map(v => snapValue('move', v, free));
       live = axis === null ? Math.hypot(...by) : by[axis]; valueKind = 'length';
-      if (r.building) { const host = moveHost(g, by); if (!host) return; change = { host }; g.operation = { op: 'move_hosted', building: r.building.id, id: piece.id, host }; }
+      if (r.roof) {
+        change = { area: piece.area.map(p => p.map((v, i) => v+by[i])),
+          ...(piece.roof_frame ? { roof_frame: { ...piece.roof_frame, origin: piece.roof_frame.origin.map((v, i) => v+by[i]) } } : {}) };
+        g.operation = { op: 'move_roof', building: r.building.id, id: piece.id, by };
+      }
+      else if (r.building) { const host = moveHost(g, by); if (!host) return; change = { host }; g.operation = { op: 'move_hosted', building: r.building.id, id: piece.id, host }; }
       else if (r.fixture) {
         change = { at: piece.at.map((v, i) => v + (by[i] || 0)), ...(piece.aim ? { aim: piece.aim.map((v, i) => v + (by[i] || 0)) } : {}) };
         g.operation = { op: 'update_light_fixture', entity_id: r.entity_id, id: piece.id, change };
@@ -255,7 +280,12 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     const next = pieceIn(preview, r);
     Object.assign(next, change);
     g.changed = Object.entries(change).some(([k, v]) => !same(v, piece[k] ?? (k === 'rotation' || k === 'rotation_deg' ? 0 : k === 'scale' ? 1 : k === 'scale_axes' ? [1, 1, 1] : undefined)));
-    if (r.building) view.rebuildLevel(r.building.id, r.level, preview, { [r.list]: [piece.id] });
+    if (r.roof) {
+      const outline = next.area.map(p => project(r.building, [...roofPoint(next, p), c[2]])).filter(Boolean);
+      if (outline.length) outline.push(outline[0]);
+      document.getElementById('editor-drag-outline')?.setAttribute('points', outline.map(p => p.join(',')).join(' '));
+    }
+    else if (r.building) view.rebuildLevel(r.building.id, r.level, preview, { [r.list]: [piece.id] });
     else {
       const points = r.shape ? sitePoints(next) : [g.centre, centre({ ...r, piece: next }, preview)];
       const outline = points.map(p => project(null, p.length === 3 ? p : [...p, c[2]])).filter(Boolean);
@@ -273,7 +303,7 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
       else if (!cancel && canEdit() && g.changed) await op(g.operation, { drag: true,
       ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); }
     finally {
-      if (g.record.building) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list]: [g.record.piece.id] });
+      if (g.record.building && !g.record.roof) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list]: [g.record.piece.id] });
       onPreview?.(getPlan()); draw();
     }
   }

@@ -14,7 +14,7 @@ INVENTED_TEXT = frozenset((
     'Pip demo calendar', 'Milo demo calendar', 'Demo home', 'Comet wagon', 'Cloudbug mini',
     'Moonkite team practice', 'Cloud orchestra', 'Paper comet workshop', 'Pretend Meadow',
     'Imaginary music loft', 'Make-believe craft studio', 'Moonbeam lantern',
-    'Cloud room temperature', 'Cloud room', 'Demo ground', 'Demo cottage', 'Demo hip wing',
+    'Cloud room temperature', 'Cloud room', 'Demo ground', 'Demo cottage', 'Demo hip wing', 'Garden awning',
     'Ground', 'Living', 'Storage', 'Return moonkite books', 'Collect craft paper',
     'Pick up starfruit', 'Pretend market', 'Demo pantry', 'Oat clouds', 'Starfruit',
     'Rainbow pasta', 'Paper napkins', 'Water the moonflowers', 'Sort the craft shelf', 'Moonkite demo panel'))
@@ -239,6 +239,14 @@ def synthetic_plan(gutters_on=True):
             {'setting': 'gable', 'pitch': 3},
         ],
     }
+    awning_section = dict(id='demo-awning', roof='demo-awning', name='Garden awning',
+                          kind='shed', low_side='y1', pitch=2, plate=8.5, overhang=.4,
+                          level='L1', rect=[8, 22, 24, 27], fascia=False, thickness_ft=.3,
+                          support=dict(kind='bracket', count=3, inset_ft=.6, size_ft=.3),
+                          host=dict(wall='w2', edge=0))
+    awning_roof = {**awning_section, 'area': [[8,22],[24,22],[24,27],[8,27]],
+                   'edges': [dict(setting=s, pitch=2) for s in ('gable','gable','sloped','gable')]}
+    awning_roof.pop('rect'); awning_roof.pop('roof')
     building = {
         'id': 'synth-house', 'name': 'Main House', 'position': [0, 0], 'base': 0, 'rotation': 0,
         'levels': [{'id': 'L1', 'name': 'Ground', 'elevation': 0, 'ceiling': 10, 'outline': poly}],
@@ -253,8 +261,8 @@ def synthetic_plan(gutters_on=True):
             'floor': 0.5, 'columns': [{'at': [6.5, -7.5], 'size': 0.5}, {'at': [21.5, -7.5], 'size': 0.5}],
             **({'gutter': True} if gutters_on else {}),
         }],
-        'roof': {'sections': [section, porch_section], 'extensions': []},
-        'roofs': [{'id': 'r1', 'area': poly, 'overhang': 1.25, 'edges': edges}, porch_roof],
+        'roof': {'sections': [section, porch_section, awning_section], 'extensions': []},
+        'roofs': [{'id': 'r1', 'area': poly, 'overhang': 1.25, 'edges': edges}, porch_roof, awning_roof],
     }
     shed_poly = [[0, 0], [14, 0], [14, 12], [0, 12]]
     shed_walls = [

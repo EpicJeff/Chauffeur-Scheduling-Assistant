@@ -48,7 +48,7 @@ export function extractEaves(plan={},roofs=new Map(),kit={}) {
     const envelope=roofs?.get(b.id)||{...roofMeshGroups(sections),sections},groups=new Map();
     for(let t=0;t<envelope.section.length;t++){
       const index=envelope.section[t],s=sections[index];
-      if(!s||s.kind==='flat')continue;
+      if(!s||s.kind==='flat'||s.position&&s.why)continue;
       const localSection=s.roof_frame?{...s,roof_frame:null}:s;
       const face=planes(localSection).find(p=>p.side===envelope.side[t]);
       if(!face||Math.hypot(face[0],face[1])<EPS)continue;
@@ -263,6 +263,10 @@ function matchingGutterRun(plan, roofs, e, runSegsByBuilding) {
   if (e.kind !== 'attachment' && s && e.side) {
     const rId = s.roof || s.id;
     const r = b.roofs?.find(v => v.id === rId);
+    // Ghosts have no physical gutter. A saved edge preference must not hide
+    // their legacy eave when no captured run exists (including cold builds).
+    if (isSupported(s) && [s.state, r?.state].some(state => state === 'ghost' || state === 'proposal'))
+      return { guttered: false, runId: null };
     const edgeIdx = s.plane_edges ? s.plane_edges[e.side] : ['y0', 'x1', 'y1', 'x0'].indexOf(e.side);
     const rec = Number.isInteger(edgeIdx) ? r?.edges?.[edgeIdx] : null;
     if (rec && typeof rec.gutter === 'boolean') {

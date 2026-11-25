@@ -362,6 +362,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (r && pick.kind === 'room') {
         const z = roomFloor(b.levels.find(l => l.id === r.level), r) + .04;
         geometry = new THREE.BufferGeometry().setFromPoints([...r.polygon, r.polygon[0]].map(p => new THREE.Vector3(p[0], z, -p[1])));
+      } else if (proxy.userData.outlinePositions) {
+        const outline = new THREE.BufferGeometry();
+        outline.setAttribute('position', new THREE.BufferAttribute(proxy.userData.outlinePositions, 3));
+        geometry = new THREE.EdgesGeometry(outline); outline.dispose();
       } else geometry = new THREE.EdgesGeometry(proxy.geometry);
       const line = r && pick.kind === 'room' ? new THREE.Line(geometry, material) : new THREE.LineSegments(geometry, material);
       line.userData.selectionKey = key;

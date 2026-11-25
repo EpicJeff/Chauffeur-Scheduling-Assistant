@@ -3,6 +3,7 @@ export { findPiece } from './piece_operations.js';
 import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
 import { isSupported } from '../roof_supports.js';
+import { roofSupportShelf } from './roof_support_shelf.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
@@ -149,7 +150,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
     const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
-      roof?.edges, record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
+      roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, record.building.walls], record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -222,6 +223,15 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         const note = document.createElement('p'); note.textContent = flag.text; host.append(note);
       }
       if (roof && op) {
+        const change = operation => queue(async () => {
+          if (!canEdit()) return;
+          await op({ building: building.id, id: roof.id, ...operation });
+          layout = null; draw();
+        });
+        roofSupportShelf(host, roof, building, { canEdit, report,
+          save: fields => change({ op: 'set_roof_support', ...fields }),
+          move: by => change({ op: 'move_roof', by }),
+          setPlate: value => change({ op: 'set', field: 'plate', value }) });
         const allGutters = enabled => queue(async () => {
           if (!canEdit()) return;
           const b = getPlan().buildings.find(b => b.id === building.id), r = b?.roofs.find(r => r.id === roof.id);
@@ -313,7 +323,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const cardFields = (kind === 'roof' && roof && !piece.rect ? []
       : fields[kind === 'dormer' && piece.rect ? 'roof' : kind] || []).flatMap(field => field !== 'ends' ? [field]
       : ['gable', 'hip'].includes(piece.kind) ? [`ends.${piece.ridge}0`, `ends.${piece.ridge}1`] : []);
-    for (const field of cardFields) {
+    for (const field of cardFields.filter(field => !(kind === 'roof' && isSupported(roof || piece) && field === 'plate'))) {
       const end = field.startsWith('ends.') ? field.slice(5) : null;
       const label = document.createElement('label'); label.textContent = kind === 'room' && field === 'kind' ? 'Type' : end ? endNames[end]
         : field === 'base' && kind === 'building' ? 'Fixed base above lot datum'

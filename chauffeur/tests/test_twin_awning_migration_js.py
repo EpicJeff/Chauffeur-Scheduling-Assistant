@@ -212,16 +212,19 @@ if(input.cases.some(c=>c.name==='skew-0-0.5-stored'))await test('ordinary_rotate
  assert.ok(observed.some(m=>m.color==='e713ae'&&m.triangles>=8),'ordinary fascia field remains usable after rotation '+JSON.stringify(observed));
  dispose(current.out);for(const m of current.awnings)m.geometry.dispose();
 });
-if(input.cases.some(c=>c.name==='ghost-gutter'))await test('ghost_gutter_cold_streams_equal_0ec59a62',async()=>{
- const c=input.cases.find(c=>c.name==='ghost-gutter'),old=await build(c.old,oldG),current=await build(c.current,G);
+if(input.cases.some(c=>c.name==='ghost-gutter'))for(const elsewhere of [false,true])await test('ghost_gutter_cold_streams'+(elsewhere?'_with_other_gutter':'')+'_equal_0ec59a62',async()=>{
+ const c=input.cases.find(c=>c.name==='ghost-gutter'),oldPlan=structuredClone(c.old),currentPlan=structuredClone(c.current);
+ if(elsewhere)for(const plan of [oldPlan,currentPlan])plan.buildings[0].roof.sections.find(s=>s.id==='main').gutters={y1:true};
+ const old=await build(oldPlan,oldG),current=await build(currentPlan,G);
  try{
-  const before=rainEvidence(c.old,old.out,oldRain,oldGutters,false),after=rainEvidence(c.current,current.out,rain,gutters,false);
+  const before=rainEvidence(oldPlan,old.out,oldRain,oldGutters,false),after=rainEvidence(currentPlan,current.out,rain,gutters,false);
   assert.ok(before.streams.length>0,'the old ghost keeps its eave streams without a gutter snapshot');
+  if(elsewhere)assert.ok(before.runs.length>0&&after.runs.length>0,'a real gutter elsewhere keeps the metadata fallback active');
   console.log('GHOST_COLD_RAIN '+JSON.stringify({oldEaves:before.eaves.length,currentEaves:after.eaves.length,oldStreams:before.streams.length,currentStreams:after.streams.length}));
   for(const key of ['runs','spouts','eaves','streams','pours'])assert.deepEqual(after[key],before[key],key+' cold ghost physical output');
  }finally{dispose(old.out);dispose(current.out);}
 });
-for(const c of input.cases.filter(c=>!['no-wall','ghost','ghost-gutter','shed-continuation'].includes(c.name)))await test(c.name+'_rain_paths_equal_0ec59a62',async()=>{
+for(const c of input.cases.filter(c=>!['shed-continuation'].includes(c.name)))await test(c.name+'_rain_paths_equal_0ec59a62',async()=>{
  const old=await build(c.old,oldG),current=await build(c.current,G),before=rainEvidence(c.old,old.out,oldRain,oldGutters),after=rainEvidence(c.current,current.out,rain,gutters);
  console.log('MIGRATION_RAIN '+JSON.stringify({fixture:c.name,old:Object.fromEntries(Object.entries(before).map(([k,v])=>[k,v.length])),
   current:Object.fromEntries(Object.entries(after).map(([k,v])=>[k,v.length]))}));
@@ -232,6 +235,15 @@ for(const c of input.cases.filter(c=>!['no-wall','ghost','ghost-gutter','shed-co
    same(after[key],before[key],key);
   }else assert.deepEqual(after[key],before[key],key+' physical output');
  }dispose(old.out);dispose(current.out);
+});
+for (const c of input.badSheds || []) await test(c.name+'_settled_house_and_rain_equal_absent_0ec59a62', async()=>{
+ const old=await build(c.old,oldG,true), current=await build(c.current,G,true);
+ assert.deepEqual(stats(meshes(current.out.root).filter(m=>!m.userData.ghost)),stats(meshes(old.out.root)),'every settled mesh/material/buffer equals extension absent');
+ assert.deepEqual(current.out.roofSurfaces.get('b').coverPositions,old.out.roofSurfaces.get('b').coverPositions,'malformed ghost adds no rain cover');
+ assert.deepEqual(rainEvidence(c.current,current.out,rain,gutters),rainEvidence(c.old,old.out,oldRain,oldGutters),'all rain paths equal extension absent');
+ assert.ok(c.current.buildings[0].roof.sections.find(s=>s.id==='bad-shed').why);
+ assert.ok(c.current.buildings[0].flags.some(f=>f.id==='bad-shed'));
+ dispose(old.out);dispose(current.out);
 });
 if(input.ownerExport){useDefaultKit=true;const owner=JSON.parse(readFileSync(0,'utf-8'));
  if(input.measureOnly){
@@ -293,7 +305,14 @@ def main():
     parser.add_argument('--measure-only', action='store_true', help='Quiet owner build medians of five against pre-migration git runtime')
     parser.add_argument('--owner-only', action='store_true', help='Run only owner evidence, without repeating public fixtures')
     args = parser.parse_args()
-    payload = {'root': ROOT.as_posix(), 'sources': baseline_sources(), 'cases': [] if args.measure_only or args.owner_only else cases(),
+    bad_sheds = []
+    for to_x, pitch in [(-5, 3), (20, 3), (26, 'x')]:
+        old = fixture(); old['buildings'][0]['roof']['extensions'] = []
+        raw = deepcopy(old)
+        raw['buildings'][0]['roof']['extensions'] = [dict(id='bad-shed', kind='shed_continuation', section='main', to_x=to_x, pitch=pitch)]
+        current, _ = migrate_awnings(raw)
+        bad_sheds.append(dict(name=f'bad-shed-{to_x}-{pitch}', old=old, current=current))
+    payload = {'root': ROOT.as_posix(), 'sources': baseline_sources(), 'cases': [] if args.measure_only or args.owner_only else cases(), 'badSheds': bad_sheds,
                'ownerExport': str(args.owner_export) if args.owner_export else None, 'measureOnly': args.measure_only}
     if not args.owner_export:
         code, output = run_node(DRIVER, payload, timeout=300)

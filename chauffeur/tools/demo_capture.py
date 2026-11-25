@@ -23,10 +23,10 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters')
+SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor')
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
-SURFACE_LABELS = dict(zip(SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters')))
+SURFACE_LABELS = dict(zip(SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters', 'awning editor')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -58,10 +58,10 @@ SURFACE_STATE = r"""({shot, final = false}) => {
     ready = path.endsWith('/house/twin') && twin;
     if (shot === 'twin-gutters' && final) ready = ready && !!window.__demoGutterFrame?.spout;
   }
-  if (shot === 'twin-editor') {
+  if (shot === 'twin-editor' || shot === 'twin-awning-editor') {
     ready = path.endsWith('/house/editor') && twin && window.__editor?.ready === true;
     if (final) ready = ready && seen('#piece-card')
-      && window.__editor.selected()?.pieceId === 'r1';
+      && window.__editor.selected()?.pieceId === (shot === 'twin-awning-editor' ? 'demo-awning' : 'r1');
   }
   return {blocked, ready: !!ready};
 }"""
@@ -455,7 +455,7 @@ def _capture_pages(served, data, token, out, shots):
                     _assert_surface(desktop, 'twin-gutters')
                     desktop.evaluate(GUTTER_OUTLET_CAMERA, True)
                 save(desktop, 'twin-gutters', True)
-        if 'twin-editor' in shots:
+        if set(shots) & {'twin-editor', 'twin-awning-editor'}:
             # The panel shell latches its flags in session storage. Keep the
             # editor's adult session separate while reusing the same browser.
             browser = desktop.context.browser
@@ -471,7 +471,12 @@ def _capture_pages(served, data, token, out, shots):
                     editor.evaluate('(iso) => window.__twin.setClock(iso)', now.replace(hour=12, tzinfo=timezone.utc).isoformat())
                     editor.evaluate("() => window.__editor.clickPiece('r1', 'synth-house')")
                     editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
-                save(editor, 'twin-editor', True)
+                if 'twin-editor' in shots:
+                    save(editor, 'twin-editor', True)
+                if 'twin-awning-editor' in shots:
+                    editor.evaluate("() => window.__editor.clickPiece('demo-awning', 'synth-house')")
+                    editor.wait_for_selector('[aria-label="Support kind"]', state='visible', timeout=READY_TIMEOUT)
+                    save(editor, 'twin-awning-editor', True)
 
 
 def _worker(out, shots):

@@ -30,6 +30,27 @@ import { ROOF_THICKNESS, FASCIA } from './trim_dims.js';
 export { FT } from './twin_light_math.js';
 export { ROOF_THICKNESS, FASCIA } from './trim_dims.js';
 export const PICK_LAYER = 31;
+
+// Selection sees the slab and one bounded box per support, never the model's
+// triangle soup. At count 40 this adds at most 480 triangles to EdgesGeometry.
+export function roofOutlinePositions(slab, parts) {
+  const positions = [...slab], boxes = new Map();
+  for (const object of parts) {
+    const id = object.userData.part;
+    if (!/^support:\d+$/.test(id) || Number(id.slice(8)) >= 40) continue;
+    object.geometry.computeBoundingBox();
+    if (!boxes.has(id)) boxes.set(id, new THREE.Box3());
+    boxes.get(id).union(object.geometry.boundingBox);
+  }
+  for (const box of boxes.values()) {
+    if (box.isEmpty()) continue;
+    const size = box.getSize(new THREE.Vector3()), centre = box.getCenter(new THREE.Vector3());
+    const indexed = new THREE.BoxGeometry(size.x, size.y, size.z).translate(...centre.toArray());
+    const geometry = indexed.toNonIndexed();
+    positions.push(...geometry.attributes.position.array); geometry.dispose(); indexed.dispose();
+  }
+  return new Float32Array(positions);
+}
 // Keep in step with twin_plan.porches: ids win, polygon fallback for aliases
 // without an id. Return the original pieces, preferring collection entries.
 export function allPorches(building) {
@@ -922,6 +943,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   };
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new BuildingRegistry(), pieceBounds = new BuildingRegistry(), pickObjects = new BuildingRegistry(), roofSurfaces = new BuildingRegistry(), mergeGroups = [], ghostBatches = [];
+  const ghostRoofCover = new Map();
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
   const materialKitFor = refs => materialKitWithRefs(kit, refs);
@@ -2246,7 +2268,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         pieceBounds.set(key, { box: box.clone(), group, data });
         const size = box.getSize(new THREE.Vector3()), center = box.getCenter(new THREE.Vector3());
         const wall = b.walls.find(w => w.id === data.pieceId);
-        let geometry;
+        let geometry, outlinePositions;
         const profile = wall && wallProfiles.get(wall.id), panels = profile?.panels.filter(([a, c]) => c > a);
         if (panels?.length) {
           // Follow the wall's drawn top (gables, dormer cheeks, steps), so a
@@ -2263,14 +2285,55 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const index = allSections.findIndex((s, i) => (s.id || `roof:${i}`) === data.pieceId), positions = [];
           for (let t = 0; t < allRoofLayers.section.length; t++) if (allRoofLayers.section[t] === index) positions.push(...allRoofLayers.positions.slice(t * 9, t * 9 + 9));
           geometry = roofGeometry(positions);
+          // Roof and support hits share one identity, visibility and lock path.
+          // These pick-only triangles never enter a render or shadow camera.
+          const supportParts = (partObjects || []).map(p => p.object).filter(o => (o.userData.part || '').startsWith('support:'));
+          if (supportParts.length) {
+            outlinePositions = roofOutlinePositions(geometry.attributes.position.array, supportParts);
+            const picks = [geometry, ...supportParts.map(o => o.geometry)].map(g => {
+              const copy = g.index ? g.toNonIndexed() : g.clone();
+              for (const name of Object.keys(copy.attributes)) if (name !== 'position') copy.deleteAttribute(name);
+              return copy;
+            });
+            const combined = mergeGeometries(picks);
+            for (const g of picks) g.dispose();
+            if (combined) { geometry.dispose(); geometry = combined; }
+          }
         } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
         const proxy = new THREE.Mesh(geometry, pickMaterial);
         Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
+        if (outlinePositions) Object.defineProperty(proxy.userData, 'outlinePositions', { value: outlinePositions });
+        if (data.kind === 'roof' && (partObjects || []).some(p => (p.object.userData.part || '').startsWith('support:'))) proxy.userData.supportPick = true;
         if (partObjects) Object.defineProperty(proxy.userData, 'partObjects', { value: partObjects });
         group.add(proxy); pickObjects.set(key, proxy);
       }
     };
     registerRecords();
+    // Ghost batching disposes its source meshes. Retain the drawn slab and
+    // seams for rain first: legacy ghost awnings still intercepted rain,
+    // although their gutter flag never created a solid gutter or spout.
+    // Supports must not become little rain-catching roof surfaces.
+    for (const [level, group] of supportedLevels) group.traverse(o => {
+      const record = b.roofs?.find(r => r.id === o.userData.pieceId) || allSections.find(s => (s.roof || s.id) === o.userData.pieceId);
+      if (!o.isMesh || o.layers.isEnabled(PICK_LAYER) || !o.userData.ghost || o.userData.kind !== 'roof'
+          || record?.position && record?.why
+          || (o.userData.part || '').startsWith('support:')
+          || o.userData.surfaceKind === 'gutter' || !o.geometry?.attributes.position) return;
+      if (!ghostRoofCover.has(b.id)) ghostRoofCover.set(b.id, []);
+      const target = ghostRoofCover.get(b.id), p = o.geometry.attributes.position, index = o.geometry.index;
+      const chain = [], matrix = new THREE.Matrix4();
+      for (let parent = o; parent && parent !== local[level]; parent = parent.parent) {
+        if (parent.matrixAutoUpdate) parent.updateMatrix();
+        chain.push(parent.matrix);
+      }
+      for (let i = chain.length - 1; i >= 0; i--) matrix.multiply(chain[i]);
+      const vertices = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()], normal = new THREE.Vector3();
+      for (let i = 0; i < (index?.count ?? p.count); i += 3) {
+        vertices.forEach((v, j) => v.fromBufferAttribute(p, index ? index.getX(i+j) : i+j).applyMatrix4(matrix));
+        THREE.Triangle.getNormal(...vertices, normal);
+        if (normal.y > .001) for (const v of vertices) target.push(v.x, -v.z, v.y);
+      }
+    });
     for (const [key, { data }] of records) if (data.ghost) ghostBatches.push(batchGhost(root, pieces.get(key), ghost, ghostEdges));
     const models = new Map(), lateItems = new Map(), itemGroups = new Map();
     const jobs = (b.items || []).filter(item => item.asset && objectShown(item, showAnchors || !!editableLevel)).map(async item => {
@@ -2359,7 +2422,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   for (const b of plan.buildings || []) {
     const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
     const supportedIds = new Set((b.roof?.sections || []).flatMap((s, i) => isSupported(s) ? [s.id || `roof:${i}`] : []));
-    const positions = [], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+    const positions = [...(ghostRoofCover.get(b.id) || [])], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
     const capture = (o, target, ceiling = false, space = domain) => {
       if (!o.isMesh || o.userData.ghost || o.userData.surfaceKind === 'gutter' || !o.geometry?.attributes.position) return;
       const p = o.geometry.attributes.position, index = o.geometry.index;
@@ -2389,7 +2452,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     });
     for (const group of Object.values(groups.levels)) if (group.userData.buildingId === b.id)
       for (const space of group.children) space.traverse(o => {
-        if (o.userData.kind === 'roof' && supportedIds.has(o.userData.pieceId)
+        if (o.userData.kind === 'roof' && !o.layers.isEnabled(PICK_LAYER) && supportedIds.has(o.userData.pieceId)
             && !(o.userData.part || '').startsWith('support:')) capture(o, positions, false, space);
         if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
       });

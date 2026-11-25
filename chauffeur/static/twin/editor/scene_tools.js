@@ -308,7 +308,7 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   handles = createHandles({ view, getPlan, getSelection: () => selectionStore.members().length > 1 ? {} : handleSelection(), getTool: () => tool, canEdit, drag, onCommit: (operation, options) => op(operation, { ...options, drag: true, selection }),
     onPreview: drawDimensions, onClick: cards.showRoofEdge, signal });
   const gizmoLayer = document.createElement('div'); gizmoLayer.className = 'editor-handles'; canvas.parentElement.append(gizmoLayer);
-  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: handleSelection, getMembers: () => selectionStore.members(), isPickable, getTool: () => tool, canEdit, applyBatch,
+  gizmo = createGizmo({ view, layer: gizmoLayer, getPlan, getSelection: handleSelection, getMembers: () => selectionStore.members(), isPickable, getStructuralHandles: () => handles.handles(), getTool: () => tool, canEdit, applyBatch,
     onPreview: plan => delegate?.preview?.(plan),
     op: (operation, options) => op(operation, { ...options, selection: selection?.buildingId ? selection : { kind: selection?.kind, id: selection?.pieceId } }) });
   view.controls.addEventListener('change', gizmo.draw);
@@ -548,7 +548,9 @@ export function createSceneTools({ view, getPlan, getModel, getKit, getSheets, e
   // Each source exposes hit(event) and begin(event, handle); its existing
   // pointerMove/pointerUp methods keep ownership through release or cancel.
   function handleHit(event) {
-    const sources = selectionStore.members().length > 1 ? [gizmo] : [gizmo, handles, ...(delegate?.handleSources || [])];
+    const sources = selectionStore.members().length > 1 ? [gizmo]
+      : handleSelection()?.kind === 'roof' ? [handles, ...(delegate?.handleSources || []), gizmo]
+        : [gizmo, handles, ...(delegate?.handleSources || [])];
     for (const source of new Set(sources)) {
       const handle = source?.hit?.(event);
       if (handle) return { source, handle };

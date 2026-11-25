@@ -9,7 +9,7 @@ import time
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters']
+NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor']
 
 
 def run():

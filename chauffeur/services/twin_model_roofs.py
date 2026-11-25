@@ -267,7 +267,7 @@ def attach_edges(roof: dict, walls: list, joints) -> dict:
     return roof
 
 
-def follow_walls(roof: dict, walls: list, joints) -> dict:
+def follow_walls(roof: dict, walls: list, joints, previous=None) -> dict:
     """Keep each attached edge's original offset as its wall line moves."""
     roof = deepcopy(roof)
     lines = {w['id']: w for w in _wall_lines(walls, joints)}
@@ -282,10 +282,31 @@ def follow_walls(roof: dict, walls: list, joints) -> dict:
             a, b = _segments(roof['area'])[index]
             axis, line, _, _ = _edge(a, b)
             if wall_axis(wall['from'], wall['to']) == axis:
+                turn_shift = [0, 0]
+                old_wall = next((w for w in _wall_lines(previous['walls'], previous['joints']) if w['id'] == wall['id']), None) if previous else None
+                def tangent(w):
+                    return math.atan2(w['to'][1]-w['from'][1], w['to'][0]-w['from'][0])
+                # Modulo pi makes the direction independent of joint order.
+                turn = (tangent(wall)-tangent(old_wall)+math.pi/2) % math.pi-math.pi/2 if old_wall else 0
+                if abs(turn) > _EPS:
+                    roof.setdefault('roof_frame', dict(origin=[(a[k]+b[k])/2 for k in (0, 1)], angle=0))
+                    roof['roof_frame']['angle'] += turn
+                    origin = roof['roof_frame']['origin']
+                    c, s = math.cos(turn), math.sin(turn)
+                    x, y = [origin[k]-old_wall['from'][k] for k in (0, 1)]
+                    turn_shift = [c*x-s*y-x, s*x+c*y-y]
+                    for point in roof['support'].get('at', {}).values():
+                        x, y = [point[k]-origin[k] for k in (0, 1)]
+                        point[:] = [origin[0]+c*x-s*y, origin[1]+s*x+c*y]
                 edge = roof['edges'][index]
                 delta = [0, 0]
                 delta[axis] = wall['from'][axis] + edge.get('wall_offset', 0) - line
                 delta[1-axis] = wall['from'][1-axis] + edge.get('wall_along_offset', a[1-axis]-wall['from'][1-axis]) - a[1-axis]
+                for k in (0, 1):
+                    delta[k] += turn_shift[k]
+                for key, k in (('wall_offset', axis), ('wall_along_offset', 1-axis)):
+                    if key in edge:
+                        edge[key] += turn_shift[k]
                 for point in roof['area']:
                     for k in (0, 1):
                         point[k] += delta[k]

@@ -27,6 +27,85 @@ def _point(value):
     return isinstance(value, (list, tuple)) and len(value) == 2 and all(_number(v) for v in value)
 
 
+def host_candidates(roof, building):
+    """Facing, overlapping wall/edge pairs, nearest first (one per wall)."""
+    area = area_of(roof)
+    sign = 1 if sum(a[0]*b[1]-a[1]*b[0] for a, b in zip(area, area[1:]+area[:1])) > 0 else -1
+    points = {j['id']: j['at'] for j in building.get('joints', [])}
+    result = []
+    for wall in building.get('walls', []):
+        if wall.get('level') != roof.get('level') or wall.get('state') == 'ghost' or wall.get('kind') == 'separator' or not wall.get('exterior', True):
+            continue
+        a, b = (wall['from'], wall['to']) if 'from' in wall else [points[j] for j in wall['joints']]
+        length = math.dist(a, b)
+        if length <= _EPS:
+            continue
+        tangent = [(b[k]-a[k])/length for k in (0, 1)]
+        pairs = []
+        for i, p in enumerate(area):
+            q = area[(i+1) % len(area)]
+            if wall_axis(a, b) != _axis(p, q):
+                continue
+            p, q = frame_point(roof, p), frame_point(roof, q)
+            span = math.dist(p, q)
+            if span <= _EPS:
+                continue
+            u = [(q[k]-p[k])/span for k in (0, 1)]
+            if abs(u[0]*tangent[0]+u[1]*tangent[1]) < math.cos(math.radians(1))-_EPS:
+                continue
+            normal = [sign*u[1], -sign*u[0]]
+            distances = [sum((v[k]-p[k])*normal[k] for k in (0, 1)) for v in (a, b)]
+            along = [sum((v[k]-p[k])*u[k] for k in (0, 1)) for v in (a, b)]
+            if max(distances) < -_EPS or min(span, max(along))-max(0, min(along)) <= _EPS:
+                continue
+            pairs.append((abs(sum(distances)/2), i))
+        if pairs:
+            distance, edge = min(pairs)
+            result.append((distance, wall['id'], edge))
+    return sorted(result)
+
+
+def validate_edit(roof, building, edit, refused):
+    """Reject bad user/agent input before normalization can discard intent."""
+    support = edit.get('support', {})
+    if not isinstance(support, dict):
+        raise refused('Choose roof support settings.')
+    if 'support' in edit and not is_supported(roof) and 'kind' not in support:
+        raise refused('Choose a support kind first.')
+    kind = support.get('kind', roof.get('support', {}).get('kind', 'walls'))
+    if not isinstance(kind, str) or kind not in SUPPORT_KINDS:
+        raise refused('Choose Walls, Straight brackets, Corbels, Braces, Cables or Posts.')
+    if 'count' in support and (type(support['count']) not in (int, float) or not _number(support['count'], 0, 40) or support['count'] != int(support['count'])):
+        raise refused('Support count must be a whole number from 0 to 40.')
+    for key, lo, hi in [('inset_ft', 0, 6), ('size_ft', .05, 3), ('spacing_ft', 1, 20)]:
+        if key in support and not _number(support[key], lo, hi):
+            raise refused(f'Choose {key.replace("_ft", "").replace("_", " ")} from {lo} to {hi} ft.')
+    if 'style' in support and (not isinstance(support['style'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', support['style'])):
+        raise refused('Use a support style of 1 to 64 letters, numbers, hyphens or underscores.')
+    if 'thickness_ft' in edit and not _number(edit['thickness_ft'], .05, 2):
+        raise refused('Choose thickness from 0.05 to 2 ft.')
+    if 'fascia' in edit and type(edit['fascia']) is not bool:
+        raise refused('Choose whether to show fascia.')
+    if 'roof_frame' in edit:
+        frame = edit['roof_frame']
+        if not isinstance(frame, dict) or not _point(frame.get('origin')) or not _number(frame.get('angle')):
+            raise refused('Choose a finite roof origin and angle.')
+    count = support.get('count', roof.get('support', {}).get('count', 2))
+    for at in [source['at'] for source in (edit, support) if 'at' in source]:
+        if kind == 'walls' or not isinstance(at, dict) or any(k not in {str(i) for i in range(int(count))} or not _point(v) for k, v in at.items()):
+            raise refused('Choose finite positions for existing support points.')
+    if 'at' in edit and edit['at'] is None:
+        raise refused('Choose support positions or reset with an empty map.')
+    if 'host' in edit:
+        if kind == 'walls':
+            raise refused('Choose supports before choosing a host wall.')
+        host = edit['host']
+        probe = {**roof, **{k: edit[k] for k in ('roof_frame',) if k in edit}}
+        if host is not None and (not isinstance(host, dict) or type(host.get('edge')) is not int or
+                not any(w == host.get('wall') and e == host['edge'] for _, w, e in host_candidates(probe, building))):
+            raise refused('Choose a facing, parallel wall on the same floor.')
+
+
 def _note(roof, notes):
     label = (f"Roof {roof['name']}" if roof.get('name') else
              'Awning' if is_supported(roof) else f"Roof {roof.get('id', 'unnamed')}")
@@ -132,6 +211,7 @@ def normalize_host(roof, building, notes):
     area = area_of(roof)
     wall = next((w for w in building.get('walls', []) if isinstance(host, dict) and w['id'] == host.get('wall')), None)
     edge = host.get('edge') if isinstance(host, dict) else None
+    a = b = None
     valid = isinstance(host, dict) and isinstance(host.get('wall'), str) and type(edge) is int and 0 <= edge < len(area)
     if valid and wall is not None:
         points = {j['id']: j['at'] for j in building.get('joints', [])}
@@ -142,6 +222,9 @@ def normalize_host(roof, building, notes):
                  and axis is not None and wall_axis(a, b) == axis)
         if valid:
             roof['host'] = {'wall': wall['id'], 'edge': edge}
+            building['flags'] = [f for f in building.get('flags', []) if not
+                (f.get('id') == roof['id'] and f.get('kind') == 'roof' and
+                 any(t in f.get('text', '') for t in ('supporting wall', 'one degree', 'diagonal wall', 'host wall')))]
             if isinstance(roof.get('edges'), list) and edge < len(roof['edges']):
                 record = roof['edges'][edge]
                 same_wall = record.get('wall') == wall['id']
@@ -157,13 +240,22 @@ def normalize_host(roof, building, notes):
                         record[key] = default
             return
     roof.pop('host', None)
-    _note(roof, notes)
-    if valid and wall is None:
+    angle_detach = (wall is not None and is_supported(roof) and a is not None and b is not None and wall_axis(a, b) is None)
+    if not angle_detach and not (valid and wall is None):
+        _note(roof, notes)
+    if valid and wall is None or (wall is not None and is_supported(roof)
+            and wall.get('level') == roof.get('level') and a is not None and b is not None
+            and wall_axis(a, b) is None):
         label = (f"Roof {roof['name']}" if roof.get('name') else
                  'Awning' if is_supported(roof) else f"Roof {roof['id']}")
-        text = f"{label} has lost its supporting wall."
+        text = (f"{label} has lost its supporting wall." if wall is None else
+                f"{label} stays in place; its wall is more than one degree from a building axis. Place it again to attach it.")
+        if text not in notes:
+            notes.append(text)
         flags = building.setdefault('flags', [])
-        if not any(f.get('id') == roof['id'] and f.get('kind') == 'roof' for f in flags):
+        flags[:] = [f for f in flags if not (f.get('id') == roof['id'] and f.get('kind') == 'roof'
+                    and any(t in f.get('text', '') for t in ('supporting wall', 'one degree', 'diagonal wall', 'host wall')))]
+        if not any(f.get('id') == roof['id'] and f.get('text') == text for f in flags):
             flags.append({'id': roof['id'], 'kind': 'roof', 'text': text,
                           'at': frame_point(roof, [sum(p[i] for p in area)/len(area) for i in (0, 1)]),
                           'level': roof.get('level')})
