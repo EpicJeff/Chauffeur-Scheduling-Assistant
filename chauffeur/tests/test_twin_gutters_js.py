@@ -272,14 +272,108 @@ for(const oh of [1,2])for(const next of [false,true])await test(`test_exact_moun
  const s=calc(p).spouts.find(s=>s.exact);fullDrop(s);assert.ok(!s.flags.includes('outlet-blocked'));
  assert.equal(s.mount,next?'wall':'free');if(next)assert.ok(s.path.at(-2)[0]<0,'next wall face is used');
 });
-for(const oh of [1,2])await test(`test_exact_wall_drop_excludes_other_face_and_marks_occupied_overhang_${oh}`,()=>{
+for(const oh of [1,2])await test(`test_exact_wall_drop_excludes_other_face_and_reports_near_exact_overhang_${oh}`,()=>{
  const p=overhang(house(30,'hip'),oh);override(p,0,[{at:.01}]);
  const {spouts}=G.gutterPlacement(p),exact=spouts.find(s=>s.exact),drop=exact.path.at(-2);
  for(const s of spouts.filter(s=>s.source==='auto'))if(Math.abs(s.top[1]-exact.top[1])<.25*FT){
   const q=s.path.at(-2);assert.ok(Math.hypot(q[0]-drop[0],q[2]-drop[2])>=FT-1e-6,'wall drops separated by one foot');
  }
  const candidates=G.gutterCandidates(p).filter(c=>c.roof==='r'&&c.edge===0&&c.fraction===0);
- assert.ok(candidates.length);assert.ok(candidates.every(c=>c.occupied),'nearby exact drop occupies safe corner');
+ assert.ok(candidates.length);assert.ok(candidates.every(c=>!c.occupied),'only corner claims occupy candidates');
+ assert.ok(candidates.every(c=>JSON.stringify(c.nearExact)===JSON.stringify([{roof:'r',edge:0,index:0}])));
+});
+
+// Real cards -> operation -> placement, with no gutter/candidate stubs.
+function editorPlan(kind,oh){
+ const p=overhang(house(40,kind),oh),b=p.buildings[0],r=b.roofs[0];
+ Object.assign(r,{level:'L1',plate:10,pitch:6,ridge:'x'});
+ r.edges.forEach((e,i)=>e.gutter=i===0);b.roof.sections[0].gutters={y0:true};
+ return p;
+}
+async function editorRig(initial){
+ const {createCards}=await import(file('static/twin/editor/cards.js'));
+ const {createHandles}=await import(file('static/twin/editor/handles.js'));
+ const THREE=await import(three),host=document.getElementById('piece-card');
+ let plan=initial;const ops=[],roof=()=>plan.buildings[0].roofs[0];
+ const apply=async o=>{ops.push(o);plan=clone(plan);roof().edges[o.edge].downspouts=o.downspouts;};
+ const cards=createCards({getPlan:()=>plan,getLabel:()=>'Roof',getKit:()=>({}),canEdit:()=>true,
+  edit:assert.fail,op:apply,select(){},ask(){}});
+ const show=()=>cards.showRoofEdge({id:'r',building:'b',edge:0});
+ const press=async(index,label)=>{
+  show();const row=host.querySelectorAll('[data-downspout-row]')[index];assert.ok(row);
+  const button=row.querySelectorAll('button').find(b=>b.textContent===label);assert.ok(button,label);
+  assert.equal(button.disabled,false,label+' enabled');click(button);await tick();await cards.queue(()=>{});await tick();
+ };
+ const canvas=document.createElement('canvas');document.body.append(canvas);
+ const camera=new THREE.PerspectiveCamera(45,1440/900,.01,1000);
+ const world=p=>new THREE.Vector3(p[0]*FT,p[2]*FT,-p[1]*FT);
+ camera.position.copy(world([20,14.99,110]));camera.lookAt(world([20,15,10]));camera.updateMatrixWorld(true);
+ const abort=new AbortController(),view={renderer3:{domElement:canvas},camera,controls:new THREE.EventDispatcher(),groups:{levels:{}},pick:()=>null};
+ const handles=createHandles({view,getPlan:()=>plan,getSelection:()=>({kind:'roof',id:'r',building:'b'}),
+  canEdit:()=>true,drag:{},onCommit:apply,signal:abort.signal});
+ const event=p=>{const v=world(p).project(camera);return {clientX:(v.x+1)*720,clientY:(1-v.y)*450};};
+ return {get plan(){return plan;},ops,roof,press,handles,event,world,close(){abort.abort();canvas.remove();}};
+}
+for(const oh of [1,2])for(const kind of ['gable','hip'])
+await test(`test_real_editor_keep_snap_drag_and_automatic_corners_${kind}_overhang_${oh}`,async()=>{
+ const automatic=editorPlan(kind,oh),before=G.gutterPlacement(automatic).spouts;
+ assert.equal(before.length,2,'two automatic corners');
+ assert.deepEqual(before,mainCalc(automatic).spouts,'both automatic placements match main');
+ assert.ok(G.gutterCandidates(automatic).every(c=>c.occupied&&Array.isArray(c.nearExact)&&c.nearExact.length===0),'claims stay occupied with empty exact proximity');
+ assert.deepEqual(priorFields(calc(automatic)),mainCalc(automatic),'automatic geometry stays at main');
+ for(const values of [[0],[0,1]]){
+  const p=clone(automatic);override(p,0,values);const rig=await editorRig(p);
+  try{
+   const tops=G.gutterPlacement(rig.plan).spouts.map(s=>s.top);
+   for(let i=0;i<values.length;i++){
+    await rig.press(i,'Keep exactly here');
+    assert.deepEqual(rig.roof().edges[0].downspouts,values.map((v,k)=>k===i?{at:v}:v));
+    assert.deepEqual(G.gutterPlacement(rig.plan).spouts.map(s=>s.top),tops,'Keep preserves drip tips');
+    await rig.press(i,'Snap to a corner');assert.deepEqual(rig.roof().edges[0].downspouts,values);
+    assert.deepEqual(G.gutterPlacement(rig.plan).spouts.map(s=>s.top),tops,'Snap returns to same tips');
+   }
+   assert.equal(rig.ops.length,values.length*2,'one operation per conversion');
+  }finally{rig.close();}
+ }
+ for(const f of [.1,.25,.9]){
+  const p=clone(automatic);override(p,0,[0,1]);const rig=await editorRig(p);
+  try{
+   const h=rig.handles.handles().find(h=>h.kind==='downspout'&&h.authoredIndex===0);assert.ok(h);
+   const fixed=G.gutterPlacement(rig.plan).spouts.find(s=>s.authoredIndex===1).top;
+   assert.ok(rig.handles.begin(rig.event(h.at),h));const calls=G._gutterPlacementStats.calls;
+   rig.handles.update(rig.event([40*f,h.at[1],h.at[2]]));
+   const preview=rig.handles.handles().find(v=>v.spout===h.spout).at;
+   assert.equal(G._gutterPlacementStats.calls,calls,'drag has no placement pass');
+   await rig.handles.finish();assert.equal(rig.ops.length,1);
+   assert.deepEqual(rig.roof().edges[0].downspouts,[{at:f},1]);
+   const placed=G.gutterPlacement(rig.plan).spouts;
+   assert.ok(Math.hypot(...rig.world(preview).toArray().map((v,i)=>v-placed.find(s=>s.exact).top[i]))/FT<.02,'pipe is under the preview handle');
+   assert.deepEqual(placed.find(s=>s.authoredIndex===1).top,fixed,'other corner stays put');
+  }finally{rig.close();}
+ }
+ assert.deepEqual(G.gutterPlacement(clone(automatic)).spouts,before,'reset keeps both automatic corners');
+});
+for(const oh of [1,2])await test(`test_real_hip_other_edge_exact_blocks_add_and_snap_overhang_${oh}`,async()=>{
+ const C=await import(file('static/twin/editor/gutter_controls.js'));
+ const p=overhang(house(40,'hip'),oh);Object.assign(p.buildings[0].roofs[0],{level:'L1',plate:10,pitch:6,ridge:'x'});
+ override(p,0,[1,{at:.01},{at:.0125}]);override(p,3,[0,{at:.5}]);
+ const candidates=G.gutterCandidates(p),corner=candidates.find(c=>c.edge===3&&c.fraction===1);assert.ok(corner);
+ assert.equal(corner.occupied,false,'exact proximity is not a corner claim');
+ assert.deepEqual(corner.nearExact,[{roof:'r',edge:0,index:1},{roof:'r',edge:0,index:2}],'all nearby exact entries retain raw indices across edges');
+ assert.deepEqual(C.freeCandidates(p,'b','r',3,{excludeIndex:1}),[],'other-edge exact entries block Snap');
+ assert.equal(C.nearestFreeCandidate(p,'b','r',3,.99,1),null);
+ const added=C.addDownspout(p,'b','r',3);assert.ok(added);assert.equal(typeof added.at(-1),'object','Add cannot take the blocked corner');
+ assert.ok(candidates.some(c=>c.occupied&&c.nearExact.length===0),'numeric claim remains occupied with no exact neighbors');
+});
+
+for(const oh of [1,2])await test(`test_exact_candidate_references_cross_separate_runs_overhang_${oh}`,()=>{
+ const poly=rect(0,0,40,.5),p=overhang(house(40,'gable',poly),oh),b=p.buildings[0];
+ b.roofs[0].area=poly;b.roof.sections[0].rect=[0,0,40,.5];b.walls.forEach(w=>w.thickness=.1);
+ override(p,0,[1,{at:.01}]);override(p,2,[]);
+ const snap=G.gutterPlacement(p),exact=snap.spouts.find(s=>s.exact);
+ const other=snap.runs.find(r=>r.segments.some(s=>s.edge===2));assert.notEqual(exact.run,other.id,'opposite eaves are separate runs');
+ const corner=G.gutterCandidates(p).find(c=>c.edge===2&&c.fraction===1);assert.ok(corner);
+ assert.equal(corner.occupied,false);assert.deepEqual(corner.nearExact,[{roof:'r',edge:0,index:1}]);
 });
 
 function attachedPorch(kind){

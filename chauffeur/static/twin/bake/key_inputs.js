@@ -5,7 +5,7 @@ import { planHasGutters } from '../gutter_presence.js';
 // generated receiving geometry changes (including changes outside atlas.js).
 export const ATLAS_VERSION = 'reach-atlas-13';
 export const ATLAS_WORKER_VERSION = 'atlas-worker-reach-13';
-export const BAKE_GENERATOR_VERSION = 'gutters-3';
+export const BAKE_GENERATOR_VERSION = 'gutters-2';
 
 // The freshness fast path can reuse a persisted bake before hashing geometry.
 // Invalidate guttered houses only; gutter-free stamps stay byte-identical.

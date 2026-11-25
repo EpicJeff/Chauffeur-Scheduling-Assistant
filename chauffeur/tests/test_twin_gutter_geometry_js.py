@@ -528,8 +528,8 @@ await test('test_drains_to_runs_get_no_pour', async () => {
 });
 
 await test('test_generator_version_bumped', async () => {
-  assert.equal(BAKE_GENERATOR_VERSION, 'gutters-3');
-  assert.equal(keyInputs({plan:house()}).generator,'gutters-3');
+  assert.equal(BAKE_GENERATOR_VERSION, 'gutters-2');
+  assert.equal(keyInputs({plan:house()}).generator,'gutters-2');
   assert.equal(keyInputs({plan:input.plan}).generator,'gutters-1');
 });
 

@@ -920,9 +920,10 @@ export function downspouts(plan={},runs=[]){
   }
   const exacts=compiled.flatMap(state=>state.selected.filter(c=>c.exact).map(c=>({state,c})));
   const dropPoint=c=>c.value.path.at(-2)||c.value.top;
-  const nearExact=(state,c)=>exacts.some(v=>v.state.run.building===state.run.building
+  const isNearExact=(state,c,v)=>v.state.run.building===state.run.building
     &&(dist(v.c.at,c.at)<=FT+EPS||Math.abs(v.c.at[1]-c.at[1])<=3/12*FT+EPS
-      &&Math.hypot(dropPoint(v.c)[0]-dropPoint(c)[0],dropPoint(v.c)[2]-dropPoint(c)[2])<FT+EPS));
+      &&Math.hypot(dropPoint(v.c)[0]-dropPoint(c)[0],dropPoint(v.c)[2]-dropPoint(c)[2])<FT+EPS);
+  const nearExact=(state,c)=>exacts.some(v=>isNearExact(state,c,v));
   compiled.sort((a,b)=>compare(a.run.id,b.run.id));
   for(const state of compiled){const {run,valid,selected,used}=state;
     const target=Math.ceil(run.length/GUTTER.spanFt);
@@ -986,10 +987,15 @@ export function downspouts(plan={},runs=[]){
     for(const s of outlets)s.share=weights.get(s.id)/total;}
   // Retain the builder's actual safe candidates for editor Add, without a
   // second placement pass or a second copy of the corner/mounting rules.
+  // occupied is a corner claim; nearExact lists raw indices so an entry can
+  // ignore itself when snapping while retaining other-edge/run exclusions.
   candidateSets.set(runs, compiled.flatMap(state => state.valid.filter(c => c.value.mount !== 'hang'
     && !c.value.flags.some(f => ['no-safe-landing', 'outlet-blocked'].includes(f))).map(c => ({
       building: state.run.building, roof: c.segment.roof, edge: c.segment.edge, porch: c.segment.porch,
-      fraction: edgeFraction(state.ctx, c.segment, c.at), occupied: claimed.has(globalKey(state, c))||nearExact(state,c),
+      fraction: edgeFraction(state.ctx, c.segment, c.at), occupied: claimed.has(globalKey(state, c)),
+      nearExact: exacts.filter(v=>isNearExact(state,c,v)).map(v=>({
+        roof:v.c.segment.roof,edge:v.c.segment.edge,index:v.c.authoredIndex,
+      })),
     }))));
   return output;
 }
