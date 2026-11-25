@@ -1,5 +1,4 @@
 import { porchPosts, postRef } from './porch_posts.js';
-import { allPorches } from './gutter_presence.js';
 import { createSelectionFocus } from './selection_focus.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
