@@ -5,6 +5,13 @@ const EPS = 1e-9;
 const AREA_EPS = 1e-10;
 const valueAt = (plane, x, y) => plane[0] * x + plane[1] * y + plane[2];
 
+// Indexed choices and their outline must always come from the same record.
+// Plane form/heights remain derived from the partition section.
+export function authoredRoofShape(record, section) {
+  return record?.area ? { ...record, ...section, area: record.area,
+    host: record.host, ends: record.ends, edges: record.edges, underside: record.underside } : section;
+}
+
 // Port of twin_model_roofs._rectangle_edge_indices: longest positive overlap,
 // with the lower authored edge index breaking ties. Do not infer from winding.
 export function rectangleEdgeIndices(area, rect) {
@@ -136,15 +143,16 @@ function insidePolygon(polygon, x, y) {
 
 /** Optional support cap, restricted to the same cut footprint as drawing. */
 export function supportedRoofAbove(sections, x, y, floor, ceiling = Infinity,
-  { cuts = () => [], thickness = 0.25, underside = false } = {}) {
+  { cuts = () => [], thickness = 0.25, underside = false, ceilingAt = () => null } = {}) {
   let height = null;
   sections.forEach((section, index) => {
     if (!isSupported(section) || ['ghost', 'proposal'].includes(section.state)) return;
     const z = sectionHeight(section, x, y);
     const depth = section.thickness_ft ?? thickness;
-    if (z === null || z - depth <= floor + EPS || z >= ceiling - EPS
+    const flat = underside ? ceilingAt(section, index) : null;
+    const result = underside ? Math.min(z - depth, flat ?? Infinity) : z;
+    if (z === null || result <= floor + EPS || (flat === null ? z : result) >= ceiling - EPS
         || cuts(section, index).some(poly => insidePolygon(poly, x, y))) return;
-    const result = underside ? z - depth : z;
     if (height === null || result < height) height = result;
   });
   return height;

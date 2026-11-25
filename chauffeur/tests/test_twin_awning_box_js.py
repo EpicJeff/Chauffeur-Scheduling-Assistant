@@ -625,10 +625,10 @@ await test('arched_brace_limits_contact_and_plain_brace_unchanged', () => {
   )[0].geometry));
 });
 
-await test('fix1_section_edges_win_over_record_edges_and_prepare_runs_once', async () => {
+await test('record_edges_and_outline_stay_together_and_prepare_runs_once', async () => {
   // Section has overhang_ft: 0 on eave edge 0; record has overhang_ft: 1.0 on eave edge 0.
-  // supportGeometry (post) MUST follow section.edges (overhang 0 -> inset under y=-4),
-  // while undersideGeometry uses record.edges (overhang 1.0 -> extends to y=-5).
+  // Posts and the ceiling both use the record's edges with the record's outline
+  // (branch review I1: mixing the two put supports on the wrong side).
   const secEdges = [
     { setting: 'sloped', pitch: 3, overhang_ft: 0.0 },
     { setting: 'gable', pitch: 3, overhang_ft: 0.0 },
@@ -652,9 +652,9 @@ await test('fix1_section_edges_win_over_record_edges_and_prepare_runs_once', asy
   const post0 = (pick.userData.partObjects || []).find(p => p.object.userData.part === 'support:0');
   const ceil0 = (pick.userData.partObjects || []).find(p => p.object.userData.part === 'underside');
   assert.ok(post0 && ceil0, 'both post and underside present');
-  // Post uses section.edges (overhang 0): Three.js max Z must be <= 4.01 (plan y >= -4.01)
+  // The record's 1 ft overhang moves the posts out past the outline at y = -4.
   const postMaxZ = Math.max(...vertices(post0.object.geometry).map(v => v[2]));
-  assert.ok(postMaxZ <= 4.01, `post respects section.edges overhang 0 (maxZ=${postMaxZ})`);
+  assert.ok(postMaxZ > 4.2 && postMaxZ < 5.01, `post follows the record's overhang, inside the drawn edge (maxZ=${postMaxZ})`);
   // Underside uses record.edges (overhang 1.0): Three.js max Z reaches ~5.01 (plan y = -5.01)
   const ceilMaxZ = Math.max(...vertices(ceil0.object.geometry).map(v => v[2]));
   assert.ok(ceilMaxZ >= 4.95, `underside uses record.edges overhang 1.0 (maxZ=${ceilMaxZ})`);

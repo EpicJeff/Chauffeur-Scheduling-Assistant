@@ -14,7 +14,7 @@ import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
 import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
-import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes } from './twin_roof.js';
+import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes, authoredRoofShape } from './twin_roof.js';
 import { isSupported, supportPoints, supportGeometry, supportFrame, roofPoint } from './roof_supports.js';
 import { prepareUnderside, undersideGeometry } from './roof_underside.js';
 import { GUTTER, gutterPlacement, buildingHasGutters, _gutterPlacementStats } from './gutters.js';
@@ -1268,10 +1268,12 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     const roofHeight = (x, y) => heightAt(sections, x, y) ?? Infinity;
     // Row 5: preserve the walled query exactly; only a lower covering
     // supported roof above this floor may replace it with its underside.
+    const supportedCeilings = new Map();
     const supportCap = (x, y, floor, currentHeight) => {
       if (!supportedSections.length) return currentHeight;
       const height = supportedRoofAbove(supportedSections, x, y, floor, currentHeight,
-        { cuts: section => supportCuts.get(section), thickness: ROOF_THICKNESS, underside: true });
+        { cuts: section => supportCuts.get(section), thickness: ROOF_THICKNESS, underside: true,
+          ceilingAt: section => supportedCeilings.get(section.roof || section.id) ?? null });
       return height === null ? currentHeight : height;
     };
     const supportingWalls = [];
@@ -1682,11 +1684,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       return best;
     };
-    const underShape = boxSection ? { ...boxRecord, ...boxSection, area: boxRecord.area || boxSection.area,
-      ends: boxRecord.ends ?? boxSection.ends, underside: boxRecord.underside ?? boxSection.underside } : null;
+    const underShape = boxSection ? authoredRoofShape(boxRecord, boxSection) : null;
     const prepared = underShape ? prepareUnderside(underShape, {
       THREE, slabBottomAt: rawSlabBottomAt, wallFaceAt: supportWallFaceAt, recordEdges: boxRecord.edges,
     }) : null;
+    if (prepared?.hasFlat) supportedCeilings.set(boxSection.roof || boxSection.id, prepared.ceilingZ);
     for (let index = 0; index < sections.length; index++) {
       const section = sections[index], positions = [];
       const thickness = supported ? section.thickness_ft ?? ROOF_THICKNESS : ROOF_THICKNESS;
@@ -1899,7 +1901,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       }
       if (supported && index === sections.length - 1) {
         const record = b.roofs?.find(r => r.id === (section.roof || section.id)) || section;
-        const shape = { ...record, ...section, area: record.area || section.area };
+        const shape = authoredRoofShape(record, section);
         const bAngle = (b.rotation || 0) * Math.PI / 180, cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
         const roofPorches = allPorches(b);
         const supportWallTopAt = (x, y, out = null) => {
@@ -2425,7 +2427,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             outlinePositions = roofOutlinePositions(geometry.attributes.position.array, supportParts);
             const picks = [geometry, ...supportParts.map(o => o.geometry)].map(g => {
               const copy = g.index ? g.toNonIndexed() : g.clone();
-              for (const name of Object.keys(copy.attributes)) if (name !== 'position') copy.deleteAttribute(name);
+              for (const name of Object.keys(copy.attributes)) if (!['position', 'normal', 'uv'].includes(name)) copy.deleteAttribute(name);
               return copy;
             });
             const combined = mergeGeometries(picks);

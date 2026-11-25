@@ -51,7 +51,8 @@
 // Their outlet.at is just below the gutter, not at the receiving surface: the
 // renderer must use the landing sampler to find the falling water's length.
 import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSampler } from './sky/eave_streams.js';
-import { roofMeshGroups, supportedRoofAbove, supportedRoofCutters, roofBounds, endKind, heightAt, sectionHeight } from './twin_roof.js';
+import { roofMeshGroups, supportedRoofAbove, supportedRoofCutters, roofBounds, endKind, heightAt, sectionHeight, authoredRoofShape } from './twin_roof.js';
+import { prepareUnderside } from './roof_underside.js';
 import { isSupported, roofPoint, supportPoints } from './roof_supports.js';
 import { allPorches } from './twin_generator.js';
 import { FASCIA, ROOF_THICKNESS } from './trim_dims.js';
@@ -238,7 +239,20 @@ function prepare(plan,provided){
       const polygons=new Map(levels.map(level=>[level.id,level.polys]));
       const cuts=new Map(sections.filter(isSupported).map(section=>
         [section,supportedRoofCutters(section,levels,polygons,section.thickness_ft??ROOF_THICKNESS)]));
-      ctx.supportOptions={cuts:section=>cuts.get(section)||[],thickness:ROOF_THICKNESS,underside:true};
+      const ceilings=new Map();
+      for(const section of sections.filter(isSupported)){
+        const id=section.roof||section.id;
+        if(ceilings.has(id))continue;
+        const siblings=sections.filter(s=>(s.roof||s.id)===id),last=siblings.at(-1);
+        const record=b.roofs?.find(r=>r.id===id)||last;
+        const prepared=prepareUnderside(authoredRoofShape(record,last),{
+          slabBottomAt:(x,y)=>{const z=heightAt(siblings,x,y);return z===null?null:z-(last.thickness_ft??ROOF_THICKNESS);},
+          recordEdges:record.edges,
+        });
+        ceilings.set(id,prepared?.hasFlat?prepared.ceilingZ:null);
+      }
+      ctx.supportOptions={cuts:section=>cuts.get(section)||[],thickness:ROOF_THICKNESS,underside:true,
+        ceilingAt:section=>ceilings.get(section.roof||section.id)??null};
     }
     // Compute each union once for each distinct set of levels below an eave.
     ctx.footprint=(height,floor=-Infinity)=>{const below=levels.filter(l=>(l.elevation||0)<=height+EPS&&(l.elevation||0)>=floor-EPS);
@@ -551,10 +565,14 @@ function mountAt(ctx,segment,top,corner){
   // for positive drops: exposed and zero-drop roofs retain their exact routing.
   const roofPosts=supported&&roof.support.kind==='post'&&roof.underside?.kind==='flat'&&roof.underside.drop_ft>0
     ?supportPoints(roof).map(c=>({at:c.at,floor:ctx.b.levels?.find(l=>l.id===roof.level)?.elevation||0,size:roof.support.size_ft||.5})):[];
+  // The pipe stays outside a dropped face before turning onto the post below
+  // the ceiling. That attachment needs the post to reach the lower turn.
+  const postAttachHeight=supported&&roof.underside?.kind==='flat'&&roof.underside.drop_ft>0
+    ?Math.min(p[2],...segmentInfo(ctx,segment).sections.map(s=>ctx.supportOptions.ceilingAt(s)??Infinity)):p[2];
   const posts=[...ctx.porches.flatMap(po=>(po.columns||[]).filter(c=>c.at&&pointNearPoly(po.polygon,c.at,.25))
       .map(c=>({at:c.at,floor:po.floor||0,size:c.size||.5,porch:po}))),...roofPosts]
-    .filter(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
-      &&postTop(c)>=p[2]-.75)
+    .filter(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<postAttachHeight
+      &&postTop(c)>=postAttachHeight-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
   const wallReach=w=>hostWallReach(ctx,segment,w);
   const candidates=ctx.mountWalls.filter(w=>(!supported||w.id===roof.host?.wall)

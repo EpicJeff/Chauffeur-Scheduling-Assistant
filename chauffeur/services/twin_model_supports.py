@@ -352,6 +352,9 @@ def _matching_edge(row, candidates):
 
 def edge_pairs(source, target):
     """Target/source indices for optional data; legacy roofs keep zip ordering."""
+    if 'plane_edges' in target:
+        return [(i, target['plane_edges'][side]) for i, side in enumerate(('y0', 'x1', 'y1', 'x0'))
+                if target['plane_edges'].get(side) is not None]
     if not any(k in source for k in ROOF_FIELDS) and not any('overhang_ft' in e for e in source.get('edges', [])):
         return list(zip(range(len(target.get('edges', []))), range(len(source.get('edges', [])))))
     old = _edge_rows(source)
@@ -374,7 +377,7 @@ def carry_fields(source, target, *, overwrite=False):
                     if mapped is not None:
                         target[key]['edge'] = mapped
     if 'edges' not in target and any('overhang_ft' in e for e in source.get('edges', [])):
-        target['edges'] = deepcopy(source['edges'])
+        target['edges'] = [{} for _ in area_of(target)]
     for target_index, source_index in edge_pairs(source, target):
         if source_index >= len(source.get('edges', [])) or target_index >= len(target.get('edges', [])):
             continue

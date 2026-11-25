@@ -261,12 +261,31 @@ def scenario_storage_guard_covers_records_hidden_by_flatten():
 
 def scenario_idless_extensions_do_not_break_person_edits():
     d._fresh(photos=0)
+    yard()
+    ts._invalidate_reads()
     model = ts.current_model()
     building = model['buildings'][0]
-    check(building['extensions'] and any('id' not in p for p in building['extensions']), 'real legacy fixture has id-less extensions')
+    # The fixture's id-less awnings have already migrated by this load. They
+    # must have stable, usable identities, including across cold store reads.
+    awnings = [p for p in building['roofs'] if p.get('support', {}).get('kind') == 'bracket']
+    check(awnings and all(p.get('id') for p in awnings), 'legacy awnings became identified roofs')
+    ts._invalidate_reads()
+    check(ts.current_model() == model, 'two cold loads keep awning ids and all other records stable')
+    # An unrelated id-less legacy extension must still survive ordinary edits.
+    legacy = {'kind': 'legacy-detail', 'notes': 'Retained authored detail'}
+    building['extensions'].append(legacy)
     room = building['rooms'][0]
     changed, _ = ops.apply(model, {'op': 'set', 'building': building['id'], 'id': room['id'], 'field': 'name', 'value': 'Den'})
     check(next(p for p in changed['buildings'][0]['rooms'] if p['id'] == room['id'])['name'] == 'Den', 'ordinary person edit works')
+    check(changed['buildings'][0]['extensions'] == building['extensions'], 'id-less non-awning extension survives')
+    check(changed['buildings'][0]['roofs'] == building['roofs'], 'person edit preserves migrated awnings')
+    check(changed['site'] == model['site'] and tb.yard_occupied(changed), 'person edit keeps the protected yard')
+    expected = copy.deepcopy(model)
+    expected['buildings'][0]['rooms'][0].update(name='Den', src=changed['buildings'][0]['rooms'][0].get('src'))
+    # Diagnostic derivation may reorder flags; protect their complete contents.
+    for value in (expected, changed):
+        value['buildings'][0]['flags'].sort(key=encoded)
+    check(changed == expected, 'only the person edit and its provenance change; complete flag contents retained')
 
 
 def scenario_first_build_and_lot_then_buildings_match_main():

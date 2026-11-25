@@ -54,6 +54,27 @@ def converted(value):
 
 
 class Migration(unittest.TestCase):
+    def test_final_material_is_explicit_only_to_preserve_a_different_resolved_finish(self):
+        for native in (False, True):
+            for conflict in ('none', 'same-level', 'level-id', 'level-tint', 'own-roof', 'own-material'):
+                raw = legacy(native); b = raw['buildings'][0]
+                b['materials'] = {'roof': {'id': 'roof', 'color': '#123456'}}
+                own = (b['extensions'] if native else b['roof']['extensions'])[0]
+                if conflict == 'same-level':
+                    b['levels'][0]['materials'] = copy.deepcopy(b['materials'])
+                elif conflict.startswith('level-'):
+                    b['levels'][0]['materials'] = {'roof': {'id': 'shingle'} if conflict == 'level-id' else {'color': '#abcdef'}}
+                elif conflict == 'own-roof':
+                    own['materials'] = {'roof': {'id': 'shingle'}}
+                elif conflict == 'own-material':
+                    own['material'] = {'id': 'shingle'}
+                value, _ = migrate_awnings(raw); roof = converted(value)
+                if conflict in ('none', 'same-level'):
+                    self.assertNotIn('material', roof, conflict)
+                else:
+                    self.assertEqual(roof['material'], b['materials']['roof'], conflict)
+                self.assertEqual(migrate_awnings(value), (value, []))
+
     def test_review_skewed_wall_keeps_the_drawn_frame_without_swapping_span(self):
         for side in ('front', 'side'):
             for degrees in (math.degrees(math.atan(.0011/10)), .5, 2, 45):
@@ -438,12 +459,37 @@ class Migration(unittest.TestCase):
         supports = sum(r.get('support', {}).get('kind') == 'bracket'
                        for b in value['buildings'] for r in b['roofs'])
         self.assertEqual((before, supports, after), (2, 2, 0))
+        finish_checks = 0
         for old, new in zip(raw['buildings'], value['buildings']):
             self.assertTrue(new['roofs'][:len(old['roofs'])] == old['roofs'], 'Owner walled roof records changed.')
             self.assertTrue(new['walls'] == old['walls'], 'Owner wall records changed.')
             self.assertTrue(new['joints'] == old['joints'], 'Owner joint records changed.')
+            # Compare resolved refs, never private export contents or pixels
+            # written to disk. Identical refs retain the exact roof finish.
+            from services.twin_awning_migration import _roof_material
+            attachments = [e for e in old.get('extensions', []) if e.get('kind') in ('awning', 'shed_continuation')]
+            for extension, roof in zip(attachments, new['roofs'][len(old['roofs']):]):
+                if extension.get('kind') != 'awning':
+                    continue
+                level = next((l for l in new['levels'] if l['id'] == roof.get('level')), {})
+                ref = {}
+                for slot in (roof.get('material'), roof.get('materials', {}).get('roof'),
+                             level.get('materials', {}).get('roof'), new.get('materials', {}).get('roof'),
+                             value.get('materials', {}).get('roof'), {'id': 'roof'}):
+                    if not isinstance(slot, dict):
+                        continue
+                    for key in ('color', 'uv'):
+                        if key not in ref and key in slot:
+                            ref[key] = slot[key]
+                    if slot.get('id'):
+                        ref = dict(id=slot['id'], **ref)
+                        break
+                self.assertTrue(ref == _roof_material(raw, old), 'Owner awning resolved roof finish changed.')
+                finish_checks += 1
+        self.assertEqual(finish_checks, before, 'Every owner awning finish was compared.')
         print('OWNER_MIGRATION ' + json.dumps(dict(legacy_awnings=before, supported_roofs=supports,
-                                                  remaining_extensions=after, walled_records_equal=True)))
+                                                  remaining_extensions=after, walled_records_equal=True,
+                                                  resolved_roof_finishes_equal=True)))
 
 
 if __name__ == '__main__':

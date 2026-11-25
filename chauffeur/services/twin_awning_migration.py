@@ -107,11 +107,11 @@ def _flag(building, record, notes, reason='has no supporting wall; the awning wa
     notes.append(text)
 
 
-def _roof_material(model, building):
+def _roof_material(model, building, parents=()):
     result = {}
     sources = [value.get('roof') if isinstance(value, dict) else None
                for value in (building.get('materials'), model.get('materials'))]
-    for value in (*sources, {'id': 'roof'}):
+    for value in (*parents, *sources, {'id': 'roof'}):
         if not isinstance(value, dict):
             continue
         for key in ('color', 'uv'):
@@ -184,7 +184,6 @@ def _awning(model, building, awning, parent, walls, pid, notes):
                   support=dict(kind='bracket', count=capped, inset_ft=.6, size_ft=.3),
                   edges=[dict(setting='sloped' if side == low else 'gable', pitch=awning['pitch'], overhang_ft=0)
                          for side in _SIDES])
-    record['material'] = _roof_material(model, building)
     if 'plane_materials' in record:
         previous = record.pop('plane_materials')
         existing = record.get('notes', [])
@@ -215,6 +214,17 @@ def _awning(model, building, awning, parent, walls, pid, notes):
         level = min(building['levels'], key=lambda l: l.get('elevation', 0)).get('id')
     if level:
         record['level'] = level
+    # Legacy slabs ignored their own and their storey's slots. Only pin the
+    # old look when those formerly inactive choices would now take precedence.
+    level_materials = next((l.get('materials', {}) for l in building.get('levels', [])
+                            if l.get('id') == level), {})
+    previous_finish = _roof_material(model, building)
+    inherited_finish = _roof_material(model, building,
+        (record.get('material'), own_materials.get('roof'), level_materials.get('roof')))
+    if inherited_finish != previous_finish:
+        record['material'] = previous_finish
+    else:
+        record.pop('material', None)
     from services.twin_model_supports import wall_axis
     diagonal = wall is not None and wall_axis(wall['from'], wall['to']) is None
     other_floor = wall is not None and wall.get('level') != level
