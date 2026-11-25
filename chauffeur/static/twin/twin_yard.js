@@ -64,7 +64,7 @@ import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } f
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
-import { registerBakeSource } from './bake/source.js';
+import { bakeAuthoredMaterial, captureBakeMaterials, registerBakeSource } from './bake/source.js';
 import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
@@ -1037,7 +1037,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     // keeping only the tree and plant-card caches that later builds reuse by key; the
     // previous yard's release then frees the dropped ones.
     const used = new Set();
-    root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
+    root.traverse(o => { for (const m of o.material ? [].concat(bakeAuthoredMaterial(root, o) || o.material) : []) used.add(m); });
     for (const [key, material] of [...mats]) if (!used.has(material) && !key.startsWith('tree:') && !key.startsWith('plant_card:')) mats.delete(key);
     writeWeatherOpen(root, skyCover, root.parent ? 1 : FT);
   };
@@ -1061,6 +1061,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   writeWeatherOpen(root, skyCover, FT);
+  captureBakeMaterials(root);
   if (!bakeSource && !modelSource) {
     const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
     // Keep the neutral bake copy clipped to the same roof drip line whenever

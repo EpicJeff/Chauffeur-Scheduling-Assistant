@@ -745,7 +745,9 @@ await test('ctrl_click_toggle_plain_replace_empty_clear_and_handle_bypass', asyn
     // steps BACK to the room (preserving room focus); with >1 member it clears the whole set.
     const room = b.rooms.find(r => r.level === 'L1' && r.state !== 'ghost');
     ed.tools.select({ kind: 'room', id: room.id, building: B });
-    assert.equal(ed.tools.selection().room, room.id, 'room is focused');
+    assert.equal(ed.tools.selection().room, null, 'plain room selection does not focus');
+    ed.tools.focusRoom({ kind: 'room', id: room.id, building: B });
+    assert.equal(ed.tools.selection().room, room.id, 'explicit room is focused');
     const boundaryWall = ed.tools.selection().tinted.walls[0];
     assert.ok(boundaryWall, 'room has boundary wall');
     ed.tools.select({ kind: 'wall', id: boundaryWall, building: B });

@@ -43,7 +43,7 @@ const labels = { low_side: 'Low side', at: 'Distance along the wall', ridge: 'Ri
   offset: 'Distance from surface', floor_offset_ft: 'Floor height (relative to this floor)' };
 const hostedLabels = { rotation: 'Turn', scale: 'Size' };
 const units = { pitch: 'in 12', rotation: '°', scale: '%' };
-export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection, selectionStore, applyBatch = ops => op({ op: 'batch', ops }), visibility, view, chooseDestination }) {
+export function createCards({ getPlan, getModel = () => null, getKit = () => ({}), getLabel, getSelection = () => ({}), getFieldLabels = () => ({}), edit, op, addDormer, ask, canEdit, select, library = idleLibrary, haLink, preview, onDrawFeature, splitWall, loadMaterialNames = null, dock, openHouseMaterials, removeSelection, selectionStore, applyBatch = ops => op({ op: 'batch', ops }), visibility, view, chooseDestination, focusRoom, leaveRoom }) {
   let namesAsked = false, namesRead = null;
   function loadNames(onReady) {
     if (!loadMaterialNames) return;
@@ -152,7 +152,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       ? JSON.stringify([record.piece.foundation, porchShelfOnGrade(getPlan(), record.building, record.piece), canEdit()]) : '';
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
-    const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
+    const nextLayout = JSON.stringify([getSelection().room, members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
       roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, roof.ends, roof.underside, record.building.walls], record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
@@ -163,7 +163,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       headingNode.textContent = title(record);
       if (pitchNote) pitchNote.hidden = record.piece.pitch_source !== 'photos';
       if (acceptButton) acceptButton.hidden = record.piece.state !== 'ghost' && !flags.length;
-      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.gutterDisabled !== undefined || b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined; });
+      host.querySelectorAll('button').forEach(b => { if (b.closest('[data-library-slot]')) return; b.disabled = b.dataset.gutterDisabled !== undefined || b.dataset.fixtureLocked !== undefined || !canEdit() && b.dataset.fixtureBrowse === undefined && b.dataset.selectionFocus === undefined; });
       // A save or poll refreshes clean values without replacing anyone's input.
       for (const [field, state] of inputs) {
         const { input } = state;
@@ -279,6 +279,12 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       foundationShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, preview });
       if (openHouseMaterials) host.append(button('House materials', () => openHouseMaterials(piece.id)));
       else houseMaterialsShelf(host, piece, { library, ownSlot, getPlan, getKit, canEdit, op: operation => queue(() => canEdit() && op(operation)), report });
+    }
+    if (focusRoom && ['room', 'porch', 'level'].includes(kind)) {
+      const focused = getSelection().room === piece.id;
+      const focus = button(focused ? 'Leave room' : 'Focus room', () => focused ? leaveRoom?.()
+        : focusRoom({ kind, id: piece.id, building: building.id, level: kind === 'level' ? piece.id : piece.level }));
+      focus.dataset.selectionFocus = ''; focus.disabled = false; host.append(focus);
     }
     if (kind === 'room' && piece.kind === 'porch') porchFoundationShelf(host, piece, building,
       { library, ownSlot, getPlan, getKit, canEdit, queue, op, report, onSaved: () => draw() });

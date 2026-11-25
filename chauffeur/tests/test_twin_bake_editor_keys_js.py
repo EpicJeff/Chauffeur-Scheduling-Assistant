@@ -64,14 +64,14 @@ try{
   const level=building.id+':'+building.levels[0].id,room=building.rooms[0];
   for(const state of ['focus','faint','room']){
    await editor.rebuild(structuredClone(plan));
-   if(state==='focus')await editor.setEditableLevel(level);
+   if(state==='focus')editor.setSelection({selected:{kind:'level',id:building.levels[0].id,building:building.id},room:{kind:'level',id:building.levels[0].id,building:building.id,level:building.levels[0].id,allowed:[],walls:[]}});
    if(state==='faint')editor.showLevels(Object.keys(editor.groups.levels),{faint:[level]});
    if(state==='room')editor.setSelection({selected:null,members:[],room:{building:building.id,level:room.level,id:room.id,allowed:[room.id],walls:[]}});
    while(!editor.ready)await new Promise(setImmediate);
    // A further presentation-only material swap must not classify opaque faces
    // as authored cutouts, even outside the two old selected/faded maps.
    const root=editor.scene.children.find(isBakeRoot);
-   root.traverse(m=>{if(m.isMesh&&m.userData.merged){m.material=m.material.clone();m.material.transparent=true;m.material.alphaTest=.5;}});
+   root.traverse(m=>{if(m.isMesh&&m.userData.merged){m.material=[].concat(m.material).map(source=>{const material=source.clone();material.transparent=true;material.alphaTest=.5;return material;});}});
    assert.equal(buildAtlas(root,editor.plan,layout).key,baseline,state);
   }
  });

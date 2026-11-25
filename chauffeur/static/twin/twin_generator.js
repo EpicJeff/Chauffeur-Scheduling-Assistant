@@ -11,7 +11,7 @@ import { resolveSurfaceMaterial } from './surface_material.js';
 import { supportMaterialSurface } from './support_material.js';
 import { undersideMaterialSurface } from './underside_material.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
-import { registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
+import { captureBakeMaterials, registerBakeSource, defaultBuildingFinishes, cloneBakeGeometry, BAKE_SOURCE_TIER } from './bake/source.js';
 import { KINDS, BUILTIN_LOOKS, builtinAlphaMode, kindRow, resolveSlot } from './surface_kinds.js';
 import { hostPoint, parkingPoint } from './twin_hosts.js';
 import { roofEnvelope, roofMesh, roofBounds, heightAt, supportedRoofAbove, supportedRoofCutters, stepFaces, endKind, planes, authoredRoofShape } from './twin_roof.js';
@@ -497,10 +497,12 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
       if (resolved.fixed === entry.inputs) entry.key = keyFromParts(resolved);
     }
     writeWeatherOpen(root, next.skyCover);
+    captureBakeMaterials(root);
   });
   next.updateGhosts = () => { for (const entry of next.buildings.values()) entry.model.updateGhosts(); };
   next.buildingsReused = reused; next.buildingsRebuilt = rebuilt;
   if (opts.timing) { opts.timing.buildings_reused = reused; opts.timing.buildings_rebuilt = rebuilt; }
+  captureBakeMaterials(root);
   if (!opts.bakeSource) {
     const owned=[...root.children,...[...next.buildings.values()].map(entry=>entry.model.root),...Object.values(groups.levels)];
     registerBakeSource(root, () => !opts.editableLevel && defaultBuildingFinishes(plan,kit) ? cloneBakeGeometry(root,owned)

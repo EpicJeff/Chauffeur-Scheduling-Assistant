@@ -186,7 +186,7 @@ export function replacementOperations(plan, refs, materialId, nextMaterial, kit 
 
 export function selectUsingMaterial(plan, materialId, { refs = [], limit = 'all', view, visibility, kit = {} } = {}) {
   const buildings = new Set(refs.map(buildingId).filter(Boolean)), yardSelected = refs.some(ref => !buildingId(ref));
-  const floor = typeof view === 'string' ? view : view?.selectionFloor?.() || view?.state?.view || 'ext';
+  const floor = typeof view === 'string' ? view : view?.interactionFloor?.() || view?.selectionFloor?.() || view?.state?.view || 'ext';
   const floorLimited = floor && !['ext', 'house'].includes(floor);
   const selected = [], seen = new Set();
   for (const row of sceneRows(plan)) {
@@ -201,6 +201,7 @@ export function selectUsingMaterial(plan, materialId, { refs = [], limit = 'all'
     if (['buildings', 'building'].includes(limit) && (!row.building || !buildings.has(row.building))) continue;
     if (['selection', 'current'].includes(limit) && (row.building ? !buildings.has(row.building) : !yardSelected)) continue;
     const candidate = { ...owner, id: owner.pieceId, building: row.building, level, visibilityKind: row.visibilityKind };
+    if (view?.isInSelectionFocus?.(candidate) === false) continue;
     if (visibility?.isHidden?.(owner.pieceId, owner.kind) || visibility?.isLocked?.(owner.pieceId, owner.kind)) continue;
     if (visibility?.isPickable?.(candidate) === false || view?.isPiecePickable?.(candidate) === false || view?.isPieceHidden?.(candidate)) continue;
     let excluded = false;

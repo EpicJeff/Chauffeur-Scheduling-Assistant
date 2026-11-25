@@ -257,6 +257,7 @@ def synthetic_plan(gutters_on=True):
             {'id': 'door1', 'wall': 'w0', 'at': 14, 'width': 3.5, 'sill': 0, 'head': 7, 'kind': 'door'},
             {'id': 'win1', 'wall': 'w0', 'at': 27, 'width': 4, 'sill': 3, 'head': 7, 'kind': 'window'},
         ],
+        'lights': [{'id': 'demo-focus-lamp', 'level': 'L1', 'at': [14, -4], 'room': 'Porch', 'kind': 'recessed', 'visible_in': ['editor']}],
         'porches': [{
             'id': 'front-porch', 'name': 'Demo patio', 'level': 'L1', 'polygon': [[6, -8], [22, -8], [22, 0], [6, 0]],
             'floor': 0.5, 'columns': [{'at': [6.5, -7.5], 'size': 0.5}, {'at': [21.5, -7.5], 'size': 0.5}],

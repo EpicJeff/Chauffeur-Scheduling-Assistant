@@ -1,3 +1,4 @@
+import { roomInQuestion } from './room_context.js';
 import { slotDragTarget, sendSlotDrag } from './slot_row.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
@@ -532,9 +533,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   // In the floor cutaway the ceiling has no rendered slab to raycast. An
   // explicit ceiling placement still uses its real plane and room boundary.
   function ceilingAt(event, fromBelow = false) {
-    const selected = tools.selection();
-    const building = getPlan()?.buildings.find(b => b.id === selected.building);
-    const room = building?.rooms.find(r => r.id === selected.room && r.state !== 'ghost');
+    const { building, room } = roomInQuestion(getPlan(), tools.selection()) || {};
     if (!room) return null;
     const level = building.levels.find(l => l.id === room.level);
     if (!level) return null;

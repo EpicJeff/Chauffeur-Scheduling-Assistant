@@ -1,3 +1,4 @@
+import { roomInQuestion } from './room_context.js';
 import * as THREE from 'three';
 import { hostPoint } from '../twin_hosts.js';
 import { groundAt, buildingGround, inPolygon } from '../twin_ground.js';
@@ -146,6 +147,8 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
   }
   function arm(device, kind, room = null) {
     cancel(); prepare(); tools.setTool('select');
+    const context = roomInQuestion(getPlan(), tools.selection());
+    room ||= context && { id: context.room.id, building: context.building?.id };
     armed = { device, kind, room };
     el('device-note').textContent = `Click ${kind === 'yard_room' ? 'inside the yard room' : kind === 'wall' ? 'a wall' : 'the ceiling'} for ${device.name}. Escape cancels.`;
     el('device-tools').hidden = false; canvas.style.cursor = 'crosshair';
@@ -262,7 +265,7 @@ export function createDevicePlacement({ view, tools, library, getPlan, op, canEd
         : 2 * Math.max(.1, -sprite.position.clone().applyMatrix4(camera.matrixWorldInverse).z)
           * Math.tan(camera.fov * Math.PI / 360) / camera.zoom / Math.max(1, rect.height);
       sprite.scale.setScalar(pixel * 22);
-      const selectedRoom = selected.kind === 'yard_rooms' ? selected.id : selected.room;
+      const selectedRoom = selected.kind === 'yard_rooms' ? selected.id : selected.focusKind === 'level' ? null : selected.room;
       const inRoom = !selectedRoom || (selected.building ?? null) === (at.building?.id ?? null) && at.room === selectedRoom;
       sprite.material.opacity = inRoom ? 1 : .2;
     }
