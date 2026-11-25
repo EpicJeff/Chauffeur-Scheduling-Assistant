@@ -45,7 +45,7 @@ def post_roof_reason(building, porch, roof, *, states_only=False):
     if len(columns) > 40 or not .05 <= size <= 3 or any(abs(c['size']-size) > 1e-8 for c in columns):
         return 'The roof needs at most 40 columns of the same size, from 0.05 to 3 feet.'
     if any(not _covers_column(roof, sections, c['at']) for c in columns):
-        return 'A column centre is outside the roof perimeter (including overhang; tolerance 0.05 ft).'
+        return 'A post would be outside the roof.'
     return None
 
 

@@ -52,7 +52,7 @@
 // renderer must use the landing sampler to find the falling water's length.
 import { extractEaves, clipExposedEdges, createEaveClipper, createEaveLandingSampler } from './sky/eave_streams.js';
 import { roofMeshGroups, supportedRoofAbove, supportedRoofCutters, roofBounds, endKind, heightAt, sectionHeight } from './twin_roof.js';
-import { isSupported, roofPoint } from './roof_supports.js';
+import { isSupported, roofPoint, supportPoints } from './roof_supports.js';
 import { allPorches } from './twin_generator.js';
 import { FASCIA, ROOF_THICKNESS } from './trim_dims.js';
 import { withoutSurfaceMaterials, fingerprint } from './bake/geometry_key.js';
@@ -547,8 +547,12 @@ function mountAt(ctx,segment,top,corner){
     const surface=supportedRoofAbove(ctx.sections,...c.at,c.floor,ceiling,ctx.supportOptions);
     return surface===null?ceiling:surface;
   };
-  const posts=ctx.porches.flatMap(po=>(po.columns||[]).filter(c=>c.at&&pointNearPoly(po.polygon,c.at,.25))
-      .map(c=>({at:c.at,floor:po.floor||0,size:c.size||.5,porch:po})))
+  // The dropped-ceiling route may descend a roof-owned post too. Opt in only
+  // for positive drops: exposed and zero-drop roofs retain their exact routing.
+  const roofPosts=supported&&roof.support.kind==='post'&&roof.underside?.kind==='flat'&&roof.underside.drop_ft>0
+    ?supportPoints(roof).map(c=>({at:c.at,floor:ctx.b.levels?.find(l=>l.id===roof.level)?.elevation||0,size:roof.support.size_ft||.5})):[];
+  const posts=[...ctx.porches.flatMap(po=>(po.columns||[]).filter(c=>c.at&&pointNearPoly(po.polygon,c.at,.25))
+      .map(c=>({at:c.at,floor:po.floor||0,size:c.size||.5,porch:po}))),...roofPosts]
     .filter(c=>Math.max(...sub(c.at,p.slice(0,2)).map(Math.abs))<=oh+1+EPS&&c.floor<p[2]
       &&postTop(c)>=p[2]-.75)
     .sort((a,b)=>dist(a.at,p.slice(0,2))-dist(b.at,p.slice(0,2))||compare(key(a.at),key(b.at)));
@@ -625,6 +629,16 @@ function candidate(ctx,segment,top,corner,flags=[]){
   if(top[1]-.04*FT<=bottom+.1*FT)return null;
   const outletTop=gutterBottom(ctx,segment,top),under=[...outletTop];
   under[1]=Math.min(outletTop[1],top[1]-GUTTER.fasciaFt*FT)-GUTTER.soffitClearIn/12*FT;
+  // A dropped flat ceiling closes the eave face below the old soffit. Keep
+  // the vertical outlet outside that face until the same 1-inch clearance
+  // is available below its lowest edge, before any inward offset.
+  for(const section of segmentInfo(ctx,segment).sections){
+    if(!isSupported(section)||section.underside?.kind!=='flat'||!(section.underside.drop_ft>0))continue;
+    const local={...section,roof_frame:null},[x0,y0,x1,y1]=roofBounds(local);
+    const low=Math.min(...[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(at=>sectionHeight(local,...at)));
+    const ceiling=low-(section.thickness_ft??ROOF_THICKNESS)-section.underside.drop_ft;
+    under[1]=Math.min(under[1],(ctx.f.base+ceiling)*FT-GUTTER.soffitClearIn/12*FT);
+  }
   if(under[1]<=bottom+.1*FT)return null;
   const rimBotY=deckH!==null?Math.max(deckH+.06*FT,bottom+.35*FT):null;
   const rimTopY=rimBotY!==null?rimBotY+dropShift*FT:null;

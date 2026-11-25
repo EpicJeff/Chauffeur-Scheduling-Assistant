@@ -49,7 +49,7 @@ def eligibility_cases():
         if columns is not None:
             b['porches_detail'][0]['columns'] = [dict(at=at, size=2/3) for at in columns]
         cases.append(dict(name=name, model=value, reason=reason))
-    outside = 'A column centre is outside the roof perimeter (including overhang; tolerance 0.05 ft).'
+    outside = 'A post would be outside the roof.'
     add('ordinary patio')
     add('review probe', outside, roof={'area': [[0,0],[8,0],[8,8],[0,8]]})
     add('under uniform overhang', columns=[[1,1],[16.8,1]])
@@ -87,6 +87,60 @@ def eligibility_cases():
 
 
 class AwningMaterials(unittest.TestCase):
+    def test_underside_material_round_trip_for_hand_and_agent(self):
+        for actor in ('person', 'agent'):
+            model = patio()
+            model, _ = ops.apply(model, dict(op='set_roof_support', building=MOVE['building'], id='shade', support={'kind':'brace'}, underside={'kind':'flat','drop_ft':1}), actor)
+            ref = {'id':'painted_trim','color':'#aabbcc','uv':{'u':.2,'v':.4,'rot':90}}
+            command = dict(op='set_material', building=MOVE['building'], target={'roof':'shade','part':'underside'}, material=ref)
+            after, _ = ops.apply(model, command, actor)
+            rebuilt = bridge.assemble(bridge.flatten(after), after)[0]
+            self.assertEqual(rebuilt['buildings'][0]['roofs'][0]['materials']['underside'], ref)
+            walls, _ = ops.apply(after, dict(op='set_roof_support', building=MOVE['building'], id='shade', support={'kind':'walls'}), actor)
+            self.assertEqual(walls['buildings'][0]['roofs'][0]['materials']['underside'], ref)
+            cleared, _ = ops.apply(after, dict(command, material=None), actor)
+            self.assertNotIn('materials', cleared['buildings'][0]['roofs'][0])
+
+    def test_underside_resolver_picker_and_all_card_roof_records(self):
+        code, output = run_node(PRELUDE + r"""
+const {undersideMaterialSurface}=await import(file('static/twin/underside_material.js'));
+const {resolveSurfaceMaterial}=await import(file('static/twin/surface_material.js'));
+const {materialLines}=await import(file('static/twin/editor/library.js'));
+const {roofHostChoices}=await import(file('static/twin/editor/roof_support_shelf.js'));
+const {createCards}=await import(file('static/twin/editor/cards.js'));
+const plan=input.plan,b=plan.buildings[0],roof=b.roofs[0],sent=[];
+roof.support={kind:'brace',count:2};roof.underside={kind:'flat',drop_ft:1};
+const ref=()=>resolveSurfaceMaterial(plan,undersideMaterialSurface(plan,b,roof)).ref;
+assert.deepEqual(ref(),{id:'porch_ceiling'});
+plan.materials.soffit={id:'painted_trim',color:'#123456'};assert.deepEqual(ref(),plan.materials.soffit);
+b.materials={soffit:{id:'painted_trim',color:'#654321'}};assert.deepEqual(ref(),b.materials.soffit);
+b.materials.underside={id:'standing_seam'};assert.deepEqual(ref(),b.materials.underside);
+roof.materials={underside:{id:'painted_trim',color:'#abcdef',uv:{u:.2,v:.4,rot:90}}};assert.deepEqual(ref(),roof.materials.underside);
+const row=()=>materialLines({kind:'roof',piece:roof,building:b},plan,{}).find(r=>r.target.part==='underside');
+assert.equal(row().label,'Ceiling underneath');assert.deepEqual(row().resolved,ref());
+const cards=createCards({getPlan:()=>plan,canEdit:()=>true,getLabel:()=> 'Awning',op:async o=>sent.push(o),edit:async()=>{},select(){},ask(){},
+ library:{selected:()=>({id:'painted_trim',kind:'material'}),onSelect:()=>()=>{},reveal:async()=>{}}});
+cards.draw({pieceId:roof.id,buildingId:b.id,kind:'roof'});
+const picker=document.getElementById('piece-card').querySelector('[data-library-slot="Ceiling underneath"]');assert.ok(picker);
+click(picker.querySelector('[data-slot-use]'));await new Promise(r=>setTimeout(r,0));
+assert.deepEqual(sent,[{op:'set_material',building:b.id,target:{roof:roof.id,part:'underside'},material:{id:'painted_trim'}}]);
+delete roof.underside;cards.draw({pieceId:roof.id,buildingId:b.id,kind:'roof'});assert.equal(row(),undefined);
+assert.equal(document.getElementById('piece-card').querySelector('[data-library-slot="Ceiling underneath"]'),null);
+const original=structuredClone(roof);
+for(const kind of ['flat','shed','gable','hip'])for(const shape of ['area','rect','concave','clockwise','rotated']) {
+ Object.keys(roof).forEach(k=>delete roof[k]);Object.assign(roof,structuredClone(original),{kind,low_side:'y0',ridge:'x',pitch:kind==='flat'?0:3});
+ if(shape==='rect'){roof.rect=[0,0,16,8];delete roof.area;delete roof.edges;}
+ if(shape==='concave')roof.area=[[0,0],[16,0],[16,4],[8,4],[8,8],[0,8]];
+ if(shape==='clockwise')roof.area.reverse();
+ if(shape==='rotated')roof.roof_frame={origin:[8,4],angle:.3};
+ assert.doesNotThrow(()=>roofHostChoices(roof,b),kind+' '+shape);
+ assert.doesNotThrow(()=>cards.draw({pieceId:roof.id,buildingId:b.id,kind:'roof'}),kind+' '+shape);
+}
+cards.dispose();
+console.log('ceiling resolver, real picker, 20 selectable roof forms');
+""", dict(root=ROOT.as_posix(), plan=bridge.flatten(patio())))
+        self.assertEqual(code, 0, output)
+
     def test_shared_server_card_eligibility_table(self):
         cases = eligibility_cases()
         for case in cases:

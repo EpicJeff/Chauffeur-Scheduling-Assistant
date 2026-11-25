@@ -1295,9 +1295,10 @@ def _material(building, op, model=None):
     elif 'roof' in target:
         owner = _find(building, 'roofs', target['roof'])
         if 'part' in target:
-            if target['part'] != 'support':
+            from services.twin_surface_kinds import ITEM_PARTS
+            if target['part'] not in ITEM_PARTS['roof']:
                 raise Refused('Choose a surface for the material.')
-            container, key = owner.setdefault('materials', {}), 'support'
+            container, key = owner.setdefault('materials', {}), target['part']
         elif 'plane' in target:
             plane = target['plane']
             if type(plane) is not int or not 0 <= plane < len(owner['edges']):

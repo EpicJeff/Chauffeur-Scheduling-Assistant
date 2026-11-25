@@ -2,9 +2,18 @@
 import { roofPoint } from './roof_supports.js';
 export const SUPPORT_STYLES = {bracket: [['plain','Straight']], corbel: [['scroll','Scroll'],['plain','Stepped']], brace: [['plain','Straight'],['arched','Arched']], cable: [], post: []};
 
-export function allowedEndIndices(roof) {
+export function roofEdges(roof) {
   const sides = ['y0','x1','y1','x0'];
-  const edges = roof.edges || sides.map(side => ({setting: roof.kind === 'flat' || roof.kind === 'shed' && side === roof.low_side || ['gable','hip'].includes(roof.kind) && side[0] !== roof.ridge ? 'sloped' : roof.ends?.[side] || 'gable', pitch: roof.pitch || 0}));
+  return roof.edges || sides.map(side => ({setting: roof.kind === 'flat' || roof.kind === 'shed' && side === roof.low_side || ['gable','hip'].includes(roof.kind) && side[0] !== roof.ridge ? 'sloped' : roof.ends?.[side] || 'gable', pitch: roof.pitch || 0}));
+}
+
+export function roofArea(roof) {
+  const r = roof.rect;
+  return roof.area || (r ? [[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]] : []);
+}
+
+export function allowedEndIndices(roof) {
+  const edges = roofEdges(roof);
   // Decision: a flat awning allows closed ends on every non-host edge.
   return edges.flatMap((e,i) => i !== roof.host?.edge && (['gable','clip'].includes(e.setting) || (e.pitch ?? roof.pitch ?? 0) === 0) ? [String(i)] : []);
 }
@@ -23,7 +32,7 @@ export function normalizeRoofBox(roof) {
 }
 
 export function roofEndLabels(roof) {
-  const area = roof.area || [[roof.rect[0],roof.rect[1]],[roof.rect[2],roof.rect[1]],[roof.rect[2],roof.rect[3]],[roof.rect[0],roof.rect[3]]];
+  const area = roofArea(roof);
   const sign = area.reduce((n,p,i) => { const q=area[(i+1)%area.length];return n+p[0]*q[1]-p[1]*q[0]; },0) > 0 ? 1 : -1;
   return allowedEndIndices(roof).map(index => {
     const i=Number(index),p=roofPoint(roof,area[i]),q=roofPoint(roof,area[(i+1)%area.length]);

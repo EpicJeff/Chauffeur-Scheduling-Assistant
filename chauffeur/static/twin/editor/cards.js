@@ -4,6 +4,7 @@ import { drawObjectShelf, isObject } from './object_shelf.js';
 import { solarLayout } from '../twin_solar.js';
 import { isSupported } from '../roof_supports.js';
 import { roofSupportShelf } from './roof_support_shelf.js';
+import { roofArea, roofEdges } from '../roof_box_contract.js';
 import { contains } from '../twin_generator.js';
 import { materialLines } from './library.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
@@ -137,7 +138,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     if (record) dock?.properties.render(host, { ...propertyPath(record, getSelection(), select),
       reveal: next?.pieceId !== selection?.pieceId || next?.buildingId !== selection?.buildingId });
     else dock?.properties.clear(host);
-    const roof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === record.piece.id);
+    const authoredRoof = record?.kind === 'roof' && record.building.roofs?.find(r => r.id === (record.piece.roof || record.piece.id));
+    const roof = authoredRoof && {...authoredRoof, area:roofArea(authoredRoof), edges:roofEdges(authoredRoof)};
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     // One catalogue read per session names household materials on the lines.
@@ -151,7 +153,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     const garageLayout = record?.kind === 'opening' && record.piece.kind === 'garage'
       ? JSON.stringify([record.building.devices, haLink?.state()?.devices?.map(d => [d.device_id, d.kind, d.entity_id])]) : '';
     const nextLayout = JSON.stringify([members.map(ref => ref.slots), roomFeatures, record?.kind === 'yard_rooms' ? !!haLink?.state()?.available : null, record?.kind === 'building' ? `building:${JSON.stringify([record.piece.foundation, record.piece.materials, getPlan().materials, canEdit()])}` : record?.kind === 'roof' ? `${record.piece.kind}:${record.piece.ridge}:${JSON.stringify(flags)}` : ['solar_zone', 'stair'].includes(record?.kind)?JSON.stringify([record.piece, canEdit()]):record?.kind==='anchor'?`${record.kind}:${record.piece.kind}`:record?.kind, materials, canEdit(), record && siteShapeKinds.includes(record.kind) ? [record.piece, canEdit()] : record && (isObject(record) || record.kind === 'opening') ? record.piece : null,
-      roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, record.building.walls], record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
+      roof && [roof.edges, roof.support, roof.host, roof.thickness_ft, roof.fascia, roof.plate, roof.area, roof.roof_frame, roof.ends, roof.underside, record.building.walls], record && [record.piece.gutter, record.building?.porches?.map(p => [p.id, p.gutter])]]);
     host.hidden = !record;
     // Object properties participate in the layout signature. A completed Size
     // save must not detach Turn while the person is typing the next edit.
@@ -235,7 +237,8 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
           setPlate: value => change({ op: 'set', field: 'plate', value }) });
         const allGutters = enabled => queue(async () => {
           if (!canEdit()) return;
-          const b = getPlan().buildings.find(b => b.id === building.id), r = b?.roofs.find(r => r.id === roof.id);
+          const b = getPlan().buildings.find(b => b.id === building.id), current = b?.roofs?.find(r => r.id === roof.id);
+          const r = current && {...current, edges:roofEdges(current)};
           if (!r) return;
           const edges = enabled ? eaveEdges(b, r).filter(i => !r.edges[i].gutter) : r.edges.flatMap((e, i) => e.gutter ? [i] : []);
           if (edges.length) await op({ op: 'batch', ops: edges.map(i => edgeOperation(b.id, r.id, i, { gutter: enabled })) });
@@ -459,13 +462,13 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         if (!canEdit()) return;
         const current = getPlan().buildings.find(b => b.id === building)?.roofs.find(r => r.id === roof.id);
         const operation = fields => edgeOperation(building, roof.id, index, fields);
-        if (current?.edges[index].gutter && ['gable', 'clip'].includes(change.setting)) {
+        if (current?.edges?.[index]?.gutter && ['gable', 'clip'].includes(change.setting)) {
           if (!await window.promptConfirm('Remove this gutter?', "Changing this edge removes its gutter and its downspout overrides.", 'Remove and change', 'Cancel')) return;
           if (!canEdit()) return;
           return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: null }), operation(change)] });
         }
         // Pitch-only writes still include the current setting for the op contract.
-        return op(operation('pitch' in change ? { setting: current?.edges[index].setting || edge.setting, ...change } : change));
+        return op(operation('pitch' in change ? { setting: current?.edges?.[index]?.setting || edge.setting, ...change } : change));
       }).catch(report).finally(() => { layout = null; draw(); });
       return pending;
     };

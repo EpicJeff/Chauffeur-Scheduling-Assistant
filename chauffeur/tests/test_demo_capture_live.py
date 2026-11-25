@@ -9,7 +9,7 @@ import time
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor']
+NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts']
 
 
 def run():
@@ -28,7 +28,7 @@ def run():
                 assert shot.format == 'PNG'
                 assert shot.size == ((780, 1688) if name == 'my-day' else (1600, 900)), (name, shot.size)
         assert elapsed < 180, elapsed
-        print(f'6/6 demo shots passed in {elapsed:.2f}s')
+        print(f'{len(NAMES)}/{len(NAMES)} demo shots passed in {elapsed:.2f}s')
 
 
 if __name__ == '__main__':

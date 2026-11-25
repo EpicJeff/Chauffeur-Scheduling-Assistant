@@ -9,6 +9,7 @@ import { contains, FT, allPorches, PICK_LAYER } from '../twin_generator.js';
 import { findPiece } from './piece_operations.js';
 import { ITEM_PARTS, kindRow } from '../surface_kinds.js';
 import { supportMaterialSurface } from '../support_material.js';
+import { undersideMaterialSurface } from '../underside_material.js';
 import { isSupported } from '../roof_supports.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
@@ -199,7 +200,12 @@ export function materialLines(record, plan, kit) {
       return [line('Supports', 'support', roof.materials?.support, target, null,
         {target, label:'supports'}, {role:description.role, level:description.level, fallback:description.fallback})];
     })() : [];
-    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows, ...support];
+    const underside = roof.underside?.kind === 'flat' ? (() => {
+      const target = {roof:id,part:'underside'}, description = undersideMaterialSurface(plan, building, roof, kit);
+      return [line('Ceiling underneath', 'underside', roof.materials?.underside, target, null,
+        {target, label:'ceiling underneath'}, {level:description.level, fallback:description.fallback})];
+    })() : [];
+    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows, ...support, ...underside];
   }
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];

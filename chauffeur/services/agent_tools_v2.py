@@ -7757,7 +7757,7 @@ class HouseDesignTool(BaseModel):
         "add_level (name, elevation, ceiling); move_building (to:[x,y] in lot feet); "
         "rotate_building (rotation, about?:[x,y] in lot feet); "
         "move_posts_to_roof (building, porch, roof): only by explicit request after explaining posts move to the roof, the porch floor stays, and the roof stops shaping walls and gables under it; requires porch columns, an overlapping shed roof on the same floor, and no existing roof supports; keeps positions, size and column material; one undo step. "
-        "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{roof, part:support}|{level, role}|{building, role}, "
+        "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{roof, part:support}|{roof, part:underside}|{level, role}|{building, role}, "
         "material:{id, color} or null clears override); "
         "accept_proposal (id:'<piece>:proposal'); dismiss_proposal (id:'<piece>:proposal'); "
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "

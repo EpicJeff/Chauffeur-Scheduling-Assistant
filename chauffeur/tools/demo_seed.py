@@ -15,7 +15,7 @@ INVENTED_TEXT = frozenset((
     'Moonkite team practice', 'Cloud orchestra', 'Paper comet workshop', 'Pretend Meadow',
     'Imaginary music loft', 'Make-believe craft studio', 'Moonbeam lantern',
     'Cloud room temperature', 'Cloud room', 'Demo ground', 'Demo cottage', 'Demo hip wing', 'Garden awning',
-    'Ground', 'Living', 'Storage', 'Return moonkite books', 'Collect craft paper',
+    'Ground', 'Living', 'Storage', 'Demo patio', 'Return moonkite books', 'Collect craft paper',
     'Pick up starfruit', 'Pretend market', 'Demo pantry', 'Oat clouds', 'Starfruit',
     'Rainbow pasta', 'Paper napkins', 'Water the moonflowers', 'Sort the craft shelf', 'Moonkite demo panel'))
 

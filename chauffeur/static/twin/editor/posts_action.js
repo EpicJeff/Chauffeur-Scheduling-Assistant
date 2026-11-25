@@ -50,7 +50,7 @@ export function postRoofReason(building, porch, roof) {
   if (!sections.length || sections.some(s=>s.kind!=='shed')) return 'Choose a shed roof; this walled roof is not a shed.';
   const columns=porch.columns, size=columns[0].size;
   if (columns.length>40 || size<.05 || size>3 || columns.some(c=>Math.abs(c.size-size)>1e-8)) return 'The roof needs at most 40 columns of the same size, from 0.05 to 3 feet.';
-  if (columns.some(c=>!coversColumn(roof,sections,c.at))) return 'A column centre is outside the roof perimeter (including overhang; tolerance 0.05 ft).';
+  if (columns.some(c=>!coversColumn(roof,sections,c.at))) return 'A post would be outside the roof.';
   return null;
 }
 

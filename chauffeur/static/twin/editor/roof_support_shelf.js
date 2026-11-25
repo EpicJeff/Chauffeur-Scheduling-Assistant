@@ -1,13 +1,13 @@
 import { SUPPORT_KINDS, isSupported, supportPoints, roofPoint } from '../roof_supports.js';
 import { parseLength } from './selection_fields.js';
-import { SUPPORT_STYLES, normalizeRoofBox, roofEndLabels } from '../roof_box_contract.js';
+import { SUPPORT_STYLES, normalizeRoofBox, roofEndLabels, roofArea } from '../roof_box_contract.js';
 
 const sizes = { bracket: .3, corbel: .5, brace: .45, cable: .08, post: .5 };
 const precise = value => `${Number(value.toFixed(10))} ft`;
 
 // Same geometric choices as the operation: one facing edge per settled wall.
 export function roofHostChoices(roof, building) {
-  const area = roof.area, sign = area.reduce((n, p, i) => { const q = area[(i+1)%area.length]; return n+p[0]*q[1]-p[1]*q[0]; }, 0) > 0 ? 1 : -1;
+  const area = roofArea(roof), sign = area.reduce((n, p, i) => { const q = area[(i+1)%area.length]; return n+p[0]*q[1]-p[1]*q[0]; }, 0) > 0 ? 1 : -1;
   const joints = new Map((building.joints || []).map(j => [j.id, j.at]));
   const candidates = (building.walls || []).flatMap((wall, wi) => {
     if (wall.level !== roof.level || wall.state === 'ghost' || wall.kind === 'separator' || wall.exterior === false) return [];

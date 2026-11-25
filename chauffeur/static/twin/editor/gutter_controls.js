@@ -1,4 +1,5 @@
 import { gutterPlacement, gutterCandidates } from '../gutters.js';
+import { roofArea } from '../roof_box_contract.js';
 export { eaveEdgeIndices as eaveEdges } from '../gutters.js';
 export const gutterSnapshot = gutterPlacement;
 
@@ -42,7 +43,7 @@ export function gutterLocation(plan, buildingId, ref, fraction = null) {
   const owner = gutterOwner(plan, buildingId, ref);
   let label = owner?.name || 'Roof section';
   if (owner?.roof && Number.isInteger(ref.edge)) {
-    const area = owner.roof.area, a = area[ref.edge], b = area[(ref.edge + 1) % area.length];
+    const area = roofArea(owner.roof), a = area[ref.edge], b = area[(ref.edge + 1) % area.length];
     const centre = [0, 1].map(i => area.reduce((n, p) => n + p[i], 0) / area.length);
     const edge = Math.abs(b[0] - a[0]) > Math.abs(b[1] - a[1]) ? (a[1] < centre[1] ? 'front' : 'back') : (a[0] < centre[0] ? 'left' : 'right');
     label += `, ${edge} edge`;
