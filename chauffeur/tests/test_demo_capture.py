@@ -12,7 +12,9 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools' / 'demo_capture.py'
-NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts']
+NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters',
+         'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts',
+         'twin-eave-streams', 'twin-lit-models']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -30,7 +32,14 @@ document.querySelectorAll = selectors => selectors.split(',').map(s=>nodes.get(s
 globalThis.getComputedStyle = () => ({visibility:'visible', display:'block'});
 window.Alpine = {$data: () => ({board:{tiles:[{}]}})};
 window.__editor = {ready:true, selected:()=>({pieceId:'r1',buildingId:'synth-house'})};
-window.__twin = {ready:true, plan:{buildings:[{id:'synth-house'}]}, stats:()=>({triangles:100})};
+window.__twin = {
+  ready:true, plan:{buildings:[{id:'synth-house'}]}, stats:()=>({triangles:100}),
+  eaves:{group:{visible:true}, data:{instances:[{}], pours:[]}},
+  weather:{precip:'rain', rate:1, wetness:1},
+  bake:{fresh:()=>['light.demo_floor_lamp'], models:{stats:()=>({bricks:4})}},
+  state:{time:'night'},
+  levels:{snapshot:()=>({level:'floor'})},
+};
 window.__demoGutterFrame = {run:'demo-run', spout:'demo-spout'};
 for (const shot of input.shots) {
   window.__editor.selected = () => ({pieceId:shot.startsWith('twin-awning-')?'demo-awning':shot==='twin-posts'?'front-porch':'r1',buildingId:'synth-house'});
@@ -48,6 +57,28 @@ for (const shot of input.shots) {
     assert.equal(check({shot,final:true}).ready,false,'posts shot requires the actual action');
     nodes.set('#piece-card button',postsButton);
   }
+  if(shot==='twin-eave-streams') {
+    window.__twin.eaves.data.pours = [{}];
+    assert.equal(check({shot,final:true}).ready,false,'eave-streams shot requires gutters off (no pours)');
+    window.__twin.eaves.data.pours = [];
+    window.__twin.weather.rate = 0;
+    assert.equal(check({shot,final:true}).ready,false,'eave-streams shot requires heavy rain');
+    window.__twin.weather.rate = 1;
+  }
+  if(shot==='twin-lit-models') {
+    window.__twin.bake.fresh = () => [];
+    assert.equal(check({shot,final:true}).ready,false,'lit-models shot requires fresh baked lamp');
+    window.__twin.bake.fresh = () => ['light.demo_floor_lamp'];
+    window.__twin.bake.models.stats = () => ({bricks:0});
+    assert.equal(check({shot,final:true}).ready,false,'lit-models shot requires lit model bricks');
+    window.__twin.bake.models.stats = () => ({bricks:4});
+    window.__twin.state.time = 'day';
+    assert.equal(check({shot,final:true}).ready,false,'lit-models shot requires night clock');
+    window.__twin.state.time = 'night';
+    window.__twin.levels.snapshot = () => ({level:'house'});
+    assert.equal(check({shot,final:true}).ready,false,'lit-models shot requires floor view');
+    window.__twin.levels.snapshot = () => ({level:'floor'});
+  }
   for (const blocker of ['#panel-enrol', '#screen-login', '#pin-modal', '[x-data="adminGate()"] .fixed.inset-0']) {
     nodes.set(blocker,node);
     assert.equal(check({shot,final:true}).blocked, true, shot+' '+blocker);
@@ -58,7 +89,7 @@ for (const shot of input.shots) {
   location.pathname='/account/login';
   assert.equal(check({shot,final:true}).ready,false,shot+' wrong route');
 }
-console.log('all nine surfaces reject visible pairing/sign-in overlays and wrong routes');
+console.log('all eleven surfaces reject visible pairing/sign-in overlays and wrong routes');
 '''
         code, output = run_node(driver, {'root': ROOT.as_posix(), 'guard': SURFACE_STATE, 'shots': NAMES})
         self.assertEqual(code, 0, output)
@@ -81,29 +112,66 @@ console.log('all nine surfaces reject visible pairing/sign-in overlays and wrong
         sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
         from tools.demo_capture import _settle, _ready_evaluate
         from twin_editor_dom import PRELUDE, run_node
-        scripts = []
-        class Recorder:
-            def evaluate(self, source, arg=None):
-                scripts.append([source, arg])
-            def wait_for_function(self, source):
-                scripts.append([source, None])
-        _settle(Recorder(), twin=True)
+        def record(dynamic_weather):
+            scripts = []
+            class Recorder:
+                def evaluate(self, source, arg=None):
+                    scripts.append([source, arg])
+                def wait_for_function(self, source):
+                    scripts.append([source, None])
+            _settle(Recorder(), twin=True, dynamic_weather=dynamic_weather)
+            return scripts
+        strict_scripts = record(False)
+        tolerant_scripts = record(True)
         bounded = []
-        with patch.object(Recorder, 'evaluate', lambda self, source, arg: bounded.append(source)):
-            _ready_evaluate(Recorder(), 'new Promise(() => {})')
+        class BoundRecorder:
+            def evaluate(self, source, arg=None):
+                bounded.append(source)
+        _ready_evaluate(BoundRecorder(), 'new Promise(() => {})')
         driver = PRELUDE + r'''
 document.fonts = {ready:Promise.resolve()};
-window.__twin = {ready:true,stats:()=>({triangles:100}),scene:{},camera:{},renderer3:{
-  info:{programs:[],render:{calls:1,triangles:100}},compileAsync:async()=>{}}};
-globalThis.requestAnimationFrame = callback => setTimeout(callback,1);
-for(const [source,arg] of input.scripts) {
-  const value = new Function('return ('+source+')')();
-  if (typeof value === 'function') await value(arg); else assert.equal(value,true);
+let compileCalls = 0, frameTick = 0, rafAlive = true;
+const makeTwin = (callsFn, trisFn) => ({
+  ready:true, stats:()=>({triangles:100}), scene:{}, camera:{},
+  renderer3:{
+    info:{programs:[1, 2], get render(){ return {calls: callsFn(frameTick), triangles: trisFn(frameTick)}; }},
+    compileAsync:async()=>{ compileCalls++; },
+  },
+});
+globalThis.requestAnimationFrame = callback => { if (rafAlive) setTimeout(() => { if (rafAlive) { frameTick++; callback(); } }, 1); };
+
+async function runScripts(scripts, timeoutOverride = null) {
+  for (const [source, arg] of scripts) {
+    const value = new Function('return (' + source + ')')();
+    if (typeof value === 'function') await value(timeoutOverride ?? arg);
+    else assert.equal(value, true);
+  }
 }
-await assert.rejects(new Function('return ('+input.bounded+')')()(20), /readiness exceeded 20 ms/);
-console.log('actual font/scene/shader readiness scripts settle and time out');
+
+// 1. Strict path settles with exact counts and runs compileAsync.
+window.__twin = makeTwin(() => 100, () => 10000);
+await runScripts(input.strict);
+assert.equal(compileCalls, 1, 'strict _settle must run compileAsync');
+
+// 2. Dynamic-weather path settles under <=2% jitter on calls/triangles and runs compileAsync.
+window.__twin = makeTwin(t => (t % 2 ? 100 : 101), t => (t % 2 ? 10000 : 10150));
+await runScripts(input.tolerant);
+assert.equal(compileCalls, 2, 'dynamic_weather _settle must still run compileAsync');
+
+// 3. Dynamic-weather path rejects >2% draw/triangle swings (must not settle).
+window.__twin = makeTwin(t => (t % 2 ? 100 : 110), () => 10000);
+await assert.rejects(runScripts([input.tolerant[2]], 80), /readiness exceeded 80 ms/);
+
+// 4. Strict path still rejects small 1% jitter (exact signature preserved for existing shots).
+window.__twin = makeTwin(t => (t % 2 ? 100 : 101), () => 10000);
+await assert.rejects(runScripts([input.strict[2]], 80), /readiness exceeded 80 ms/);
+
+await assert.rejects(new Function('return (' + input.bounded + ')')()(20), /readiness exceeded 20 ms/);
+rafAlive = false;
+console.log('actual font/scene/shader readiness scripts settle, enforce 2% tolerance, and run compileAsync');
 '''
-        code, output = run_node(driver, dict(root=ROOT.as_posix(), scripts=scripts, bounded=bounded[0]))
+        code, output = run_node(driver, dict(root=ROOT.as_posix(), strict=strict_scripts,
+                                             tolerant=tolerant_scripts, bounded=bounded[0]))
         self.assertEqual(code, 0, output)
 
     def cli(self, *args):
@@ -111,17 +179,37 @@ console.log('actual font/scene/shader readiness scripts settle and time out');
                               text=True, capture_output=True, timeout=35)
 
     def test_list(self):
+        sys.path.insert(0, str(ROOT))
+        from tools import demo_capture as demo
+        expected = [*demo.SHOTS, *(f'{name} (opt-in)' for name in demo.OPT_IN_SHOTS)]
         result = self.cli('--list')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.splitlines(), NAMES)
+        self.assertEqual(result.stdout.splitlines(), expected)
         self.assertEqual(result.stderr, '')
 
+    def test_opt_in_shots_excluded_from_default(self):
+        sys.path.insert(0, str(ROOT))
+        from tools import demo_capture as demo
+        for name in ('twin-eave-streams', 'twin-lit-models'):
+            self.assertNotIn(name, demo.SHOTS)
+            self.assertIn(name, demo.OPT_IN_SHOTS)
+        with tempfile.TemporaryDirectory() as out, patch.object(demo, 'capture') as cap:
+            self.assertEqual(demo.main(['--out', out]), 0)
+            self.assertEqual(cap.call_args.args[1], list(demo.SHOTS))
+            for name in ('twin-eave-streams', 'twin-lit-models'):
+                cap.reset_mock()
+                self.assertEqual(demo.main(['--out', out, '--shot', name]), 0)
+                self.assertEqual(cap.call_args.args[1], [name])
+
     def test_list_ignores_timeout(self):
+        sys.path.insert(0, str(ROOT))
+        from tools import demo_capture as demo
+        expected = [*demo.SHOTS, *(f'{name} (opt-in)' for name in demo.OPT_IN_SHOTS)]
         for value in ('10', 'abc'):
             with self.subTest(value=value):
                 result = self.cli('--list', '--timeout', value)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout.splitlines(), NAMES)
+                self.assertEqual(result.stdout.splitlines(), expected)
                 self.assertEqual(result.stderr, '')
 
     def test_invalid_timeout(self):
@@ -295,12 +383,13 @@ with demo.isolated_data() as directory:
                patch.object(storage.db,'path',str(out.parent/'decoy.sqlite3')),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()[:-1]),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()+[{'id':'decoy'}])]
-        for case in cases:
-            with case:
-                try: demo._save_still(page,'twin-overview',out,data,True)
-                except RuntimeError as error: assert 'twin-overview:' in str(error)
-                else: raise AssertionError('invalid household admitted')
-            page.screenshot.assert_not_called()
+        for shot in ('twin-overview', 'twin-eave-streams', 'twin-lit-models'):
+            for case in cases:
+                with case:
+                    try: demo._save_still(page,shot,out,data,True)
+                    except RuntimeError as error: assert shot+':' in str(error)
+                    else: raise AssertionError('invalid household admitted for ' + shot)
+                page.screenshot.assert_not_called()
         page.evaluate.return_value=False
         for shot in ('my-day','plan','wall-board'):
             try: demo._save_still(page,shot,out,data)
@@ -504,6 +593,62 @@ except SystemExit:
             result = subprocess.run([sys.executable, '-I', '-B', '-c', code], cwd=ROOT, env=env,
                                     text=True, capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+    def test_demo_furniture_glbs_and_furnish_refuses_real_data(self):
+        code = r'''
+import os, pathlib, sys, tempfile
+sys.path.insert(0, str(pathlib.Path.cwd()))
+from tools import demo_capture as demo
+from tools.demo_seed import demo_furniture_glbs, demo_plan, furnish_demo_room, seed, INVENTED_TEXT, DEMO_LAMP_ENTITY
+
+# 1. Procedural GLBs use only invented vocabulary and have valid GLB headers.
+glbs = demo_furniture_glbs()
+assert set(glbs) == {'sofa', 'coffee_table', 'armchair', 'floor_lamp'}, glbs.keys()
+for key, (label, filename, payload) in glbs.items():
+    assert label in INVENTED_TEXT, label
+    assert filename.endswith('.glb') and payload[:4] == b'glTF'
+
+# 2. Gutters-off plan variant leaves gutters on in default demo_plan().
+default_plan = demo_plan()
+off_plan = demo_plan(gutters_on=False)
+assert sum(bool(e.get('gutter')) for b in default_plan['buildings'] for r in b.get('roofs', []) for e in r['edges']) >= 6
+assert sum(bool(e.get('gutter')) for b in off_plan['buildings'] for r in b.get('roofs', []) for e in r['edges']) == 0
+assert not any(s.get('gutters') for b in off_plan['buildings'] for s in b['roof']['sections'])
+assert not any(p.get('gutter') for b in off_plan['buildings'] for p in b.get('porches', []))
+
+# 3. furnish_demo_room refuses a real/non-demo folder BEFORE importing services, with no writes.
+with tempfile.TemporaryDirectory(prefix='normal_data_') as real_dir:
+    os.environ['CHAUFFEUR_DATA_DIR'] = real_dir
+    try:
+        furnish_demo_room()
+    except RuntimeError as exc:
+        assert 'demo' in str(exc).lower()
+    else:
+        raise AssertionError('furnish_demo_room admitted a non-demo directory')
+    assert list(pathlib.Path(real_dir).iterdir()) == []
+    assert 'services.storage' not in sys.modules, 'furnish imported storage before refusing non-demo dir'
+
+# 4. furnish_demo_room succeeds inside isolated_data() and places all 4 items + lamp fixture.
+with demo.isolated_data() as data:
+    seed()
+    from services import twin_imports, twin_store
+    for key, (_label, filename, payload) in glbs.items():
+        tris = twin_imports._inspect(filename, {filename: payload})
+        assert tris >= 100, (key, tris)
+    assets = furnish_demo_room()
+    assert len(assets) == 4
+    model = twin_store.current_model()
+    main = next(b for b in model['buildings'] if b['id'] == 'synth-house')
+    ids = {item['id'] for item in main.get('items', [])}
+    assert {'demo-sofa', 'demo-coffee-table', 'demo-armchair', 'demo-floor-lamp'} <= ids, ids
+    assert DEMO_LAMP_ENTITY in (model.get('light_fixtures') or {}), model.get('light_fixtures')
+    assert len(model['light_fixtures'][DEMO_LAMP_ENTITY]) == 1
+print('furniture GLBs, gutters-off variant and furnish isolation passed')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
+                                text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

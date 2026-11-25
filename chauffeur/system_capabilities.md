@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1002 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1003 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1003 (2026-11-25): two demo stills and a faster demo capture.**
+
+`tools/demo_capture.py` gains two opt-in shots: `twin-lit-models` (a furnished demo room at night; invented furniture built in code, a lamp and a real lighting bake; needs `--timeout 240`) and `twin-eave-streams` (the demo cottage in heavy rain, gutters off; the stream phase is chosen so every stream reaches the ground). `--list` marks opt-in shots.
+
+The nine default shots take about 94 s, from over 170 s: Playwright was serialising the whole three.js scene returned by `compileAsync`; `_ready_evaluate` now discards the value and still awaits it. The four editor shots share one page, with selection, camera, level, time and scroll reset between shots. The editor's cold start may take 25 s. Isolation guards are unchanged; `furnish_demo_room` refuses any data folder that is not a fresh demo one.
+
+Tests: `test_demo_capture`, `test_demo_isolation`, `test_demo_capture_live`.
 
 **v2.499.1002 (2026-11-25, NOT device-verified): full downspouts where there is room, and one placed anywhere by hand.**
 
