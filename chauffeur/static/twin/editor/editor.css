@@ -129,6 +129,10 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
 /* A card's own action row (Move to + Delete) spans the card like its other full-width rows. */
 .editor-material-actions.editor-card-row { max-width: 100%; width: 100%; }
 .editor-card-row > button { flex: 1 1 0; }
+.editor-downspout-row { border-top: 1px solid var(--editor-line); padding-top: 8px; margin-top: 8px; }
+.editor-downspout-row[data-downspout-last] { border-bottom: 1px solid var(--editor-line); padding-bottom: 8px; margin-bottom: 8px; }
+.editor-downspout-row > label { margin-top: 0; }
+.editor-downspout-note { color: var(--editor-muted); font-size: 11px; margin: 0 0 6px; }
 /* Tool checkboxes use the card's shared labelled row, at button height. */
 .editor-actions > label.editor-material-line { justify-content: flex-start; gap: 6px; margin: 0; min-height: 44px; }
 .editor-actions > label.editor-material-line input[type="checkbox"] { width: auto; min-height: 0; margin: 0; padding: 0; }

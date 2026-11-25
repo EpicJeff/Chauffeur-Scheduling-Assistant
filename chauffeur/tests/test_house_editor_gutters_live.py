@@ -108,7 +108,10 @@ def scenario_enable_gutters_drag_downspout_undo():
         x, y, z = handle['at']
         start = H.screen_of_world(page, x, y, z, BID)
         end_points = [after_enable['area'][handle['edge']], after_enable['area'][(handle['edge'] + 1) % len(after_enable['area'])]]
-        target = [a + .6 * (b - a) for a, b in zip(*end_points)]
+        d0 = (x - end_points[0][0]) ** 2 + (y - end_points[0][1]) ** 2
+        d1 = (x - end_points[1][0]) ** 2 + (y - end_points[1][1]) ** 2
+        target_f, expected_corner = (.98, 1) if d0 < d1 else (.02, 0)
+        target = [a + target_f * (b - a) for a, b in zip(*end_points)]
         end = H.screen_of_world(page, *target, z, BID)
         SHOTS.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(SHOTS / 'gutters-enabled.png'))
@@ -119,7 +122,7 @@ def scenario_enable_gutters_drag_downspout_undo():
             page.mouse.move(*end, steps=12)
             page.mouse.up()
         assert response.value.status == 200, response.value.text()
-        page.wait_for_function("([bid,rid,i])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid).edges[i].downspouts?.some(t=>Math.abs(t-.6)<.01)", arg=[BID, rid, handle['edge']])
+        page.wait_for_function("([bid,rid,i,exp])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid).edges[i].downspouts?.some(t=>typeof t==='number'&&Math.abs(t-exp)<.01)", arg=[BID, rid, handle['edge'], expected_corner])
         page.screenshot(path=str(SHOTS / 'downspout-dragged.png'))
         page.wait_for_function("!document.getElementById('rail-undo').disabled")
         with page.expect_response(lambda r: r.request.method == 'POST' and r.url.split('?')[0].endswith('/revert')) as response:
@@ -179,6 +182,55 @@ def scenario_check_focus_without_test_hooks():
         # editor() asserts no page errors (the TypeError this guards against) on exit.
 
 
+def scenario_drag_downspout_mid_eave_sends_exact():
+    with editor() as page:
+        roof = page.evaluate("bid=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs[0]", BID)
+        rid = roof['id']
+        from test_house_editor_move_to_live import tree_row
+        tree_row(page, rid).locator('[data-scene-select]').click()
+        card = page.locator('#piece-card')
+        with page.expect_response(lambda r: r.request.method == 'POST' and r.url.split('?')[0].endswith('/editor/op')) as response:
+            card.get_by_role('button', name='Gutters on all eaves', exact=True).click()
+        assert response.value.status == 200, response.value.text()
+        page.wait_for_function("([bid,rid])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid).edges.some(e=>e.gutter)", arg=[BID, rid])
+        page.click('#dock-tab-scene')
+        page.locator('#scene-floor-actions').get_by_role('button', name='All floors', exact=True).click()
+        page.wait_for_function("window.__twin.ready && window.__twin.state.view === 'ext'")
+        after_enable = page.evaluate("([bid,rid])=>window.__twin.plan.buildings.find(b=>b.id===bid).roofs.find(r=>r.id===rid)", [BID, rid])
+        frame_roof(page, rid)
+        handle = page.evaluate("window.__twinEditor.handles().find(h=>h.kind==='downspout')")
+        assert handle, 'selected guttered roof must have a downspout handle'
+        x, y, z = handle['at']
+        start = H.screen_of_world(page, x, y, z, BID)
+        end_points = [after_enable['area'][handle['edge']], after_enable['area'][(handle['edge'] + 1) % len(after_enable['area'])]]
+        target = [a + .5 * (b - a) for a, b in zip(*end_points)]
+        end = H.screen_of_world(page, *target, z, BID)
+        sent = []
+        def intercept(route):
+            if route.request.method == 'POST':
+                sent.append(route.request.post_data_json)
+            route.continue_()
+        page.route('**/editor/op', intercept)
+        try:
+            H._on_canvas(page, *start)
+            with page.expect_response(lambda r: r.request.method == 'POST' and r.url.split('?')[0].endswith('/editor/op')):
+                page.mouse.move(*start)
+                page.mouse.down()
+                page.mouse.move(*end, steps=12)
+                page.mouse.up()
+        finally:
+            page.unroute('**/editor/op', intercept)
+        assert len(sent) == 1, sent
+        body = sent[0]
+        op = body.get('op') if isinstance(body.get('op'), dict) else body
+        assert op.get('op') == 'set_roof_edge', body
+        assert op.get('edge') == handle['edge'], body
+        exact_entries = [e for e in (op.get('downspouts') or []) if isinstance(e, dict) and set(e.keys()) == {'at'}]
+        assert exact_entries, f'expected exact {{at: ...}} entry in {body}'
+        assert any(abs(e['at'] - .5) < .05 for e in exact_entries), body
+
+
 if __name__ == '__main__':
     print(f'screenshots: {SHOTS}')
-    H.run([scenario_enable_gutters_drag_downspout_undo, scenario_check_focus_without_test_hooks])
+    H.run([scenario_enable_gutters_drag_downspout_undo, scenario_check_focus_without_test_hooks,
+           scenario_drag_downspout_mid_eave_sends_exact])

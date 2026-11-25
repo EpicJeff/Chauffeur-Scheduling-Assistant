@@ -22,7 +22,7 @@ import { drawSiteShapeShelf, yardRoomFeatures } from './site_shape_shelf.js';
 import { propertyPath } from './dock.js';
 import { drawPostsAction } from './posts_action.js';
 import { drawMoveToButton } from './move_to_action.js';
-import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout, gutterLocation } from './gutter_controls.js';
+import { gutterSnapshot, eaveEdges, edgeOperation, downspoutValues, addDownspout, gutterLocation, isExact, entryFraction, placedFraction, nearestFreeCandidate, roundAt, sameDownspoutEntry, isMergedEntry } from './gutter_controls.js';
 
 const report = error => {
   if (!error.shown && !error.cancelled) window.showGlobalAlert(error.message || 'Could not save this change.');
@@ -460,15 +460,18 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
       if (!canEdit()) return;
       pending = pending.then(async () => {
         if (!canEdit()) return;
-        const current = getPlan().buildings.find(b => b.id === building)?.roofs.find(r => r.id === roof.id);
+        const planNow = getPlan();
+        const resolved = typeof change === 'function' ? change(planNow) : change;
+        if (!resolved) return;
+        const current = planNow.buildings.find(b => b.id === building)?.roofs.find(r => r.id === roof.id);
         const operation = fields => edgeOperation(building, roof.id, index, fields);
-        if (current?.edges?.[index]?.gutter && ['gable', 'clip'].includes(change.setting)) {
+        if (current?.edges?.[index]?.gutter && ['gable', 'clip'].includes(resolved.setting)) {
           if (!await window.promptConfirm('Remove this gutter?', "Changing this edge removes its gutter and its downspout overrides.", 'Remove and change', 'Cancel')) return;
           if (!canEdit()) return;
-          return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: null }), operation(change)] });
+          return op({ op: 'batch', ops: [operation({ gutter: false, downspouts: null }), operation(resolved)] });
         }
         // Pitch-only writes still include the current setting for the op contract.
-        return op(operation('pitch' in change ? { setting: current?.edges?.[index]?.setting || edge.setting, ...change } : change));
+        return op(operation('pitch' in resolved ? { setting: current?.edges?.[index]?.setting || edge.setting, ...resolved } : resolved));
       }).catch(report).finally(() => { layout = null; draw(); });
       return pending;
     };
@@ -478,34 +481,93 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     }
     if (eaveEdges(record.building, roof).includes(index)) gutterToggle(!!edge.gutter, gutter => save({ gutter }));
     if (edge.gutter) {
-      const runs = gutterSnapshot(getPlan()).runs.filter(r => r.building === building && r.segments.some(s => s.roof === roof.id && s.edge === index));
+      const snapshot = gutterSnapshot(getPlan());
+      const runs = snapshot.runs.filter(r => r.building === building && r.segments.some(s => s.roof === roof.id && s.edge === index));
       for (const run of runs) {
         const note = document.createElement('p'); note.textContent = gutterLocation(getPlan(), building, { roof: roof.id, edge: index }); note.dataset.gutterRun = run.id; host.append(note);
       }
-      const values = downspoutValues(getPlan(), building, roof.id, index);
-      const add = button('Add downspout', () => {
-        const next = addDownspout(getPlan(), building, roof.id, index);
-        if (next) return save({ downspouts: next });
-      });
-      const next = addDownspout(getPlan(), building, roof.id, index);
+      const values = downspoutValues(getPlan(), building, roof.id, index, snapshot);
+      const add = button('Add downspout', () => save(planNow => {
+        const next = addDownspout(planNow, building, roof.id, index);
+        return next ? { downspouts: next } : null;
+      }));
+      const next = addDownspout(getPlan(), building, roof.id, index, snapshot);
       add.disabled = !canEdit() || !next;
-      if (!next) add.title = values.length >= 8 ? 'At most 8 downspouts per edge.' : 'No free safe corner on this edge.';
+      if (!next) add.title = values.length >= 8 ? 'At most 8 downspouts per edge.' : 'No open space at least 1 ft from existing downspouts on this edge.';
       host.append(add, button('Reset to automatic', () => save({ downspouts: null })));
       // Numeric hand path also exposes overrides that placement has merged.
-      values.forEach((fraction, i) => {
+      const drawnLength = values.length;
+      values.forEach((entry, i) => {
+        const fraction = entryFraction(entry), exact = isExact(entry);
+        const captured = exact ? { at: entry.at } : entry;
+        const resolveRow = next => next.length === drawnLength ? (i < next.length ? i : -1)
+          : next.findIndex(v => sameDownspoutEntry(v, captured));
+        const row = document.createElement('div');
+        row.className = 'editor-downspout-row';
+        row.dataset.downspoutRow = String(i);
+        row.dataset.downspoutKind = exact ? 'exact' : 'corner';
+        if (i === values.length - 1) row.dataset.downspoutLast = '';
         const label = document.createElement('label'); label.textContent = `Downspout ${i + 1} fraction`;
         const input = document.createElement('input'); input.type = 'number'; input.min = '0'; input.max = '1'; input.step = 'any';
         input.value = fraction; input.dataset.edgeBaseline = String(fraction); input.disabled = !canEdit(); input.setAttribute('aria-label', label.textContent);
         input.addEventListener('change', () => {
           const value = Number(input.value);
           if (!input.value.trim() || !Number.isFinite(value) || value < 0 || value > 1) { report(new Error('Choose a fraction from 0 to 1.')); return; }
-          const next = downspoutValues(getPlan(), building, roof.id, index); next[i] = value;
           input.dataset.edgeBaseline = String(input.value);
-          save({ downspouts: next });
+          save(planNow => {
+            const next = downspoutValues(planNow, building, roof.id, index);
+            const idx = resolveRow(next);
+            if (idx < 0) return null;
+            next[idx] = isExact(next[idx]) ? { at: roundAt(value) } : value;
+            return { downspouts: next };
+          });
         });
-        label.append(input); host.append(label, button(`Remove downspout ${i + 1}`, () => {
-          const next = downspoutValues(getPlan(), building, roof.id, index); next.splice(i, 1); return save({ downspouts: next });
+        label.append(input); row.append(label);
+        if (exact) {
+          const placedNote = document.createElement('p');
+          placedNote.className = 'editor-downspout-note';
+          placedNote.textContent = 'Placed by hand';
+          row.append(placedNote);
+        }
+        const actions = document.createElement('div');
+        actions.className = 'editor-material-actions editor-card-row';
+        const snapTarget = exact ? nearestFreeCandidate(getPlan(), building, roof.id, index, fraction, i, snapshot) : null;
+        const merged = !exact && isMergedEntry(getPlan(), building, roof.id, index, i, entry, snapshot);
+        const convert = exact
+          ? button('Snap to a corner', () => save(planNow => {
+            const next = downspoutValues(planNow, building, roof.id, index);
+            const idx = resolveRow(next);
+            if (idx < 0) return null;
+            const target = nearestFreeCandidate(planNow, building, roof.id, index, entryFraction(next[idx]), idx);
+            if (target === null) return null;
+            next[idx] = target;
+            return { downspouts: next };
+          }))
+          : button('Keep exactly here', () => save(planNow => {
+            const next = downspoutValues(planNow, building, roof.id, index);
+            const idx = resolveRow(next);
+            if (idx < 0 || isMergedEntry(planNow, building, roof.id, index, idx, next[idx])) return null;
+            next[idx] = { at: roundAt(placedFraction(planNow, building, roof.id, index, idx, next[idx])) };
+            return { downspouts: next };
+          }));
+        convert.setAttribute('aria-label', `${exact ? 'Snap to a corner' : 'Keep exactly here'} for downspout ${i + 1}`);
+        if (exact) {
+          convert.disabled = !canEdit() || snapTarget === null;
+          if (snapTarget === null) convert.title = 'No free corner on this edge.';
+        } else if (merged) {
+          convert.disabled = true;
+          convert.title = 'This downspout shares an outlet with another one.';
+        }
+        const removeBtn = button(`Remove downspout ${i + 1}`, () => save(planNow => {
+          const next = downspoutValues(planNow, building, roof.id, index);
+          const idx = resolveRow(next);
+          if (idx < 0) return null;
+          next.splice(idx, 1);
+          return { downspouts: next };
         }));
+        removeBtn.setAttribute('aria-label', `Remove downspout ${i + 1}`);
+        actions.append(convert, removeBtn);
+        row.append(actions); host.append(row);
       });
     }
     const label = document.createElement('label'); label.textContent = 'Pitch';

@@ -15,7 +15,7 @@ import { roundPit, firePitOutline } from '../fire_pits.js';
 import { HANDLE_HIT_PX } from './picking.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
-import { gutterSnapshot, downspoutValues, downspoutIndex, edgeOperation } from './gutter_controls.js';
+import { gutterSnapshot, downspoutValues, downspoutIndex, edgeOperation, freeCandidates, snapOrExact, entryFraction, isExact, sameDownspoutEntry } from './gutter_controls.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -150,13 +150,18 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       add('roof_height', roof.id, [...centre, roof.plate], roof.level, { offset: [0, -32] });
     }
     if (roof && roof.state !== 'ghost' && roof.edges.some(e => e.gutter)) {
-      const snapshot = gutterSnapshot(gesture?.handle.kind === 'downspout' ? gesture.source : getPlan());
+      const snapshot = gesture?.handle.kind === 'downspout' ? gesture.snapshot : gutterSnapshot(getPlan());
       const runs = new Set(snapshot.runs.filter(r => r.building === building.id).map(r => r.id));
       for (const spout of snapshot.spouts) {
         if (!runs.has(spout.run) || spout.edge.roof !== roof.id || !Number.isInteger(spout.edge.edge)) continue;
         const at = local(building, new THREE.Vector3(...spout.top)).toArray();
         if (gesture?.handle.spout === spout.id && gesture.point) at.splice(0, 2, ...gesture.point);
-        add('downspout', roof.id, at, roof.level, { edge: spout.edge.edge, fraction: spout.authoredFraction ?? spout.edge.fraction, spout: spout.id, run: spout.run });
+        add('downspout', roof.id, at, roof.level, {
+          edge: spout.edge.edge, fraction: spout.authoredFraction ?? spout.edge.fraction,
+          placedFraction: spout.edge.fraction, exact: !!spout.exact,
+          ...(Number.isInteger(spout.authoredIndex) ? { authoredIndex: spout.authoredIndex } : {}),
+          spout: spout.id, run: spout.run,
+        });
       }
     }
     const dormer = building.dormers?.find(d => selected.kind === 'dormer' && d.id === selected.id);
@@ -243,9 +248,42 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (handle.kind === 'downspout') {
       const piece = building.roofs.find(r => r.id === handle.id), normal = [0, 0, 1];
       const start = onPlane(event, building, handle.at, normal); if (!start) return false;
-      const values = downspoutValues(source, building.id, piece.id, handle.edge);
-      gesture = { handle, source, building, piece, normal, start, values,
-        index: downspoutIndex(values, handle.fraction), operation: null }; return true;
+      const snapshot = gutterSnapshot(source);
+      const values = downspoutValues(source, building.id, piece.id, handle.edge, snapshot);
+      const index = downspoutIndex(values, handle.fraction, handle.authoredIndex);
+      const { a, b, length, axis } = roofEdge(piece, handle.edge), d = b.map((v, i) => v - a[i]), len2 = d[0] ** 2 + d[1] ** 2 || 1;
+      const tOf = p => ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / len2;
+      const rest = Number.isFinite(handle.placedFraction) ? handle.placedFraction : Math.max(0, Math.min(1, tOf(handle.at)));
+      const handleT = tOf(handle.at), startT = tOf(start);
+      const rel = [handle.at[0] - a[0], handle.at[1] - a[1]], along = rel[0] * axis[0] + rel[1] * axis[1];
+      const perp = [rel[0] - along * axis[0], rel[1] - along * axis[1]];
+      const candidates = freeCandidates(source, building.id, piece.id, handle.edge, {
+        snapshot, excludeIndex: index, ownFraction: handle.exact ? null : rest,
+      });
+      const endPoints = snapshot.runs.filter(r => r.building === building.id).flatMap(r => (r.segments || [])
+        .filter(s => s.roof === piece.id && s.edge === handle.edge && Array.isArray(s.a) && Array.isArray(s.b))
+        .flatMap(s => [s.a, s.b].map(p => local(building, new THREE.Vector3(...p)).toArray())));
+      const dripFor = f => {
+        let bestEnd = null, bestGap = 1e-4;
+        for (const p of endPoints) {
+          const gap = Math.abs(Math.max(0, Math.min(1, tOf(p))) - f);
+          if (gap < bestGap) { bestGap = gap; bestEnd = p; }
+        }
+        if (!bestEnd) return null;
+        const cAlong = (bestEnd[0] - a[0]) * axis[0] + (bestEnd[1] - a[1]) * axis[1];
+        return [a[0] + axis[0] * cAlong + perp[0], a[1] + axis[1] * cAlong + perp[1]];
+      };
+      const candidatePoints = new Map();
+      for (const c of candidates)
+        candidatePoints.set(c.fraction, dripFor(c.fraction) || [a[0] + axis[0] * (c.fraction * length) + perp[0], a[1] + axis[1] * (c.fraction * length) + perp[1]]);
+      const endDrip = new Map();
+      for (const endF of [0, 1]) {
+        const pt = dripFor(endF);
+        if (pt) endDrip.set(endF, pt);
+      }
+      gesture = { handle, source, snapshot, building, piece, normal, start, values, candidates, candidatePoints, endDrip,
+        index, original: index >= 0 ? values[index] : undefined, rest, handleT, startT, perp, operation: null };
+      return true;
     }
     if (handle.kind === 'stair_end') {
       const piece = building.stairs.find(s => s.id === handle.id), normal = [0, 0, 1];
@@ -344,12 +382,27 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now()-started); return;
     }
     if (handle.kind === 'downspout') {
-      const a = piece.area[handle.edge], b = piece.area[(handle.edge + 1) % piece.area.length], d = b.map((v, i) => v - a[i]);
-      const fraction = Math.max(0, Math.min(1, d.reduce((n, v, i) => n + (point[i] - a[i]) * v, 0) / (d[0] ** 2 + d[1] ** 2 || 1)));
-      const values = [...g.values];
-      if (g.index < 0) { if (values.length >= 8) return; values.push(fraction); } else values[g.index] = fraction;
-      g.operation = edgeOperation(building.id, piece.id, handle.edge, { downspouts: values });
-      g.point = a.map((v, i) => v + fraction * d[i]);
+      const { a, b } = roofEdge(piece, handle.edge), d = b.map((v, i) => v - a[i]), len2 = d[0] ** 2 + d[1] ** 2 || 1;
+      const pointerT = ((point[0] - a[0]) * d[0] + (point[1] - a[1]) * d[1]) / len2;
+      const rawFraction = Math.max(0, Math.min(1, g.handleT + pointerT - g.startT));
+      const entry = snapOrExact(g.source, building.id, piece.id, handle.edge, rawFraction, g.candidates);
+      const unchanged = sameDownspoutEntry(entry, g.original)
+        || (typeof g.original === 'number' && typeof entry === 'number' && Math.abs(entry - g.rest) < 1e-6);
+      if (unchanged) {
+        g.operation = null;
+      } else {
+        const values = g.values.map(v => typeof v === 'object' && v ? { ...v } : v);
+        if (g.index < 0) { if (values.length >= 8) return; values.push(entry); } else values[g.index] = entry;
+        g.operation = edgeOperation(building.id, piece.id, handle.edge, { downspouts: values });
+      }
+      if (typeof entry === 'number' && g.candidatePoints.has(entry)) {
+        g.point = g.candidatePoints.get(entry);
+      } else if (isExact(entry) && (entry.at === 0 || entry.at === 1) && g.endDrip.has(entry.at)) {
+        g.point = g.endDrip.get(entry.at);
+      } else {
+        const displayFraction = entryFraction(entry);
+        g.point = [a[0] + displayFraction * d[0] + g.perp[0], a[1] + displayFraction * d[1] + g.perp[1]];
+      }
       // Only move the screen handle during the gesture; placement/roof geometry
       // rebuild once on release, through the normal editor operation path.
       refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
@@ -549,7 +602,8 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
   async function removeAt(event) {
     if (!canEdit() || gesture) return false;
     const handle = hit(event); if (handle?.kind !== 'downspout') return false;
-    const values = downspoutValues(getPlan(), handle.building, handle.id, handle.edge), index = downspoutIndex(values, handle.fraction);
+    const values = downspoutValues(getPlan(), handle.building, handle.id, handle.edge);
+    const index = downspoutIndex(values, handle.fraction, handle.authoredIndex);
     if (index >= 0) values.splice(index, 1);
     await onCommit(edgeOperation(handle.building, handle.id, handle.edge, { downspouts: values }));
     refresh(); return true;
@@ -565,7 +619,8 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       return [...rows.map(({ handle }) => handle).filter(h => h.kind !== 'roof_edge' && !h.kind.startsWith('dormer_')), ...roof]
         .map(handle => ({ kind: handle.kind, id: handle.id, at: [...handle.at],
           ...(handle.offset ? { offset: [...handle.offset] } : {}),
-          ...(handle.kind === 'downspout' ? { building: handle.building, edge: handle.edge, spout: handle.spout } : {}) }));
+          ...(handle.kind === 'downspout' ? { building: handle.building, edge: handle.edge, spout: handle.spout,
+            ...(Number.isInteger(handle.authoredIndex) ? { authoredIndex: handle.authoredIndex } : {}) } : {}) }));
     },
     clearDragFrame() { lastFrameMs = null; drag.clearDragFrame?.(); },
     get lastDragFrameMs() { return lastFrameMs ?? drag.lastDragFrameMs; } };
