@@ -303,6 +303,7 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     g.changed = Object.entries(change).some(([k, v]) => !same(v, piece[k] ?? (k === 'rotation' || k === 'rotation_deg' ? 0 : k === 'scale' ? 1 : k === 'scale_axes' ? [1, 1, 1] : undefined)));
     if (r.post) {
       const half = (piece.size ?? 0.5) / 2;
+      view.rebuildLevel(r.building.id, r.level, preview, { columns: [piece.id] }, {postPreview:true});
       const box = [[next.at[0] - half, next.at[1] - half], [next.at[0] + half, next.at[1] - half], [next.at[0] + half, next.at[1] + half], [next.at[0] - half, next.at[1] + half], [next.at[0] - half, next.at[1] - half]];
       const outline = box.map(p => project(r.building, [...p, c[2]])).filter(Boolean);
       document.getElementById('editor-drag-outline')?.setAttribute('points', outline.map(p => p.join(',')).join(' '));
@@ -326,11 +327,12 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     gesture = null; preview = null; typed.hide();
     view.previewSelectionBox?.(null);
     document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+    let committed = false;
     try { if (!cancel && canEdit() && g.changed && g.operation?.op === 'batch') await applyBatch(g.operation.ops, { drag: true, local: applyLocal(getPlan(), g.operation)?.plan });
       else if (!cancel && canEdit() && g.changed) await op(g.operation, { drag: true,
-      ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); }
+      ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); committed = true; }
     finally {
-      if (g.record.building && !g.record.roof && !g.record.post) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list]: [g.record.piece.id] });
+      if (g.record.building && !g.record.roof && (!g.record.post || cancel || !committed)) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list || 'columns']: [g.record.piece.id] });
       onPreview?.(getPlan()); draw();
     }
   }

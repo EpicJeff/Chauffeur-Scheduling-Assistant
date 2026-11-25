@@ -201,14 +201,12 @@ export async function boot() {
     },
     onChange(change) {
       syncSaveState();
-      const rebuild = rollback || change.dropped.length > 0;
       rollback = false;
       if (!pushing && optimistic && change.plan && JSON.stringify(change.plan) !== lastScene) {
         sceneWork = sceneWork.catch(report).then(async () => {
           const plan = queue.shown(), signature = JSON.stringify(plan);
           if (signature === lastScene) return;
-          if (rebuild) await view?.rebuild(plan);
-          else await settleView(plan, {});
+          await settleView(plan, {});
           lastScene = signature;
           tools?.refresh(); library?.refresh();
         });
@@ -244,7 +242,7 @@ export async function boot() {
     const piece = ['walls', 'rooms', 'openings', 'joints', 'anchors', 'items']
       .flatMap(list => building?.[list] || []).find(p => p.id === id);
     const result = await view.settle(plan, { buildingId, levelId: info.levelId ?? piece?.level ?? null,
-      touched: info.touched ?? null, selection });
+      touched: info.touched ?? null, selection, timing: info.timing ?? null });
     if (result.selection !== selection) tools?.select(result.selection);
     return result;
   }
@@ -472,7 +470,7 @@ export async function boot() {
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     const changed = signature !== lastScene;
     if (view && changed) {
-      await view.rebuild(plan, { timing });
+      await settleView(plan, { timing });
       view.scene.background?.set?.('#171e27');
       lastScene = signature;
       // The first view of the house: from the street, past the yard's plants (M3).

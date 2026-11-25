@@ -400,6 +400,7 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       preview = structuredClone(g.source);
       const nextPost = findPost(preview.buildings.find(b => b.id === building.id), g.post.id);
       if (nextPost) nextPost.piece.at = [...at];
+      view.rebuildLevel(building.id, handle.level, preview, { columns: [g.post.id] }, {postPreview:true});
       const half = (g.post.piece.size ?? 0.5) / 2;
       const box = [[at[0] - half, at[1] - half], [at[0] + half, at[1] - half], [at[0] + half, at[1] + half], [at[0] - half, at[1] + half], [at[0] - half, at[1] - half]];
       document.getElementById('editor-drag-outline')?.setAttribute('points', box.map(p => project(building, [...p, handle.at[2]])).filter(Boolean).map(p => p.join(',')).join(' '));
@@ -593,9 +594,11 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       document.getElementById('editor-drag-outline')?.setAttribute('points', '');
       const saving = !cancel && canEdit() && g.operation;
       if (saving) preview = released;
-      try { if (saving) await onCommit(g.operation); }
+      let committed = false;
+      try { if (saving) { await onCommit(g.operation); committed = true; } }
       finally {
         if (saving && preview === released) preview = null;
+        if (!committed) view.rebuildLevel(g.building.id, g.handle.level, getPlan(), { columns: [g.post.id] });
         onPreview?.(plan(), getSelection()); refresh();
       }
       return;

@@ -20,6 +20,35 @@ from twin_editor_dom import PRELUDE, run_node
 
 
 class PostsJS(unittest.TestCase):
+    def test_fix4_local_settle_cover_cache_and_tint_cost(self):
+        from test_twin_view_settle_js import PREFIX
+        code,out=run_node(PREFIX+r"""
+globalThis.generations=0;globalThis.bakeStarts=0;globalThis.yardCalls=0;globalThis.__THREE_MESH=T.Mesh;globalThis.__THREE_BOX=T.BoxGeometry;globalThis.__THREE_STD=T.MeshStandardMaterial;
+const {applyLocal}=await import(file('static/twin/editor/local_ops.js'));
+try {
+ const base=input.plan,b=base.buildings.find(b=>b.porches?.some(p=>p.columns?.length&&!p.screened)),porch=b.porches.find(p=>p.columns?.length&&!p.screened),id=porch.columns[0].id||`post:${porch.id}:0`,key=b.id+':'+id;
+ const host=new Element(),shell=new Element();shell.className='editor-shell';shell.append(host);
+ const v=await mountTwin(host,{plan:base,kit,tier:'high',bake:false});
+ try {
+  const initial=lastTwin,original=initial.pieceBounds.get(key).box.clone();let calls=0,compiles=0;
+  const rebuild=v.rebuild.bind(v);v.rebuild=(...args)=>{calls++;return rebuild(...args);};v.compileModelMaterials=()=>{compiles++;return Promise.resolve();};
+  v.setSelection({selected:{kind:'porch_post',id,building:b.id}});await v.selectionReady;assert.equal(compiles,0,'plain tint never compiles');
+  const operation={op:'update_porch_post',building:b.id,porch:porch.id,post:id,at:[porch.columns[0].at[0]+.125,porch.columns[0].at[1]],size:.75};
+  const next=applyLocal(base,operation).plan;
+  assert.equal((await v.settle(next)).path,'deform');assert.equal(calls,0);assert.equal(lastTwin,initial);
+  const fresh=buildTwin(next,kit,'high',{viewing:false});await fresh.ready;
+  const actual=v.roofSurfaces.get(b.id).slabPositions,expected=fresh.roofSurfaces.get(b.id).slabPositions;
+  assert.equal(actual.length,expected.length,'slab cover retains every fresh-build triangle');
+  const triangles=values=>{const rows=[];for(let i=0;i<values.length;i+=9)rows.push(values.slice(i,i+9).map(v=>Math.round(v*1e4)).join(','));return rows.sort();};
+  assert.deepEqual(triangles(actual),triangles(expected),'cover equals a fresh build after local settle');
+  assert.ok(!lastTwin.pieceBounds.get(key).box.equals(original));
+  await rebuild(base);assert.ok(lastTwin.pieceBounds.get(key).box.equals(original),'explicit original rebuild cannot reuse moved cached geometry');
+  await v.settle(next);await v.settle(base);assert.ok(lastTwin.pieceBounds.get(key).box.equals(original),'refused rollback / history jump restores original post');
+ } finally {v.dispose();}
+} catch(error){console.error(error);process.exit(1);} finally {finish();}
+""", {"root":ROOT.as_posix(),"plan":bridge.flatten(household()),"kit":__import__('services.twin_library',fromlist=['kit']).kit('modern_farmhouse')},timeout=180)
+        self.assertEqual(code,0,out)
+
     def run(self, result=None):
         start=time.monotonic()
         try:return super().run(result)
@@ -41,7 +70,7 @@ try{
  v.setSelection({selected:{kind:'porch_post',id,building:bid,level:'L1'}});await v.selectionReady;checkTint();
  v.setSelection({selected:null});for(const row of saved){assert.equal(row.o.material,row.material);assert.equal(JSON.stringify(row.o.geometry.groups),row.groups);}
  v.setSelection({selected:null,hover:{kind:'porch_post',id,building:bid,level:'L1'}});for(const row of saved)assert.equal(row.o.material,row.material,'hover cannot tint the entire batch');v.setSelection({selected:null});
- await v.rebuild(explicit);initial=lastTwin;let current=explicit;
+ await v.rebuild(explicit);initial=lastTwin;let current=explicit;v.setSelection({selected:{kind:'porch_post',id,building:bid}});await v.selectionReady;const selectedLine=()=>v.scene.getObjectsByProperty('type','LineSegments').find(o=>o.userData.selectionKey===bid+':'+id);const line=selectedLine();assert.ok(line);
  for(const change of [{at:[4,5]},{size:1.25},{at:[7,2],size:.5}]){
   const next=structuredClone(current);Object.assign(next.buildings[0].porches[0].columns[0],change);
   const proxy=lastTwin.pickObjects.get(bid+':'+id),arrays=new Map((lastTwin.pieces.get(bid+':'+id)||[]).map(o=>[o,o.geometry.attributes.position.array]));

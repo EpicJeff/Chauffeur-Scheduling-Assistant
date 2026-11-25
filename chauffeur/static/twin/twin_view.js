@@ -164,6 +164,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   scene.add(sky.object);
   let twin = null, disposed = false, revision = 0, bakeSignature = null;
   let generatedPorches = new Map(), generatedColumns = new Map();
+  const pendingPostCover = new Set();
   const porchGeometry = building => {
     const porches=allPorches(building),ids=new Set(porches.map(p=>p.id));
     return JSON.stringify([
@@ -270,7 +271,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
     selectionPiecesRevision = twin.pieces.revision;
-    const tints = members.filter(m => !['room','porch','level'].includes(m.kind)).flatMap(m => {
+    const tints = members.filter(m => (m.building ?? m.buildingId) != null && !['room','porch','level'].includes(m.kind)).flatMap(m => {
       const id=m.id ?? m.pieceId, building=m.building ?? m.buildingId ?? null;
       const ids=m.kind === 'roof' ? [id,...(plan.buildings?.find(b=>b.id===building)?.roof?.sections || []).filter(s=>s.roof===id).map(s=>s.id)] : [id];
       return ids.map(pieceId=>({kind:m.kind,building,pieceId}));
@@ -362,8 +363,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
     }
     const bldg = buildingId ? plan.buildings.find(b => b.id === buildingId) : null;
-    const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === buildingId
-      && (data.pieceId === id || pick.kind === 'building'
+    const broad = ['building','roof','level'].includes(pick.kind);
+    const ownKey = `${buildingId}:${id}`, own = !broad && buildingId != null ? twin.pieceBounds.get(ownKey) : null;
+    const keys = own ? [[ownKey,own]] : !broad && buildingId != null ? [] : [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === buildingId
+      && (data.pieceId === id || pick.kind === 'building' && data.kind !== 'porch_post'
         || (pick.kind === 'roof' && bldg?.roof?.sections?.find(s => s.id === data.pieceId)?.roof === id)
         || pick.kind === 'level'
           && bldg?.levels.some(l => l.id === id)
@@ -1343,7 +1346,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
     },
-    rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false } = {}) {
+    rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false, postPreview = false } = {}) {
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after) return;
@@ -1581,6 +1584,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           for(const {object} of proxy.userData.partObjects || [])object.geometry.copy(fresh || new THREE.BufferGeometry());
           changedPieces.add(key);if(expanded!==fresh)expanded.dispose();fresh?.dispose();
         }
+        generate.refreshCover(porch);
       }
       for (const list of ['openings', 'anchors', 'items']) {
         const piecesBefore = new Map((before[list] || []).map(p => [p.id, p]));
@@ -1618,12 +1622,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
-      refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId);
-      twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
-      writeWeatherOpen(twin.root, twin.skyCover);
+      const postsChanged = [...changedPieces].some(key => twin.pieceBounds.get(key)?.data.kind === 'porch_post');
+      const postsOnly = postsChanged && [...changedPieces].every(key => twin.pieceBounds.get(key)?.data.kind === 'porch_post');
+      if (postPreview && postsOnly) pendingPostCover.add(buildingId);
+      else if (changedPieces.size || pendingPostCover.has(buildingId)) {
+        refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId,
+          {postsOnly: postsOnly || !changedPieces.size && pendingPostCover.has(buildingId)});
+        twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
+        writeWeatherOpen(twin.root, twin.skyCover);
+        pendingPostCover.delete(buildingId);
+      }
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
-      if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
+      if (twin.buildings?.has(buildingId) && (!keep || postsChanged)) twin.buildings.get(buildingId).model.stale = true;
       for (const line of selectionLines) {
         const key = line.userData.selectionKey;
         if (!changedPieces.has(key)) continue;
@@ -1641,14 +1652,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
-    async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null } = {}) {
-      const identityJSON = value => JSON.stringify(value, function(key,value) {
-        return key === 'columns' && Array.isArray(value) ? value.map((c,i) => {
-          if (c.id !== `post:${this.id}:${i}`) return c;
-          const {id,...post} = c; return post;
-        }) : value;
-      });
-      const beforePlan = plan, same = (a, b) => identityJSON(a) === identityJSON(b);
+    async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null, timing = null } = {}) {
+      const beforePlan = plan, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const columnKey = rows => JSON.stringify(rows.map(p => [p.id,(p.columns || []).map((c,i) => [postRef(p,i),c.at,c.size])]));
       const previous = new Map((beforePlan.buildings || []).map(b => [b.id, b]));
       const onLevel = (b, list, id) => (b[list] || []).filter(p =>
         (p.level || b.walls?.find(w => w.id === (p.wall || p.host?.wall))?.level
@@ -1667,7 +1673,6 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           if (twin?.buildings?.has(after.id)) twin.buildings.get(after.id).model.stale = true;
         }
         const priorColumns=generatedColumns.get(after.id) || [], posts=allPorches(after);
-        const columnKey=rows=>JSON.stringify(rows.map(p=>[p.id,(p.columns || []).map((c,i)=>[postRef(p,i),c.at,c.size])]));
         if(columnKey(priorColumns)!==columnKey(posts)) {
           const oldIds=priorColumns.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
           const newIds=posts.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
@@ -1677,7 +1682,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
             if(old && model && model.screenKey(old)!==model.screenKey(porch))regenerate=true;
             const level=after.rooms.find(r=>r.id===porch.id)?.level || porch.level || after.levels[0]?.id;
             const shown=allPorches(previous.get(after.id) || {}).find(p=>p.id===porch.id);
-            if(level && !same(shown?.columns,porch.columns) && !changed.some(c=>c.buildingId===after.id && c.levelId===level))changed.push({buildingId:after.id,levelId:level});
+            if(level && (!same(shown?.columns,porch.columns) || pendingPostCover.has(after.id)) && !changed.some(c=>c.buildingId===after.id && c.levelId===level))changed.push({buildingId:after.id,levelId:level});
           }
           nextGutters ||= gutterPlacement(nextPlan);
           if(!same(nextGutters,twin.gutters))regenerate=true;
@@ -1690,7 +1695,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (!before || !same(ids(before.levels || []), ids(after.levels || []))) { rebuild = true; continue; }
         // Changes outside the deformable level records still need the complete
         // generator (roofs, placement, materials, fixtures, and so on).
-        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)).map(([k,v])=>[k,k==='porches' ? v.map(({columns,src,...p})=>p) : k==='porch' && v ? (({columns,src,...p})=>p)(v) : v]));
+        const withoutPosts = ({columns,src,...porch}) => porch;
+        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)).map(([k,v])=>[k,['porches','porches_detail'].includes(k) ? v.map(withoutPosts) : k==='porch' && v ? withoutPosts(v) : v]));
         if (!same(fixed(before), fixed(after))) rebuild = true;
         for (const level of after.levels || []) {
           for (const list of ['walls', 'rooms', 'openings'])
@@ -1717,7 +1723,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       if (rebuild) {
         // rebuild owns the single bake restart on this path.
-        await view.rebuild(nextPlan, { yardLater: true });
+        await view.rebuild(nextPlan, { yardLater: true, timing });
         return { path: 'rebuild', selection };
       }
       const version = ++revision;
@@ -1853,6 +1859,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       twin = next; plan = nextPlan; scene.add(twin.root);
       generatedPorches = new Map(nextPlan.buildings.map(b => [b.id,porchGeometry(b)]));
       generatedColumns = new Map(nextPlan.buildings.map(b => [b.id,structuredClone(allPorches(b))]));
+      pendingPostCover.clear();
       freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.

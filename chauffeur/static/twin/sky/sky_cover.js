@@ -642,21 +642,26 @@ export function writeWeatherOpen(root,cover,worldScale=1) {
 
 // Drag/settle can replace room triangles inside a retained material batch.
 // Refresh only this building's slab snapshot before resampling exposure.
-export function refreshSlabCover(root,plan,roofs,buildingId) {
+export function refreshSlabCover(root,plan,roofs,buildingId,{postsOnly=false}={}) {
   const b=plan.buildings?.find(b=>b.id===buildingId),surface=roofs.get(buildingId);
   if(!b||!surface)return;
+  // Post changes affect only the retained porch CPU proxy. Its original slice
+  // avoids sampling clipped render batches and keeps an unchanged cover key.
+  if(postsOnly&&surface.refreshPostCover?.())return;
+  surface.refreshPostCover=null;
   root.updateWorldMatrix(true,true);
   const frame=new THREE.Matrix4().makeRotationY((b.rotation||0)*Math.PI/180);
   frame.setPosition(b.position?.[0]||0,buildingBase(plan,b),-(b.position?.[1]||0));
   const inverse=frame.invert().multiply(new THREE.Matrix4().makeScale(1/FT,1/FT,1/FT));
   const positions=[],a=new THREE.Vector3(),c=new THREE.Vector3(),d=new THREE.Vector3(),n=new THREE.Vector3();
   root.traverse(o=>{
-    if(!o.isMesh||o.layers.isEnabled(31)||!o.geometry?.attributes.position)return;
-    const g=o.geometry,p=g.attributes.position,matrix=inverse.clone().multiply(o.matrixWorld);
-    for(const r of o.userData.snapRanges||[{start:0,count:g.index?.count??p.count,...o.userData}]) {
+    if(!o.isMesh||o.userData.ghost||!o.geometry?.attributes.position)return;
+    const g=o.geometry,cover=o.userData.coverPositions,p=cover?new THREE.BufferAttribute(cover,3):g.attributes.position;
+    const index=cover?null:g.index,matrix=inverse.clone().multiply(o.matrixWorld);
+    for(const r of o.userData.snapRanges||[{start:0,count:index?.count??p.count,...o.userData}]) {
       if(r.buildingId!==buildingId||!['floor','room'].includes(r.kind))continue;
       for(let i=r.start;i<r.start+r.count;i+=3) {
-        for(const [v,j] of [[a,0],[c,1],[d,2]])v.fromBufferAttribute(p,g.index?g.index.getX(i+j):i+j).applyMatrix4(matrix);
+        for(const [v,j] of [[a,0],[c,1],[d,2]])v.fromBufferAttribute(p,index?index.getX(i+j):i+j).applyMatrix4(matrix);
         THREE.Triangle.getNormal(a,c,d,n);
         if(r.part==='ceiling'?Math.abs(n.y)<=.001:n.y<=.001)continue;
         for(const v of [a,c,d])positions.push(v.x,-v.z,v.y);

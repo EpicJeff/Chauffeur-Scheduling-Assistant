@@ -2232,6 +2232,21 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           else offsetSurfaceUvs(geometry,finish,seed);
         }
         offsetSurfaceUvParts(rows);return result;
+      }, refreshCover(next) {
+        const slab=pieceBounds.get(`${b.id}:${po.id}`)?.box, proxy=pickObjects.get(`${b.id}:${po.id}`);
+        if (!slab || !proxy) return;
+        const cover=slab.clone();
+        for (const [i,c] of (next.columns || []).entries()) {
+          const bounds=pieceBounds.get(`${b.id}:${postRef(next,i)}`)?.box;
+          const outside=Math.hypot(Math.max(slab.min.x-c.at[0],0,c.at[0]-slab.max.x),Math.max(slab.min.z+c.at[1],0,-c.at[1]-slab.max.z));
+          if (bounds && outside<=4) cover.union(bounds);
+        }
+        if (cover.equals(slab)) { delete proxy.userData.coverPositions; return; }
+        const size=cover.getSize(new THREE.Vector3()),centre=cover.getCenter(new THREE.Vector3());
+        const geometry=boxGeometry(Math.max(.01,size.x),Math.max(.01,size.y),Math.max(.01,size.z)).translate(...centre.toArray());
+        const expanded=geometry.toNonIndexed();
+        Object.defineProperty(proxy.userData,'coverPositions',{value:expanded.attributes.position.array,writable:true,configurable:true});
+        geometry.dispose();expanded.dispose();
       }, screenKey: next => JSON.stringify(screenSpans(next).map(({c,d,start,end})=>[c.at,d.at,start,end])) });
       for (const [columnIndex, c] of (po.columns || []).entries()) {
         const geometry=columnGeometry(c);
@@ -2480,7 +2495,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             const extent = coverBox.getSize(new THREE.Vector3()), middle = coverBox.getCenter(new THREE.Vector3());
             const legacy = boxGeometry(Math.max(.01, extent.x), Math.max(.01, extent.y), Math.max(.01, extent.z)).translate(...middle.toArray());
             const expanded = legacy.toNonIndexed();
-            Object.defineProperty(proxy.userData, 'coverPositions', { value: expanded.attributes.position.array });
+            Object.defineProperty(proxy.userData, 'coverPositions', { value: expanded.attributes.position.array, writable: true, configurable: true });
             legacy.dispose(); expanded.dispose();
           }
         }
@@ -2605,7 +2620,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   for (const b of plan.buildings || []) {
     const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
     const supportedIds = new Set((b.roof?.sections || []).flatMap((s, i) => isSupported(s) ? [s.id || `roof:${i}`] : []));
-    const positions = [...(ghostRoofCover.get(b.id) || [])], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+    const positions = [...(ghostRoofCover.get(b.id) || [])], slabs = [], slabProxies = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
     const capture = (o, target, ceiling = false, space = domain) => {
       if (!o.isMesh || o.userData.ghost || o.userData.surfaceKind === 'gutter' || !o.geometry?.attributes.position) return;
       const p = o.userData.coverPositions ? new THREE.BufferAttribute(o.userData.coverPositions, 3) : o.geometry.attributes.position;
@@ -2640,9 +2655,30 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (o.userData.kind === 'roof' && !o.layers.isEnabled(PICK_LAYER) && supportedIds.has(o.userData.pieceId)
             && !partName.startsWith('support:') && partName !== 'underside'
             && partName !== 'underside:front' && !partName.startsWith('end:')) capture(o, positions, false, space);
-        if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
+        if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) {
+          const start=slabs.length;
+          capture(o, slabs, o.userData.part === 'ceiling', space);
+          if (o.userData.kind === 'room' && o.layers.isEnabled(PICK_LAYER)) slabProxies.push({object:o,space,start,count:slabs.length-start});
+        }
       });
     if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,
+      refreshPostCover() {
+        const surface=roofSurfaces.get(b.id),previous=surface.slabPositions;
+        if (previous.length!==slabs.length) return false;
+        let next=null;
+        for (const {object,space,start,count} of slabProxies) {
+          const part=[];capture(object,part,false,space);
+          if (part.length!==count) return false;
+          // Rebuilding a Float32 post bound can differ by a few millionths of
+          // a foot from the authored bound. That is no cover change.
+          if (part.some((v,i)=>Math.abs(v-previous[start+i])>1e-5)) {
+            next ||= previous.slice();
+            for(let i=0;i<count;i++)next[start+i]=part[i];
+          }
+        }
+        if (next) surface.slabPositions=next;
+        return true;
+      },
       eaveAttachments:[...attachments].map(([section,positions])=>({section,positions}))});
   }
   for (const g of mergeGroups) batch(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });

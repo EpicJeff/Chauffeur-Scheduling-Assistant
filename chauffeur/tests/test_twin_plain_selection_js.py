@@ -221,6 +221,38 @@ for(const kind of ['opening','anchor'])await test(kind+'_drag_without_focus_matc
  }finally{abort.abort();v.dispose();}}
  assert.deepEqual(results[0],results[1]);
 });
+await test('yard_shapes_keep_outline_only_selection',async()=>{
+ const {view:v,controller:s}=await setup(p=>{p.site={hardscape:[{id:'pavers',polygon:[[15,0],[20,0],[20,5],[15,5]]}],beds:[{id:'flowers',polygon:[[15,6],[20,6],[20,9],[15,9]]}],fence:[{id:'fence',polyline:[[15,10],[20,10]],height:4}]};});
+ try {
+  const materials=new Map();v.scene.traverse(o=>{if(o.material)materials.set(o,o.material);});
+  for(const [kind,id] of [['hardscape','pavers'],['beds','flowers'],['fence','fence']]) {
+   s.select({kind,id,building:null});await v.selectionReady;
+   for(const [o,material] of materials)assert.equal(o.material,material,kind+' never tints yard');
+   let outline=false;v.scene.traverse(o=>{if((o.isLine||o.isLineSegments)&&o.userData.pieceId===id)outline=true;});assert.ok(outline,'selected '+kind+' outline is present');
+  }
+ } finally {v.dispose();}
+});
+await test('plain_tint_uses_only_member_batches_and_never_compiles',async()=>{
+ const {createSelectionFocus}=await import(file('static/twin/selection_focus.js'));
+ const root=new T.Group(),site=new T.Group(),source=new T.MeshStandardMaterial();
+ const mesh=new T.Mesh(new T.BoxGeometry().toNonIndexed(),source);root.add(mesh,site);
+ mesh.userData.snapRanges=[{start:0,count:18,buildingId:'b',pieceId:'post:p:0',kind:'porch_post'},{start:18,count:18,buildingId:'b',pieceId:'trim',kind:'room'}];
+ const yard=new T.Mesh(new T.BoxGeometry(),source);Object.assign(yard.userData,{pieceId:'bed',kind:'beds'});site.add(yard);
+ const pieces=new Map([['b:post:p:0',[mesh]]]);
+ pieces[Symbol.iterator]=pieces.values=()=>{throw Error('plain single-piece tint scanned every owner');};
+ const focus=createSelectionFocus({compile:()=>{throw Error('plain tint tried to compile');},render:()=>{}});
+ await focus.apply(root,null,0x52ccff,0x9b7cdb,{pieces,site,members:[{kind:'porch_post',building:'b',pieceId:'post:p:0'}]});
+ const tinted=[].concat(mesh.material).find(m=>m.userData.selectionTint!==undefined);assert.ok(tinted);
+ assert.equal(tinted.onBeforeCompile,source.onBeforeCompile);assert.equal(tinted.customProgramCacheKey,source.customProgramCacheKey);
+ assert.equal(yard.material,source,'yard is outline-only');focus.dispose();
+ // Ordinary wall/opening sets retain main's whole-batch tint and draw groups.
+ // Even a batch shared with posts needs no ownership scan for that old path.
+ const groups=mesh.geometry.groups,rangeRows=mesh.userData.snapRanges;
+ mesh.userData.snapRanges=new Proxy(rangeRows,{get(rows,key){if(key==='filter'||key==='some')throw Error('ordinary tint scanned ownership');return Reflect.get(rows,key);}});
+ const wallFocus=createSelectionFocus({compile:()=>{throw Error('plain tint compiled');},render:()=>{}});
+ await wallFocus.apply(root,null,0x52ccff,0x9b7cdb,{pieces:new Map([['b:trim',[mesh]]]),members:[{kind:'wall',building:'b',pieceId:'trim'}]});
+ assert.equal(mesh.geometry.groups,groups,'ordinary tint keeps authored groups');wallFocus.dispose();
+});
 await test('non_room_selection_keeps_accent_tint',async()=>{
  const {view:v,controller:s}=await setup();try{
  s.select({kind:'opening',id:'o',building:'b',level:'L1'});

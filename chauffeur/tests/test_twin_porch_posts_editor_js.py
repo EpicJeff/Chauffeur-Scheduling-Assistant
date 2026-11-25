@@ -776,6 +776,71 @@ await test('i2_undo_redo_selection_and_group_delete_batch', async () => {
   } finally { h.dispose(); }
 });
 
+await test('fix4_applyLocal_card_arrow_size_all_and_undo_do_not_rebuild', async () => {
+  const initial = makePatioPlan();
+  const b = initial.buildings[0];
+  // The editor's flattened connected record carries this alias too.
+  b.porches_detail = structuredClone(b.porches);
+  const h = await mountRealEditor(initial);
+  try {
+    let rebuilds = 0;
+    const rebuild = h.view.rebuild.bind(h.view);
+    h.view.rebuild = (...args) => { rebuilds++; return rebuild(...args); };
+    const card = document.getElementById('piece-card');
+    h.tools.select({ pieceId: 'post:patio:0', buildingId: b.id });
+    const field = card.querySelector('input[aria-label="Position X (ft)"]');
+    field.value = '2'; fire(field, 'change'); await flush();
+    assert.equal(rebuilds, 0, 'field applyLocal then settle must not rebuild');
+    const size = card.querySelector('input[aria-label="Size (ft)"]');
+    size.value = '0.8'; fire(size, 'change'); await flush();
+    assert.equal(rebuilds, 0, 'size applyLocal then settle must not rebuild');
+    fire(document.body, 'keydown', { key: 'ArrowRight' }); await flush();
+    assert.equal(rebuilds, 0, 'arrow applyLocal then settle must not rebuild');
+    h.tools.select({ pieceId: 'patio', buildingId: b.id });
+    const all = card.querySelector('input[aria-label="Size for all posts"]');
+    all.value = '0.9'; fire(all, 'change'); await flush();
+    assert.equal(rebuilds, 0, 'Size for all applyLocal then settle must not rebuild');
+    h.view.setPlanCamera(`${b.id}:L1`); h.view.setView(`${b.id}:L1`);
+    h.tools.select({ pieceId: 'post:patio:0', buildingId: b.id });h.tools.setTool('move');
+    const proxy = () => { let found;h.view.scene.traverse(o=>{if(o.userData.pieceId==='post:patio:0'&&o.layers.isEnabled(31))found=o;});return found; };
+    const drawn = () => { const bytes=[];h.view.scene.traverse(o=>{if(!o.isMesh||o.layers.isEnabled(31))return;for(const r of o.userData.snapRanges||[])if(r.pieceId==='post:patio:0')bytes.push(...o.geometry.attributes.position.array.slice(r.start*3,(r.start+r.count)*3));});assert.ok(bytes.length,'post owns drawn vertices');return bytes; };
+    const beforeGizmo = [...proxy().geometry.attributes.position.array];
+    const drawnBeforeGizmo=drawn();
+    const surface=h.view.roofSurfaces.get(b.id),refreshCover=surface.refreshPostCover;
+    let coverRefreshes=0;surface.refreshPostCover=function(...args){coverRefreshes++;return refreshCover.apply(this,args);};
+    const mx=h.tools.gizmo.handles().find(h=>h.kind==='gizmo_move_x');assert.ok(mx);
+    const point=(at)=>h.view.screenOfFloor(at[0],at[1],`${b.id}:L1`);
+    const event=(at)=>{const p=point(at);return {clientX:p[0],clientY:p[1],button:0};};
+    assert.ok(h.tools.gizmo.begin(event(mx.at),mx));
+    h.tools.gizmo.update(event([mx.at[0]+1,mx.at[1],mx.at[2]]),{free:true});
+    assert.notDeepEqual([...proxy().geometry.attributes.position.array],beforeGizmo,'gizmo moves the post mesh live');
+    assert.notDeepEqual(drawn(),drawnBeforeGizmo,'gizmo moves the drawn post before release');
+    assert.equal(coverRefreshes,0,'gizmo frames defer cover sampling');
+    await h.tools.gizmo.finish(false);await flush();assert.equal(rebuilds,0,'gizmo release must not rebuild');
+    assert.equal(coverRefreshes,1,'gizmo release refreshes cover once');
+    const handles=createHandles({view:h.view,getPlan:h.getPlan,getSelection:()=>({kind:'porch_post',id:'post:patio:0',building:b.id}),canEdit:()=>true,drag:{},signal:h.abort.signal,
+      onCommit:async op=>{const next=applyLocal(h.getPlan(),op).plan;await h.view.settle(next);h.setPlanOnly(next);}});
+    const ph={...handles.handles().find(h=>h.kind==='porch_post'),building:b.id,level:'L1'};assert.equal(ph.kind,'porch_post');
+    const beforeHandle=[...proxy().geometry.attributes.position.array];
+    const drawnBeforeHandle=drawn();
+    assert.ok(handles.begin(event(ph.at),ph));handles.update(event([ph.at[0]+1,ph.at[1],ph.at[2]]),{free:true});
+    assert.notDeepEqual([...proxy().geometry.attributes.position.array],beforeHandle,'handle moves the post mesh live');
+    assert.notDeepEqual(drawn(),drawnBeforeHandle,'handle moves the drawn post before release');
+    assert.equal(coverRefreshes,1,'handle frames defer cover sampling');
+    await handles.finish(false);assert.equal(rebuilds,0,'handle release must not rebuild');
+    assert.equal(coverRefreshes,2,'handle release refreshes cover once');
+    const beforeCancel=[...proxy().geometry.attributes.position.array];
+    const cancelHandle={...handles.handles().find(h=>h.kind==='porch_post'),building:b.id,level:'L1'};
+    handles.begin(event(cancelHandle.at),cancelHandle);handles.update(event([cancelHandle.at[0]+1,cancelHandle.at[1],cancelHandle.at[2]]),{free:true});
+    await handles.finish(true);assert.deepEqual([...proxy().geometry.attributes.position.array],beforeCancel,'cancel restores the live post');
+    await h.view.settle(initial);
+    assert.equal(rebuilds, 0, 'undo of post moves must not rebuild');
+    // A subsequent explicit rebuild of the original must not reuse moved buffers.
+    await rebuild(initial);
+    console.log('FIX4_EDITOR_PATHS field=0 size=0 arrow=0 gizmo=0 handle=0 size_all=0 undo=0');
+  } finally { h.dispose(); }
+});
+
 console.log('SERVER_BATCHES ' + JSON.stringify(serverBatches));
 finish();
 """
