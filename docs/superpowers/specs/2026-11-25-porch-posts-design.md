@@ -14,7 +14,7 @@ Posts are `porches_detail[].columns = [{at:[x,y], size}]`, absolute building coo
 
 ## Record and identity
 
-- Columns stay `{at, size}` with optional `id` (`post:<hex>`). **No ids are minted on load.** The first post operation on a porch mints ids for all its columns. Until then, the client and server both use the derived ref `post:<porchId>:<index>`. Operations accept either; a derived ref that is out of range or whose porch already has ids is refused ("That post is missing.").
+- Columns stay `{at, size}` with optional `id`. **No ids are minted on load.** The first post operation writes each existing column's derived ref `post:<porchId>:<index>` as its id. Existing ids survive. A new post without a caller id uses `post:<porchId>:<n>`, the smallest unused n at least the column count. Refs remain stable through minting, queued edits and deletion. No random ids. Caller ids start with `post:`, contain at most 120 characters and are unique within the building. Missing refs are refused ("That post is missing.").
 - `id` is left out of both bake keys (`bake/geometry_key.js`, `twin_lighting_rev.py`) and out of stored-versus-flat comparisons, so minting alone never marks lighting out of date. Moving, sizing, adding or deleting a post does, correctly.
 - An untouched house keeps byte-identical geometry, UVs, keys and stored bytes.
 
@@ -26,17 +26,17 @@ All take `building`, `porch`. Same validation for hand and agent. All mark the d
 - `update_porch_post {porch, post, at?, size?}`. At least one of the two.
 - `delete_porch_post {porch, post}`.
 
-Limits: size .05 to 3 ft, at most 40 posts per porch, finite `at`. `at` may lie outside the outline (the owner has some): allowed and drawn, as today. A porch with no detail gets an empty one (no default corner posts). Refusals are one plain sentence; invalid values are refused, never defaulted. Flat readers drop a bad column with a note, not the list.
+Limits: size .05 to 3 ft, at most 40 posts per porch, finite `at` with each coordinate bounded to +/-100,000 ft. `at` may lie outside the outline (the owner has some): allowed and drawn, as today. A porch with no detail gets an empty one (no default corner posts). Refusals are one plain sentence; invalid values are refused, never defaulted. Flat readers accept any size greater than zero; they drop a bad position or size with a note, and strip an invalid id while retaining the post.
 
 `move_posts_to_roof` accepts columns with ids. Deleting a porch deletes its posts; a batch that deletes a porch and its own posts succeeds.
 
-**Posts follow the porch.** When an operation changes a porch room's outline (move room, joint, wall, edge), each post moves with its nearest outline edge: the edge's displacement at the post's projected position, so a translation moves every post by the same vector, and pulling one edge moves only the posts nearest to it. Ties go to the lower edge index. Posts further than 4 ft from every edge do not follow. The building moving or turning needs nothing.
+**Posts follow moved corners.** Only move_room, move_joint(s), move_wall, typed lengths and resizes apply this rule. Splits, added walls, drawn rooms, separator creation/removal, deletes and merges do not. Match each old outline corner to its joint by position within .01 ft and use that joint's new position; fall back per corner, never pair polygon and joint lists by index. Compare outlines by shape. All corners translated by one vector: move every post by it. Otherwise a post within 1 ft plus half its size of an old corner follows that corner. Otherwise the nearest old edge within 4 ft contributes only the normal component of its interpolated displacement at the post's projection. Ties use stored outline order. Other posts stay. Write a post only for movement greater than .01 ft. If none move, leave the entire porch detail untouched, including polygon, read_geometry and src.person. Following is derived and writes no fix entries. Re-read and refit never apply it.
 
 **Argyle.** `describe` on a porch lists its posts (ref, at, size); the three operations are documented in the edit tool in as few characters as possible. Report the schema size; its gate is already over on main.
 
 ## Drawing
 
-Each post is its own piece: kind `porch_post`, id the ref above, `parentPieceId` the porch. Same box, same material (`column`, per porch), same UV seed as today (the porch key), still merged by material. 0 new draws, programs, samplers and triangles. A post's pick proxy wins over the porch's. The porch's own outline box no longer includes the posts; check the framing of a selected porch still looks right. Hiding or locking a porch hides or locks its posts.
+Each post is its own piece: kind `porch_post`, id the ref above, `parentPieceId` the porch. Same box, same material (`column`, per porch), same UV seed as today (the porch key), still merged by material. 0 new draws, programs, samplers and triangles. A post ranks at its own hit distance, with its porch directly after it; third pieces in front and nearer screen panels of that porch keep their precedence. The porch's own outline box no longer includes the posts; check the framing of a selected porch still looks right. Hiding or locking a porch hides or locks its posts.
 
 ## Editor
 
@@ -70,4 +70,4 @@ Pool patio and the owner's back porch: default overview, porch focused, post sel
 
 - Client piece: `{kind: 'porch_post', id: column.id || 'post:' + porchId + ':' + index, porchId, buildingId, index, piece: column}`. One shared helper `static/twin/porch_posts.js`: `postRef(porch, index)`, `porchPosts(building)` → that list in order, `findPost(building, ref)`. Codex writes it first; Gemini copies it verbatim into the other worktree until the merge.
 - Generator `userData`: `{kind: 'porch_post', pieceId: ref, parentPieceId: porchId, part: 'column'}`.
-- Operations exactly as above. The server's reply is the usual one; the client reselects by position when refs change from derived to minted (same porch, same index).
+- Operations exactly as above. The server's reply is the usual one; derived and minted refs are identical, so queued edits and selection retain the same identity.

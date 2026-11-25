@@ -1,5 +1,8 @@
+import { porchFoundation } from '../twin_porch_foundation.js';
 import { hostPoint } from '../twin_hosts.js';
 import { sitePieces } from '../objects.js';
+import { allPorches } from '../gutter_presence.js';
+import { postRef, commonPostSize } from '../porch_posts.js';
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const delta = (a, b) => a.map((v, i) => v - b[i]);
@@ -121,7 +124,7 @@ export function moveGesture(plan, selection) {
   return { building, piece, moved, touched, oldWalls, normal };
 }
 
-export function movePreview(plan, gesture, by) {
+export function movePreview(plan, gesture, by, follow = true) {
   const g = gesture, b = g.building;
   const preview = structuredClone(plan), building = preview.buildings.find(row => row.id === b.id);
   const positions = new Map();
@@ -141,7 +144,7 @@ export function movePreview(plan, gesture, by) {
   // A collapsed wall has no direction and would deform the scene into NaN.
   if (building.walls.some(w => wallIds.has(w.id) && Math.hypot(...delta(w.to, w.from)) < 1e-6)) return null;
   for (const room of building.rooms) if (roomIds.has(room.id) && room.joints?.every(id => positions.has(id)))
-    room.polygon = room.joints.map(id => [...positions.get(id)]);
+    room.polygon = movedPolygon(b, building, room);
   for (const l of building.levels) {
     const original = b.levels.find(row => row.id === l.id);
     if (l.footprint?.every(id => positions.has(id))) l.outline = l.footprint.map(id => [...positions.get(id)]);
@@ -155,6 +158,7 @@ export function movePreview(plan, gesture, by) {
     try { piece.position = hostPoint(building, piece.host, piece.offset || 0); }
     catch { /* Missing hosts retain their existing ghost representation. */ }
   }
+  if (follow) followLocalPosts(plan, preview);
   return preview;
 }
 
@@ -193,10 +197,11 @@ function splitWall(plan, operation) {
   const [a, z] = wall.joints.map(id => b.joints.find(j => j.id === id).at), length = Math.hypot(...delta(z, a)), at = operation.at;
   if (!Number.isFinite(at) || at < 1 - EPS || length - at < 1 - EPS) return null;
   // The graph keeps a wall whole at a T inside an opening's span (R55).
-  if (b.openings?.some(o => o.wall === wall.id && Math.abs(o.at - at) < o.width / 2 - EPS)) return null;
+  const keepWhole = b.openings?.some(o => o.wall === wall.id && Math.abs(o.at - at) < o.width / 2 - EPS);
   const point = a.map((v, i) => v + (z[i] - v) * at / length);
   let joint = b.joints.find(j => j.level === wall.level && Math.hypot(...delta(j.at, point)) < EPS);
   if (!joint) { joint = { id: `local:split:${wall.id}:${at}`, level: wall.level, at: point }; b.joints.push(joint); }
+  if (keepWhole) return { plan:preview,building:b.id,level:wall.level,touched:null };
   let suffix = 2; while (b.walls.some(w => w.id === `${wall.id}~${suffix}`)) ++suffix;
   const second = structuredClone(wall), end = wall.joints[1]; second.id = `${wall.id}~${suffix}`;
   wall.joints[1] = joint.id; wall.to = [...point]; second.joints = [joint.id, end]; second.from = [...point]; second.to = [...z];
@@ -221,21 +226,158 @@ function splitWall(plan, operation) {
 }
 
 export function applyLocal(plan, operation) {
-  if (operation.op !== 'batch') return applyOne(plan, operation);
+  if (operation.op !== 'batch') {
+    const result = applyOne(plan, operation);
+    if (result && FOLLOW_OPS.includes(operation.op)) followLocalPosts(plan, result.plan);
+    return result;
+  }
   // A batch owns one private copy, so 200 plants never clone the whole house
   // 200 times. An unsupported/refused member discards the entire preview.
   let result = { plan: structuredClone(plan), building: null, level: null, touched: null };
-  for (const member of operation.ops) {
+  const members = structuredClone(operation.ops);
+  for (const member of members) if (['add_porch_post', 'update_porch_post', 'delete_porch_post'].includes(member.op)) {
+    const b = result.plan.buildings.find(b => b.id === member.building), porch = b && allPorches(b).find(p => p.id === member.porch);
+    if (porch) for (const [i,c] of (porch.columns || []).entries()) c.id ||= `post:${porch.id}:${i}`;
+  }
+  for (const member of members) {
+    const before = FOLLOW_OPS.includes(member.op) ? structuredClone(result.plan) : null;
     const next = applyOne(result.plan, member, true);
     if (!next) return null;
+    if (before) followLocalPosts(before, next.plan);
     result = { ...next, building: null, level: null, touched: null };
   }
   return result;
 }
 
+function postIds(building) {
+  const ids = new Set();
+  const collect = value => { if (Array.isArray(value)) value.forEach(collect); else if (value && typeof value === 'object') {
+    if (typeof value.id === 'string') ids.add(value.id); Object.values(value).forEach(collect);
+  } }; collect(building);
+  for (const p of allPorches(building)) for (const [i,c] of (p.columns || []).entries()) ids.add(postRef(p,i));
+  return ids;
+}
+const FOLLOW_OPS = ['move_joint', 'move_joints', 'move_wall', 'move_room'];
+function mintPostId(detail) {
+  const ids = new Set((detail.columns || []).map(c => c.id));
+  let n = (detail.columns || []).length;
+  while (ids.has(`post:${detail.id}:${n}`)) ++n;
+  return `post:${detail.id}:${n}`;
+}
+function projectPost(p,a,b) {
+  const d=delta(b,a),length2=dot(d,d),t=length2?Math.max(0,Math.min(1,dot(delta(p,a),d)/length2)):0;
+  const q=shifted(a,d.map(v=>v*t));return {distance:Math.hypot(...delta(p,q)),t,q};
+}
+function movedPolygon(before, after, room) {
+  const old = before.rooms.find(r=>r.id===room.id), positions=new Map(after.joints.map(j=>[j.id,j.at]));
+  return old.polygon.map(p=>{
+    const joint=before.joints.find(j=>old.joints?.includes(j.id)&&Math.hypot(...delta(p,j.at))<=.01);
+    return [...(joint&&positions.get(joint.id)||p)];
+  });
+}
+function followLocalPosts(before, after) {
+  for(const b of after.buildings||[]) {
+    const old=before.buildings?.find(v=>v.id===b.id);if(!old)continue;
+    for(const room of b.rooms||[]) {
+      const prior=old.rooms?.find(r=>r.id===room.id&&r.kind==='porch');
+      if(!prior||room.kind!=='porch')continue;
+      const c=room.polygon;
+      const a=prior.polygon.map(p=>old.joints.find(j=>prior.joints?.includes(j.id)&&Math.hypot(...delta(p,j.at))<=.01)?.at || p);
+      if([[a,c],[c,a]].every(([points,q])=>points.every(p=>Math.min(...q.map((v,i)=>projectPost(p,v,q[(i+1)%q.length]).distance))<=.01)))continue;
+      const detail=allPorches(b).find(p=>p.id===room.id);
+      if(!detail)continue;
+      const cycles=c.map((_,i)=>[...c.slice(i),...c.slice(0,i)]);
+      const fallback=a.length===c.length?[...cycles,...cycles.map(p=>[...p].reverse())].map(p=>({p,score:p.reduce((s,q,i)=>s+dot(delta(q,a[i]),delta(q,a[i])),0)})).sort((x,y)=>x.score-y.score)[0].p:
+        a.map(p=>c.map((q,i)=>projectPost(p,q,c[(i+1)%c.length])).sort((x,y)=>x.distance-y.distance)[0].q);
+      const positions=new Map(b.joints.map(j=>[j.id,j.at]));
+      const targets=a.map((p,i)=>{const joint=old.joints.find(j=>prior.joints?.includes(j.id)&&Math.hypot(...delta(p,j.at))<=.01);return joint&&positions.get(joint.id)||fallback[i];});
+      const vectors=targets.map((p,i)=>delta(p,a[i])),translation=vectors.every(v=>Math.hypot(...delta(v,vectors[0]))<=1e-8);
+      let moved=false;
+      for(const column of detail.columns||[]) {
+        const point=column.at;let by;
+        if(translation)by=vectors[0];
+        else {
+          const corner=a.map((p,i)=>({i,d:Math.hypot(...delta(point,p))})).sort((x,y)=>x.d-y.d||x.i-y.i)[0];
+          if(corner.d<=1+column.size/2)by=vectors[corner.i];
+          else {
+            const {distance,t,edge}=a.map((p,i)=>({...projectPost(point,p,a[(i+1)%a.length]),edge:i})).sort((x,y)=>x.distance-y.distance||x.edge-y.edge)[0];
+            if(distance>4)continue;
+            const end=(edge+1)%a.length,d=delta(a[end],a[edge]),length=Math.hypot(...d),normal=length?[-d[1]/length,d[0]/length]:[0,0];
+            const displacement=[0,1].map(i=>(1-t)*vectors[edge][i]+t*vectors[end][i]);
+            by=normal.map(v=>v*dot(displacement,normal));
+          }
+        }
+        if(Math.hypot(...by)>.01){column.at=shifted(point,by);moved=true;}
+      }
+      if(!moved)continue;
+      detail.read_geometry ||= {polygon:structuredClone(detail.polygon||a)};
+      detail.polygon=structuredClone(c);(detail.src||={}).person=true;
+      const stored=b.porches_detail?.find(p=>p.id===detail.id);
+      if(stored)for(const key of ['columns','polygon','read_geometry','src'])stored[key]=structuredClone(detail[key]);
+    }
+  }
+}
+
 function applyOne(plan, operation, mutable = false) {
   const copy = () => mutable ? plan : structuredClone(plan);
+  if (['add_porch_post', 'update_porch_post', 'delete_porch_post'].includes(operation.op)) {
+    const preview = copy(), building = preview.buildings.find(b => b.id === operation.building);
+    const porch = building && allPorches(building).find(p => p.id === operation.porch);
+    const room = building?.rooms?.find(r => r.id === operation.porch && r.kind === 'porch');
+    if (!building || !porch && !room) throw new LocalMissing('That porch is missing.');
+    if ([porch, room].some(p => ['ghost', 'proposal'].includes(p?.state))) return null;
+    const detail = porch || { id: room.id, polygon: structuredClone(room.polygon), level: room.level,
+      floor: building.levels.find(l => l.id === room.level).elevation, columns: [] };
+    const columns = detail.columns || [], adding = operation.op === 'add_porch_post';
+    const index = columns.findIndex((c, i) => postRef(detail, i) === operation.post);
+    if (!adding && index < 0) throw new LocalMissing('That post is missing.');
+    if (operation.op === 'update_porch_post' && !('at' in operation || 'size' in operation)) return null;
+    if ('at' in operation && (!Array.isArray(operation.at) || operation.at.length !== 2 || !operation.at.every(v => Number.isFinite(v) && Math.abs(v) <= 1e5))) return null;
+    if ('size' in operation && (!Number.isFinite(operation.size) || operation.size < .05 || operation.size > 3)) return null;
+    const ids = postIds(building);
+    if (adding && (columns.length >= 40 || 'id' in operation &&
+      (typeof operation.id !== 'string' || !operation.id.startsWith('post:') || [...operation.id].length > 120 || ids.has(operation.id)))) return null;
+    if ('id' in operation) ids.add(operation.id);
+    const mint = () => mintPostId(detail);
+    let at, size;
+    if (adding) {
+      size = 'size' in operation ? operation.size : commonPostSize(detail);
+      if (!Number.isFinite(size) || size < .05 || size > 3) return null;
+      at = 'at' in operation ? [...operation.at] : defaultPostAt(building, detail, size);
+      if (!at) return null;
+    }
+    for (const [i,c] of columns.entries()) c.id ||= `post:${detail.id}:${i}`;
+    detail.columns = columns;
+    if (adding) { const id = 'id' in operation ? operation.id : mint(); if (!('id' in operation) && ids.has(id)) return null; columns.push({ id, at, size }); }
+    else if (operation.op === 'delete_porch_post') columns.splice(index, 1);
+    else for (const key of ['at', 'size']) if (key in operation) columns[index][key] = structuredClone(operation[key]);
+    detail.columns = columns; (detail.src ||= {}).person = true;
+    if (!porch) (building.porches ||= []).push(detail);
+    // The flat bridge also retains connected details. Keep that source copy
+    // in sync without copying renderer-derived foundation fields into it.
+    if (building.porches_detail) {
+      let stored = building.porches_detail.find(p => p.id === detail.id);
+      if (!stored) {
+        stored = { id: detail.id, level: detail.level || room?.level, polygon: structuredClone(detail.polygon), floor: detail.floor, columns: [] };
+        building.porches_detail.push(stored);
+      }
+      stored.columns = structuredClone(columns); (stored.src ||= {}).person = true;
+    }
+    return { plan: preview, building: building.id, level: detail.level || room?.level, touched: null };
+  }
+  if (operation.op === 'set_room_kind' && operation.kind === 'porch') {
+    const preview=copy(),b=preview.buildings.find(b=>b.id===operation.building),room=b?.rooms.find(r=>r.id===operation.room);
+    if(!room)throw new LocalMissing('That room is missing.');
+    room.kind='porch';room.foundation ||= porchFoundation();
+    if(!allPorches(b).some(p=>p.id===room.id)) {
+      const detail={id:room.id,name:room.name,level:room.level,polygon:structuredClone(room.polygon),floor:b.levels.find(l=>l.id===room.level).elevation,
+        state:room.state||'settled',screened:false,columns:room.polygon.map(p=>({at:[...p],size:.5,shape:'square'}))};
+      (b.porches||=[]).push(detail);(b.porches_detail||=[]).push(structuredClone(detail));
+    }
+    return {plan:preview,building:b.id,level:room.level,touched:null};
+  }
   if (operation.op === 'move_joints') {
+    const oldBuilding = structuredClone(plan.buildings.find(v=>v.id===operation.building));
     const preview = copy(), b = preview.buildings.find(b => b.id === operation.building);
     if (!b) throw new LocalMissing(`Missing building: ${operation.building}`);
     for (const { joint, to } of operation.joints) {
@@ -251,7 +393,7 @@ function applyOne(plan, operation, mutable = false) {
         delta(i === 0 || i === 3 ? from : to, i === 0 || i === 3 ? wall.from : wall.to)));
       wall.from = [...from]; wall.to = [...to];
     }
-    for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = room.joints.map(id => [...positions.get(id)]);
+    for (const room of b.rooms) if (room.joints?.every(id => positions.has(id))) room.polygon = movedPolygon(oldBuilding, b, room);
     for (const level of b.levels) if (level.footprint?.every(id => positions.has(id))) level.outline = level.footprint.map(id => [...positions.get(id)]);
     for (const p of [...(b.items || []), ...(b.anchors || [])]) if (p.host) {
       try { p.position = hostPoint(b, p.host, p.offset || 0); } catch { /* The server judges it. */ }
@@ -315,7 +457,7 @@ function applyOne(plan, operation, mutable = false) {
     if (kind === 'wall' && !gesture.normal) return null;
     const by = kind === 'joint' ? delta(operation.to, gesture.piece.at)
       : kind === 'wall' && typeof operation.by === 'number' ? gesture.normal.map(v => v * operation.by) : operation.by;
-    const preview = movePreview(plan, gesture, by);
+    const preview = movePreview(plan, gesture, by, false);
     if (preview) weldMove(preview, gesture.building.id, gesture.moved);
     return preview && { plan: preview, building: gesture.building.id, level: gesture.piece.level, touched: gesture.touched };
   }
@@ -338,4 +480,37 @@ function applyOne(plan, operation, mutable = false) {
       feature.polygon = feature.polygon.map(by);
   } else piece.at = [operation.at[0], operation.at[1]];
   return { plan: preview, building: null, level: null, touched: { site: [name] } };
+}
+
+function defaultPostAt(building, porch, size) {
+  const room = building.rooms?.find(r=>r.id===porch.id);
+  const polygon = (room || porch).polygon, joints = new Map((building.joints || []).map(j => [j.id, j.at]));
+  const walls = (building.walls || []).filter(w => w.kind !== 'separator' && w.state !== 'ghost' && w.level === (room?.level || porch.level || building.levels[0].id))
+    .map(w => [joints.get(w.joints?.[0]) || w.from, joints.get(w.joints?.[1]) || w.to]).filter(w => w.every(Boolean));
+  const project = (p, a, b) => { const d = delta(b, a), length2 = dot(d, d), t = length2 ? Math.max(0, Math.min(1, dot(delta(p, a), d) / length2)) : 0;
+    return [Math.hypot(...delta(p, shifted(a, d.map(v => v * t)))), t]; };
+  const winding = polygon.reduce((s, a, i) => s + cross(a, polygon[(i + 1) % polygon.length]), 0) > 0 ? 1 : -1;
+  let best = null;
+  for (const [i, a] of polygon.entries()) {
+    const b = polygon[(i + 1) % polygon.length], d = delta(b, a), length = Math.hypot(...d);
+    if (!length) continue;
+    let spans = [[0, 1]];
+    for (const [c,e] of walls) {
+      if ([c,e].some(p => Math.abs(cross(delta(p,a),d))/length >= .05)) continue;
+      const [lo,hi]=[c,e].map(p=>Math.max(0,Math.min(1,dot(delta(p,a),d)/(length*length)))).sort((a,b)=>a-b);
+      spans=spans.flatMap(([start,end])=>[[start,Math.min(end,lo)],[Math.max(start,hi),end]].filter(([s,e])=>e-s>1e-9));
+    }
+    const gaps=[];
+    for (const [start,end] of spans) {
+      const cuts=[start,end];
+      for (const c of porch.columns || []) { const [distance,t]=project(c.at,a,b);if(distance<=c.size/2+.1&&t>start&&t<end)cuts.push(t); }
+      cuts.sort((a,b)=>a-b);for(let j=1;j<cuts.length;j++)gaps.push([cuts[j-1],cuts[j]]);
+    }
+    for (const [lo,hi] of gaps) {
+      const gap = (hi-lo) * length, t = (hi+lo) / 2;
+      if (!best || gap > best.gap) best = { gap, at: [a[0] + t * d[0] - winding * d[1] / length * size / 2,
+        a[1] + t * d[1] + winding * d[0] / length * size / 2] };
+    }
+  }
+  return best?.at || null;
 }

@@ -1151,7 +1151,7 @@ if __name__ == '__main__':
     from services.twin_model_bridge import assemble, flatten
     from twin_awning_test_fixtures import migrated_awning_house
     fixture = json.loads((ROOT / 'tests/fixtures/twin_model/household-2026-11-09.json').read_text(encoding='utf-8'))
-    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'awningPlan': migrated_awning_house(False), 'mainGutters': subprocess.check_output(['git', 'show', 'main:chauffeur/static/twin/gutters.js'], cwd=ROOT).decode('utf-8'), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
+    code, output = run_node(DRIVER, {'root': ROOT.as_posix(), 'plan': flatten(assemble(fixture)[0]), 'awningPlan': migrated_awning_house(False), 'mainGutters': subprocess.check_output(['git', 'show', 'd2a85dc84a588c1d4c4da9fd8ac34a8a986b5468:chauffeur/static/twin/gutters.js'], cwd=ROOT).decode('utf-8'), 'baseline': HOUSEHOLD_BASELINE, 'geometryBaseline': HOUSEHOLD_GEOMETRY_BASELINE}, timeout=180)
     print(output)
     for line in output.splitlines():
         if line.startswith('HOUSEHOLD_GUTTERS '):

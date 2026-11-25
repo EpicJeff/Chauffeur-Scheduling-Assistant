@@ -15,14 +15,14 @@ export function withoutSurfaceMaterials(value) {
 }
 export function authoredGeometry(plan) {
   plan = withoutSurfaceMaterials(plan);
-  const canonical = value => {
-    if (Array.isArray(value)) return value.map(canonical);
+  const canonical = (value, context = '') => {
+    if (Array.isArray(value)) return value.map(v => canonical(v, context));
     if (!value || typeof value !== 'object') return value;
     // flatten() mirrors person-owned active roof sections into legacy choices.
     // Assigning a finish can grow that UI list without changing any surface.
-    return Object.fromEntries(Object.keys(value).sort().filter(k => !renderMetadata.has(k) &&
+    return Object.fromEntries(Object.keys(value).sort().filter(k => !(context === 'columns' && k === 'id') && !renderMetadata.has(k) &&
       !(k === 'choices' && Array.isArray(value.sections)))
-      .map(k => [k, canonical(value[k])]));
+      .map(k => [k, canonical(value[k], k)]));
   };
   const fields = ['id', 'position', 'rotation', 'base', 'foundation', 'materials', 'levels',
     'walls', 'openings', 'rooms', 'roof', 'porch', 'porches', 'stairs', 'solar_zones'];

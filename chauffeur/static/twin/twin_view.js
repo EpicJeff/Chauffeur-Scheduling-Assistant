@@ -1,3 +1,4 @@
+import { porchPosts } from './porch_posts.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -261,7 +262,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     for (const [key, objects] of twin.pieces) {
       const data = twin.pieceBounds.get(key)?.data;
       if (!data) continue;
-      const inRoom = room && data.buildingId === room.building && allowed.has(data.pieceId);
+      const inRoom = room && data.buildingId === room.building && (allowed.has(data.pieceId) || allowed.has(data.parentPieceId));
       const ghost = room && !inRoom;
       const tint = inRoom ? data.pieceId === room.id ? accent : walls.has(data.pieceId) ? wallTint : null
         : !room && members.some(m => matchesMember(data, objects, m)) ? accent : null;
@@ -470,7 +471,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // must; perspective views can select the roof itself.
     const candidates = [...twin.pickObjects.values()].filter(o => {
       const room = selectionStyle?.room, data = o.userData;
-      if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
+      if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId) && !room.allowed.includes(data.parentPieceId))) return false;
       if (!visible(o) || viewing?.faded(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
       if (camera.isOrthographicCamera && state.view !== 'ext') {
         for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
@@ -479,7 +480,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     });
     const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
       const { kind, buildingId, pieceId } = hit.object.userData;
-      if (skip.includes(kind)) return false;
+      if (skip.includes(kind) || kind === 'porch_post' && skip.includes('room')) return false;
       if (viewing && hit.point.y > viewing.cutAt(hit.object) + .02) return false;
       if (kind !== 'room') return true;
       const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
@@ -489,6 +490,29 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const point = hit.object.parent.worldToLocal(hit.point.clone()), x = point.x, y = -point.z;
       return contains(room.polygon, [x, y]);
     });
+    // Rank actual column and screen surfaces by distance. The slab proxy can
+    // surround empty air, so keep its owner directly behind the nearest post.
+    const parents = new Map();
+    for (const hit of hits) if (hit.object.userData.kind === 'porch_post') {
+      const d = hit.object.userData, key = `${d.buildingId}:${d.parentPieceId}`;
+      if (!parents.has(key)) parents.set(key, hit);
+    }
+    for (const [key, post] of parents) {
+      const ownerHits = hits.filter(h => `${h.object.userData.buildingId}:${h.object.userData.pieceId}` === key);
+      const owner = twin.pickObjects.get(key);
+      const parent = ownerHits[0] || (owner && {...post,object:owner}); if (!parent) continue;
+      const exactHits = [];
+      for (const {object,group} of parent.object.userData.partObjects || []) {
+        if (!visible(group) || viewing?.faded(group)) continue;
+        object.matrixWorld.multiplyMatrices(group.matrixWorld, object.matrix); object.raycast(raycaster, exactHits);
+      }
+      const screen = exactHits.filter(h => h.object.userData.part === 'screen' && (!viewing || h.point.y <= viewing.cutAt(h.object)+.02))
+        .sort((a,b)=>a.distance-b.distance)[0];
+      for (const hit of ownerHits) hits.splice(hits.indexOf(hit),1);
+      if (screen && screen.distance < post.distance) {
+        parent.distance = screen.distance; parent.point = screen.point; hits.push(parent); hits.sort((a,b)=>a.distance-b.distance);
+      } else hits.splice(hits.indexOf(post)+1,0,parent);
+    }
     // Water uses the existing drawn geometry, retained through yard batching.
     // It has no structural proxy and adds no selection mesh or draw call. Only a
     // caller that asks gets a water hit, so every other tool still sees open ground.
@@ -938,7 +962,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       } else if (sameMaterials) paintHover();
       else paintSelection();
       return value.room ? [...(twin?.pieceBounds.values() || [])].filter(({ data }) =>
-        data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId)).length : 0;
+        data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId) && !value.room.allowed.includes(data.parentPieceId)).length : 0;
     },
     async setEditableLevel(key) {
       if (key === editableLevel) return;
@@ -983,18 +1007,21 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // through a porch's or a room's pick box for the wall behind it).
     pickAll(clientX, clientY, options = {}) {
       const { hits, waterHits } = pickIntersections(clientX, clientY, options), seen = new Set();
-      return [...hits, ...waterHits].sort((a, b) => a.distance - b.distance).flatMap(hit => {
-        const { kind, pieceId, buildingId = null, part } = hit.object.userData;
+      const ordered = [...hits];
+      for (const hit of waterHits) { const i=ordered.findIndex(h=>h.distance>hit.distance); ordered.splice(i<0?ordered.length:i,0,hit); }
+      return ordered.flatMap(hit => {
+        const { kind, pieceId, parentPieceId, buildingId = null, part } = hit.object.userData;
         const key = JSON.stringify([buildingId, pieceId]); if (seen.has(key)) return [];
         seen.add(key);
         let level = null;
         for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-        return [{ kind, id: pieceId, building: buildingId, pieceId, buildingId, level, distance: hit.distance, part, point: hit.point.toArray() }];
+        return [{ kind, id: pieceId, building: buildingId, pieceId, buildingId, level, distance: hit.distance, part, ...(parentPieceId ? {parentPieceId} : {}), point: hit.point.toArray() }];
       });
     },
     pick(clientX, clientY, { skip = [], water = false } = {}) {
       const { hits, waterHits } = pickIntersections(clientX, clientY, { skip, water });
-      let hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
+      const hasPost = hits.some(h => h.object.userData.kind === 'porch_post');
+      let hit = state.camera === 'top' && !hasPost ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
       if (waterHits[0] && (!hit || waterHits[0].distance < hit.distance)) {
         const water = waterHits[0], { kind, pieceId, part } = water.object.userData;
         return { kind, id: pieceId, pieceId, part, point: water.point.toArray() };
@@ -1026,10 +1053,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const exact = partHits.find(h => !viewing || h.point.y <= viewing.cutAt(h.object) + .02);
       const proxy = hit.object;
       if (exact) hit = exact;
-      const { pieceId, kind, buildingId, part } = hit.object.userData;
+      const { pieceId, parentPieceId, kind, buildingId, part } = hit.object.userData;
       let level = null;
       for (let p = proxy; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, part, point: hit.point.toArray() };
+      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, part, ...(parentPieceId ? {parentPieceId} : {}), point: hit.point.toArray() };
     },
     worldBox(id, buildingId) {
       const box = pieceBox(id, buildingId); if (!box) return null;
@@ -1453,6 +1480,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (!old || same(old.polygon, room.polygon)) continue;
         update(room.id, (x, y, z) => [x, y, z], room);
       }
+      const postsBefore = new Map(porchPosts(before).map(p=>[p.id,p]));
+      for (const post of porchPosts(after)) {
+        const old = postsBefore.get(post.id);
+        const room = after.rooms.find(r=>r.id===post.porchId);
+        if (!old || (room?.level || post.porch.level || after.levels[0].id) !== levelId || same(old.piece.at,post.piece.at)) continue;
+        const by = post.piece.at.map((v,i)=>v-old.piece.at[i]);
+        update(post.id,(x,y,z)=>[x+by[0],y+by[1],z]);
+      }
       for (const list of ['openings', 'anchors', 'items']) {
         const piecesBefore = new Map((before[list] || []).map(p => [p.id, p]));
         for (const piece of affected(list, after[list] || [])) {
@@ -1512,7 +1547,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
     async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null } = {}) {
-      const beforePlan = plan, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const identityJSON = value => JSON.stringify(value, function(key,value) {
+        return key === 'columns' && Array.isArray(value) ? value.map((c,i) => {
+          if (c.id !== `post:${this.id}:${i}`) return c;
+          const {id,...post} = c; return post;
+        }) : value;
+      });
+      const beforePlan = plan, same = (a, b) => identityJSON(a) === identityJSON(b);
       const previous = new Map((beforePlan.buildings || []).map(b => [b.id, b]));
       const onLevel = (b, list, id) => (b[list] || []).filter(p =>
         (p.level || b.walls?.find(w => w.id === (p.wall || p.host?.wall))?.level
