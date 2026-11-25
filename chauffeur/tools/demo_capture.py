@@ -6,6 +6,8 @@ Hub command (180000 ms outer timeout):
 Opt-in shots (pass --shot <name>; twin-lit-models needs --timeout 240):
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-eave-streams --timeout 170 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-lit-models --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-awning-garden --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-downspout-hand --timeout 240 --out "<dir>"
 
 All service imports live in the isolated worker. The supervisor owns its data
 directory and process tree, including a browser that fails during launch.
@@ -31,7 +33,7 @@ SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-g
 # Adding twin-eave-streams pushes the full default run over 145 s, and
 # twin-lit-models (lighting bake + model warmup) needs --timeout 240 on its own,
 # so both new shots are opt-in by name (--shot <name>) rather than in SHOTS.
-OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models')
+OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand')
 ALL_SHOTS = SHOTS + OPT_IN_SHOTS
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
@@ -39,7 +41,7 @@ TWIN_READY_TIMEOUT = 25000
 BAKE_TIMEOUT = 90000
 SURFACE_LABELS = dict(zip(ALL_SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters',
                                       'awning editor', 'awning ends and ceiling', 'patio posts',
-                                      'eave streams', 'lit models')))
+                                      'eave streams', 'lit models', 'awning garden', 'hand downspout')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -56,6 +58,13 @@ EAVE_STREAMS_TIME_S = 1057.0
 # Angled cutaway into Demo cottage Living (L1) showing sofa, coffee table,
 # armchair, glowing floor lamp, lit pool and baked shadows at night.
 LIT_MODELS_CAMERA = dict(position=[6.9, 4.7, 0.5], target=[3.85, 0.50, -4.35])
+# Low garden-side three-quarter framing of Demo cottage's existing Garden awning
+# so its arched braces, closed ends and flat underside ceiling are all readable.
+AWNING_GARDEN_CAMERA = dict(position=[0.2, 1.32, -12.8], target=[4.9, 2.05, -7.2])
+# Fraction along Demo cottage main roof Edge 1 (front eave, east of the window)
+# for the hand-placed mid-gutter downspout shot, plus its editor camera framing.
+DOWNSPOUT_HAND_AT = 0.875
+DOWNSPOUT_HAND_CAMERA = dict(position=[12.6, 3.3, 5.2], target=[8.4, 1.7, 0.2])
 
 # Evaluated both in Chromium and in the no-browser DOM regression. A ready
 # scene alone says nothing about an authentication overlay covering its canvas.
@@ -82,6 +91,12 @@ SURFACE_STATE = r"""({shot, final = false}) => {
     ready = path.endsWith('/house/twin') && twin;
     if (shot === 'twin-gutters' && final) ready = ready && !!window.__demoGutterFrame?.spout;
   }
+  if (shot === 'twin-awning-garden') {
+    ready = path.endsWith('/house/twin') && twin;
+    if (final) ready = ready
+      && !!view.plan?.buildings?.find(b => b.id === 'synth-house')?.roofs?.some(r => r.id === 'demo-awning')
+      && view.state?.time !== 'night';
+  }
   if (shot === 'twin-eave-streams') {
     ready = path.endsWith('/house/twin') && twin;
     if (final) ready = ready && view.eaves?.group?.visible === true
@@ -101,6 +116,14 @@ SURFACE_STATE = r"""({shot, final = false}) => {
       && window.__editor.selected()?.pieceId === (shot.startsWith('twin-awning-') ? 'demo-awning' : shot === 'twin-posts' ? 'front-porch' : 'r1');
     if (shot === 'twin-posts' && final) ready = ready && [...document.querySelectorAll('#piece-card button')]
       .some(button => visible(button) && button.textContent === 'Move posts to the roof');
+  }
+  if (shot === 'twin-downspout-hand') {
+    ready = path.endsWith('/house/editor') && twin && window.__editor?.ready === true;
+    if (final) ready = ready && seen('#piece-card')
+      && window.__editor.selected()?.pieceId === 'r1'
+      && [...document.querySelectorAll('#piece-card .editor-downspout-note')]
+        .some(note => visible(note) && note.textContent === 'Placed by hand')
+      && [...document.querySelectorAll('.editor-handle-downspout')].some(visible);
   }
   return {blocked, ready: !!ready};
 }"""
@@ -508,8 +531,8 @@ def _capture_pages(served, data, token, out, shots):
         if 'wall-board' in shots:
             navigate(desktop, 'wall-board', 'home?panel=true&kiosk=true')
             save(desktop, 'wall-board')
-        if set(shots) & {'twin-overview', 'twin-gutters', 'twin-eave-streams'}:
-            name = next(n for n in ('twin-overview', 'twin-gutters', 'twin-eave-streams') if n in shots)
+        if set(shots) & {'twin-overview', 'twin-gutters', 'twin-awning-garden', 'twin-eave-streams'}:
+            name = next(n for n in ('twin-overview', 'twin-gutters', 'twin-awning-garden', 'twin-eave-streams') if n in shots)
             navigate(desktop, name, 'house/twin?tier=high&test=1&panel=true&kiosk=true')
             with _shot_stage(name, 'twin daylight'):
                 desktop.evaluate('(iso) => window.__twin.setClock(iso)', now.replace(hour=12, tzinfo=timezone.utc).isoformat())
@@ -522,6 +545,18 @@ def _capture_pages(served, data, token, out, shots):
                     _assert_surface(desktop, 'twin-gutters')
                     desktop.evaluate(GUTTER_OUTLET_CAMERA, True)
                 save(desktop, 'twin-gutters', True)
+            if 'twin-awning-garden' in shots:
+                with _shot_stage('twin-awning-garden', 'awning garden framing'):
+                    _assert_surface(desktop, 'twin-awning-garden')
+                    desktop.evaluate("""(pose) => {
+                      const v = window.__twin;
+                      v.levels.go({ level: 'house' }, { immediate: true });
+                      v.controls.minDistance = 0.2;
+                      v.controls.maxPolarAngle = Math.PI * 0.85;
+                      v.setCameraState(pose);
+                      v.render();
+                    }""", AWNING_GARDEN_CAMERA)
+                save(desktop, 'twin-awning-garden', True)
             if 'twin-eave-streams' in shots:
                 with _shot_stage('twin-eave-streams', 'heavy rain and eave streams'):
                     desktop.evaluate("""async (pose) => {
@@ -564,21 +599,22 @@ def _capture_pages(served, data, token, out, shots):
                       }
                     }""")
         editor_shots = [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts') if name in shots]
-        if editor_shots:
+        if editor_shots or 'twin-downspout-hand' in shots:
             # The panel shell latches its flags in session storage. Keep the
             # editor's adult session separate while reusing the same browser
             # and one editor page across the four read-only piece shots,
             # resetting selection, camera, level, time and scroll before each.
             browser = desktop.context.browser
+            first_editor_shot = editor_shots[0] if editor_shots else 'twin-downspout-hand'
             with browser.new_context(viewport=dict(width=1600, height=900),
                     device_scale_factor=1, reduced_motion='reduce', timezone_id=DEMO_TIMEZONE,
                     service_workers='block') as editor_context:
                 editor = editor_context.new_page()
                 prepare(editor)
                 noon = now.replace(hour=12, tzinfo=timezone.utc).isoformat()
-                with _shot_stage(editor_shots[0], 'editor', timeout=TWIN_READY_TIMEOUT):
+                with _shot_stage(first_editor_shot, 'editor', timeout=TWIN_READY_TIMEOUT):
                     H.open_editor(editor, served, timeout=TWIN_READY_TIMEOUT)  # cold start on an empty profile
-                    _wait_surface(editor, editor_shots[0])
+                    _wait_surface(editor, first_editor_shot)
                     baseline = editor.evaluate("""() => {
                       const v = window.__twin;
                       return {
@@ -622,6 +658,82 @@ def _capture_pages(served, data, token, out, shots):
                         label = 'Support kind' if shot == 'twin-awning-editor' else 'Ceiling underneath'
                         editor.wait_for_selector(f'[aria-label="{label}"]', state='visible', timeout=READY_TIMEOUT)
                     save(editor, shot, True)
+                if 'twin-downspout-hand' in shots:
+                    placed = False
+                    try:
+                        with _shot_stage('twin-downspout-hand', 'hand downspout placement', timeout=READY_TIMEOUT):
+                            editor.evaluate("""({baseline, noon}) => {
+                              window.__twinEditor?.selectionStore?.clear?.();
+                              const v = window.__twin;
+                              if (baseline.level && v.levels?.go) {
+                                const target = { level: baseline.level.level };
+                                if (baseline.level.building) target.building = baseline.level.building;
+                                if (baseline.level.floor) target.floor = baseline.level.floor;
+                                if (baseline.level.room) target.room = baseline.level.room;
+                                v.levels.go(target, { immediate: true });
+                              }
+                              if (baseline.time !== null && v.setTime) v.setTime(baseline.time);
+                              v.setClock(noon);
+                              v.setCameraState(baseline.camera);
+                            }""", dict(baseline=baseline, noon=noon))
+                            editor.wait_for_function("() => !window.__editor?.selected?.()", timeout=READY_TIMEOUT)
+                            editor.evaluate("() => window.__editor.clickPiece('r1', 'synth-house')")
+                            editor.wait_for_function("() => window.__editor?.selected?.()?.pieceId === 'r1'", timeout=READY_TIMEOUT)
+                            editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
+                            editor.locator('#piece-card').get_by_role('button', name='Edge 1:', exact=False).click(timeout=READY_TIMEOUT)
+                            editor.wait_for_function(
+                                "() => document.querySelector('#piece-card h3')?.textContent === 'Roof edge 1'",
+                                timeout=READY_TIMEOUT)
+                            # Place the downspout by hand mid-gutter through the editor's own operation.
+                            editor.evaluate("""async (at) => {
+                              await window.__twinEditor.op({
+                                op: 'set_roof_edge',
+                                building: 'synth-house',
+                                roof: 'r1',
+                                edge: 0,
+                                downspouts: [{ at }, 0],
+                              });
+                              return null;
+                            }""", DOWNSPOUT_HAND_AT)
+                            placed = True
+                            editor.wait_for_function("""(at) => {
+                              const b = window.__twin?.plan?.buildings?.find(x => x.id === 'synth-house');
+                              const r = b?.roofs?.find(x => x.id === 'r1');
+                              const ds = r?.edges?.[0]?.downspouts || [];
+                              return ds.some(e => e && typeof e === 'object' && Math.abs(e.at - at) < 1e-4);
+                            }""", arg=DOWNSPOUT_HAND_AT, timeout=READY_TIMEOUT)
+                            editor.wait_for_function("""() =>
+                              [...document.querySelectorAll('#piece-card .editor-downspout-note')]
+                                .some(el => el.getClientRects().length > 0 && el.textContent === 'Placed by hand')
+                            """, timeout=READY_TIMEOUT)
+                            editor.evaluate("""(pose) => {
+                              const v = window.__twin;
+                              v.controls.minDistance = 0.2;
+                              v.controls.maxPolarAngle = Math.PI * 0.85;
+                              v.setCameraState(pose);
+                              v.render();
+                              const row = document.querySelector('#piece-card .editor-downspout-row[data-downspout-kind="exact"]');
+                              row?.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            }""", DOWNSPOUT_HAND_CAMERA)
+                            editor.wait_for_function("""() => {
+                              const note = [...document.querySelectorAll('#piece-card .editor-downspout-note')]
+                                .find(el => el.getClientRects().length > 0 && el.textContent === 'Placed by hand');
+                              if (!note) return false;
+                              const rect = note.getBoundingClientRect();
+                              const box = document.getElementById('properties-content')?.getBoundingClientRect();
+                              const inView = box ? rect.top >= box.top && rect.bottom <= box.bottom : rect.bottom <= window.innerHeight;
+                              return inView && [...document.querySelectorAll('.editor-handle-downspout')]
+                                .some(el => el.getClientRects().length > 0);
+                            }""", timeout=READY_TIMEOUT)
+                        save(editor, 'twin-downspout-hand', True)
+                    finally:
+                        if placed and 'twin-lit-models' in shots:
+                            editor.evaluate("() => document.getElementById('rail-undo')?.click()")
+                            editor.wait_for_function("""() => {
+                              const b = window.__twin?.plan?.buildings?.find(x => x.id === 'synth-house');
+                              const r = b?.roofs?.find(x => x.id === 'r1');
+                              return !r?.edges?.[0]?.downspouts;
+                            }""", timeout=READY_TIMEOUT)
         if 'twin-lit-models' in shots:
             from tools.demo_seed import DEMO_LAMP_ENTITY, furnish_demo_room
             browser = desktop.context.browser
