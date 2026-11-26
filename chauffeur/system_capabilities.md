@@ -1,6 +1,16 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1005 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1006 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1006 (2026-11-26, NOT device-verified): edits stop recomputing rain cover for the whole scene.**
+
+Every structural edit (roofs, awnings, porches and posts, walls, rooms) re-sampled rain cover (`writeWeatherOpen`, `sky/sky_cover.js`) for every vertex and instance of the scene: 7.9 of a 9.3 s rebuild on the owner's house. It now keeps samples outside the cover that changed: cover parts are compared by value (exact triangle words), the dirty box of a changed roof reaches the top of every building it overlaps, rebuilt batches take samples by exact world position and face class, and clipped geometry is kept where no nearby cover edge changed. Results are byte-identical to a fresh computation: weatherOpen, positions, UVs, indices, ranges, groups, transforms, instance data and material keys, atlas keys and chart counts, over every edit and undo on the household fixture and the owner's export (168 of 168, `test_twin_rain_cover_reuse_js --full`). No shader, draw, program or sampler change.
+
+**Owner's 11-20 house, in Chromium (editor, High):** move a post 2.9 to 0.36 s, size 2.9 to 0.32 s, delete or undo a post 9 to 1.4 s, select a post 0.2 s. Node CPU, median of five: post delete 3.4 to 0.23 s, pool-house roof edit 3.6 to 0.25 s, main-house roof edit 3.1 to 0.94 s, a wall-drag frame 5.9 to 0.95 s, first load 12.6 to 11.3 s. A live cover holds 1.4 MB, against 2.7 MB before.
+
+**Demo.** Opt-in shot `twin-room-focus`.
+
+Tests: `test_twin_rain_cover_reuse_js` (default 13, `--full` 168), with `sky_cover`, `precipitation`, `eave_streams`, `wet_receivers`, `building_reuse`, `yard_reuse`, `view_settle`, `bake_fingerprint`, `bake_editor_source`, `awning_golden`, `porch_posts_js`, `plain_selection_js`.
 
 **v2.499.1005 (2026-11-25, NOT device-verified): porch posts are pieces you can select, move, add, delete and size.**
 
