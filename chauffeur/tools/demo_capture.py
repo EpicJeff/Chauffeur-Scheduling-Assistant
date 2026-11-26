@@ -8,6 +8,7 @@ Opt-in shots (pass --shot <name>; twin-lit-models needs --timeout 240):
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-lit-models --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-awning-garden --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-downspout-hand --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-room-focus --timeout 240 --out "<dir>"
 
 All service imports live in the isolated worker. The supervisor owns its data
 directory and process tree, including a browser that fails during launch.
@@ -33,7 +34,7 @@ SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-g
 # Adding twin-eave-streams pushes the full default run over 145 s, and
 # twin-lit-models (lighting bake + model warmup) needs --timeout 240 on its own,
 # so both new shots are opt-in by name (--shot <name>) rather than in SHOTS.
-OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand')
+OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus')
 ALL_SHOTS = SHOTS + OPT_IN_SHOTS
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
@@ -41,7 +42,7 @@ TWIN_READY_TIMEOUT = 25000
 BAKE_TIMEOUT = 90000
 SURFACE_LABELS = dict(zip(ALL_SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters',
                                       'awning editor', 'awning ends and ceiling', 'patio posts',
-                                      'eave streams', 'lit models', 'awning garden', 'hand downspout')))
+                                      'eave streams', 'lit models', 'awning garden', 'hand downspout', 'room focus')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -65,6 +66,9 @@ AWNING_GARDEN_CAMERA = dict(position=[0.2, 1.32, -12.8], target=[4.9, 2.05, -7.2
 # for the hand-placed mid-gutter downspout shot, plus its editor camera framing.
 DOWNSPOUT_HAND_AT = 0.875
 DOWNSPOUT_HAND_CAMERA = dict(position=[12.6, 3.3, 5.2], target=[8.4, 1.7, 0.2])
+# Elevated three-quarter framing of Demo cottage Living room in Focus room so
+# the highlighted room and the ghosted roof, porch and hip wing read clearly.
+ROOM_FOCUS_CAMERA = dict(position=[-6.5, 11.2, 13.0], target=[7.2, 1.0, -2.5])
 
 # Evaluated both in Chromium and in the no-browser DOM regression. A ready
 # scene alone says nothing about an authentication overlay covering its canvas.
@@ -124,6 +128,13 @@ SURFACE_STATE = r"""({shot, final = false}) => {
       && [...document.querySelectorAll('#piece-card .editor-downspout-note')]
         .some(note => visible(note) && note.textContent === 'Placed by hand')
       && [...document.querySelectorAll('.editor-handle-downspout')].some(visible);
+  }
+  if (shot === 'twin-room-focus') {
+    ready = path.endsWith('/house/editor') && twin && window.__editor?.ready === true;
+    if (final) ready = ready && seen('#piece-card')
+      && window.__twinEditor?.selection?.()?.room === 'rm1'
+      && [...document.querySelectorAll('#piece-card button')]
+        .some(button => visible(button) && button.textContent === 'Leave room');
   }
   return {blocked, ready: !!ready};
 }"""
@@ -598,11 +609,11 @@ def _capture_pages(served, data, token, out, shots):
                         delete window.__demoOrigPerfNow;
                       }
                     }""")
-        editor_shots = [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts') if name in shots]
+        editor_shots = [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts', 'twin-room-focus') if name in shots]
         if editor_shots or 'twin-downspout-hand' in shots:
             # The panel shell latches its flags in session storage. Keep the
             # editor's adult session separate while reusing the same browser
-            # and one editor page across the four read-only piece shots,
+            # and one editor page across the read-only piece shots,
             # resetting selection, camera, level, time and scroll before each.
             browser = desktop.context.browser
             first_editor_shot = editor_shots[0] if editor_shots else 'twin-downspout-hand'
@@ -624,7 +635,6 @@ def _capture_pages(served, data, token, out, shots):
                       };
                     }""")
                 for shot in editor_shots:
-                    piece_id = 'demo-awning' if shot.startswith('twin-awning-') else 'front-porch' if shot == 'twin-posts' else 'r1'
                     with _shot_stage(shot, 'editor', timeout=READY_TIMEOUT):
                         editor.evaluate("""({baseline, noon}) => {
                           window.__twinEditor?.selectionStore?.clear?.();
@@ -644,16 +654,61 @@ def _capture_pages(served, data, token, out, shots):
                             if (node) node.scrollTop = 0;
                           }
                         }""", dict(baseline=baseline, noon=noon))
-                        editor.wait_for_function("() => !window.__editor?.selected?.()", timeout=READY_TIMEOUT)
-                        editor.evaluate("id => window.__editor.clickPiece(id, 'synth-house')", piece_id)
-                        editor.wait_for_function("id => window.__editor?.selected?.()?.pieceId === id", arg=piece_id, timeout=READY_TIMEOUT)
-                        editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
-                        editor.evaluate("""() => {
-                          for (const id of ['piece-card', 'properties-content', 'dock-properties', 'editor-sidebar']) {
-                            const node = document.getElementById(id);
-                            if (node) node.scrollTop = 0;
-                          }
-                        }""")
+                        editor.wait_for_function(
+                            "() => !window.__editor?.selected?.() && !window.__twinEditor?.selection?.()?.room",
+                            timeout=READY_TIMEOUT)
+                        if shot == 'twin-room-focus':
+                            editor.locator('#dock-tab-scene').click(timeout=READY_TIMEOUT)
+                            room_row = editor.locator('#scene-tree [data-scene-id="rm1"] [data-scene-select]')
+                            if not room_row.is_visible():
+                                for key in ('["synth-house","synth-house"]', '["synth-house","L1"]'):
+                                    disclosure = editor.locator(
+                                        f"#scene-tree [data-scene-key='{key}'] [data-row-disclosure]")
+                                    if disclosure.is_visible() and disclosure.get_attribute('aria-expanded') == 'false':
+                                        disclosure.click(timeout=READY_TIMEOUT)
+                            room_row.scroll_into_view_if_needed(timeout=READY_TIMEOUT)
+                            room_row.click(timeout=READY_TIMEOUT)
+                            editor.wait_for_function("() => window.__editor?.selected?.()?.pieceId === 'rm1'", timeout=READY_TIMEOUT)
+                            editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
+                            editor.locator('#piece-card').get_by_role('button', name='Focus room', exact=True).click(timeout=READY_TIMEOUT)
+                            _ready_evaluate(editor, 'window.__twin.selectionReady')
+                            editor.evaluate("""(pose) => {
+                              const v = window.__twin;
+                              v.setCameraState(pose);
+                              v.render();
+                              const leave = [...document.querySelectorAll('#piece-card button')]
+                                .find(el => el.getClientRects().length > 0 && el.textContent === 'Leave room');
+                              const sidebar = document.getElementById('editor-sidebar');
+                              if (leave && sidebar) {
+                                const top = leave.getBoundingClientRect().top - sidebar.getBoundingClientRect().top;
+                                sidebar.scrollTop = Math.max(0, sidebar.scrollTop + top - 14);
+                              } else {
+                                leave?.scrollIntoView({ block: 'start', behavior: 'instant' });
+                              }
+                            }""", ROOM_FOCUS_CAMERA)
+                            editor.wait_for_function("""() => {
+                              if (window.__twinEditor?.selection?.()?.room !== 'rm1') return false;
+                              const bake = document.querySelector('#twin-bake-controls output')?.textContent || '';
+                              if (bake.startsWith('Checking')) return false;
+                              const leave = [...document.querySelectorAll('#piece-card button')]
+                                .find(el => el.getClientRects().length > 0 && el.textContent === 'Leave room');
+                              if (!leave) return false;
+                              const rect = leave.getBoundingClientRect();
+                              const box = document.getElementById('editor-sidebar')?.getBoundingClientRect();
+                              return !!box && rect.top >= box.top && rect.bottom <= box.bottom
+                                && rect.top >= 0 && rect.bottom <= window.innerHeight;
+                            }""", timeout=READY_TIMEOUT)
+                        else:
+                            piece_id = 'demo-awning' if shot.startswith('twin-awning-') else 'front-porch' if shot == 'twin-posts' else 'r1'
+                            editor.evaluate("id => window.__editor.clickPiece(id, 'synth-house')", piece_id)
+                            editor.wait_for_function("id => window.__editor?.selected?.()?.pieceId === id", arg=piece_id, timeout=READY_TIMEOUT)
+                            editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)
+                            editor.evaluate("""() => {
+                              for (const id of ['piece-card', 'properties-content', 'dock-properties', 'editor-sidebar']) {
+                                const node = document.getElementById(id);
+                                if (node) node.scrollTop = 0;
+                              }
+                            }""")
                     if shot.startswith('twin-awning-'):
                         label = 'Support kind' if shot == 'twin-awning-editor' else 'Ceiling underneath'
                         editor.wait_for_selector(f'[aria-label="{label}"]', state='visible', timeout=READY_TIMEOUT)
@@ -676,7 +731,9 @@ def _capture_pages(served, data, token, out, shots):
                               v.setClock(noon);
                               v.setCameraState(baseline.camera);
                             }""", dict(baseline=baseline, noon=noon))
-                            editor.wait_for_function("() => !window.__editor?.selected?.()", timeout=READY_TIMEOUT)
+                            editor.wait_for_function(
+                                "() => !window.__editor?.selected?.() && !window.__twinEditor?.selection?.()?.room",
+                                timeout=READY_TIMEOUT)
                             editor.evaluate("() => window.__editor.clickPiece('r1', 'synth-house')")
                             editor.wait_for_function("() => window.__editor?.selected?.()?.pieceId === 'r1'", timeout=READY_TIMEOUT)
                             editor.wait_for_selector('#piece-card', state='visible', timeout=READY_TIMEOUT)

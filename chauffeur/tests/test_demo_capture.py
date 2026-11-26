@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools' / 'demo_capture.py'
 NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters',
          'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts',
-         'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand']
+         'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -32,6 +32,7 @@ document.querySelectorAll = selectors => selectors.split(',').map(s=>nodes.get(s
 globalThis.getComputedStyle = () => ({visibility:'visible', display:'block'});
 window.Alpine = {$data: () => ({board:{tiles:[{}]}})};
 window.__editor = {ready:true, selected:()=>({pieceId:'r1',buildingId:'synth-house'})};
+window.__twinEditor = {selection:()=>({room:null})};
 window.__twin = {
   ready:true, plan:{buildings:[{id:'synth-house', roofs:[{id:'demo-awning'}]}]}, stats:()=>({triangles:100}),
   eaves:{group:{visible:true}, data:{instances:[{}], pours:[]}},
@@ -43,15 +44,18 @@ window.__twin = {
 window.__demoGutterFrame = {run:'demo-run', spout:'demo-spout'};
 for (const shot of input.shots) {
   window.__twin.state.time = shot === 'twin-lit-models' ? 'night' : 'auto';
-  window.__editor.selected = () => ({pieceId:shot.startsWith('twin-awning-')?'demo-awning':shot==='twin-posts'?'front-porch':'r1',buildingId:'synth-house'});
+  window.__editor.selected = () => ({pieceId:shot.startsWith('twin-awning-')?'demo-awning':shot==='twin-posts'?'front-porch':shot==='twin-room-focus'?'rm1':'r1',buildingId:'synth-house'});
+  window.__twinEditor.selection = () => ({room: shot === 'twin-room-focus' ? 'rm1' : null});
   nodes.clear();
-  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts','twin-downspout-hand'].includes(shot)?'editor':'twin')
+  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts','twin-downspout-hand','twin-room-focus'].includes(shot)?'editor':'twin')
      : shot==='wall-board'?'/home':'/app'};
   for(const selector of ['.pwa-brief-greet','.pwa-brief-day [data-kind]',
      '#plan-head .pwa-plan-title','.pwa-tl .pwa-ev','[x-data="homeBoard()"]',
      '#piece-card','canvas']) nodes.set(selector,node);
   const postsButton = {...node, textContent:'Move posts to the roof'};
   if(shot==='twin-posts')nodes.set('#piece-card button',postsButton);
+  const leaveRoomButton = {...node, textContent:'Leave room'};
+  if(shot==='twin-room-focus')nodes.set('#piece-card button',leaveRoomButton);
   const placedNote = {...node, textContent:'Placed by hand'};
   if(shot==='twin-downspout-hand') {
     nodes.set('#piece-card .editor-downspout-note', placedNote);
@@ -62,6 +66,18 @@ for (const shot of input.shots) {
     nodes.delete('#piece-card button');
     assert.equal(check({shot,final:true}).ready,false,'posts shot requires the actual action');
     nodes.set('#piece-card button',postsButton);
+  }
+  if(shot==='twin-room-focus') {
+    window.__twinEditor.selection = () => ({room:null});
+    assert.equal(check({shot,final:true}).ready,false,'room-focus shot requires focused room');
+    window.__twinEditor.selection = () => ({room:'srm1'});
+    assert.equal(check({shot,final:true}).ready,false,'room-focus shot requires Living room id rm1');
+    window.__twinEditor.selection = () => ({room:'rm1'});
+    nodes.delete('#piece-card button');
+    assert.equal(check({shot,final:true}).ready,false,'room-focus shot requires visible Leave room button');
+    nodes.set('#piece-card button',{...node, textContent:'Focus room'});
+    assert.equal(check({shot,final:true}).ready,false,'room-focus shot requires Leave room label');
+    nodes.set('#piece-card button',leaveRoomButton);
   }
   if(shot==='twin-awning-garden') {
     window.__twin.state.time = 'night';
@@ -111,7 +127,7 @@ for (const shot of input.shots) {
   location.pathname='/account/login';
   assert.equal(check({shot,final:true}).ready,false,shot+' wrong route');
 }
-console.log('all thirteen surfaces reject visible pairing/sign-in overlays and wrong routes');
+console.log('all fourteen surfaces reject visible pairing/sign-in overlays and wrong routes');
 '''
         code, output = run_node(driver, {'root': ROOT.as_posix(), 'guard': SURFACE_STATE, 'shots': NAMES})
         self.assertEqual(code, 0, output)
@@ -212,7 +228,7 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
     def test_opt_in_shots_excluded_from_default(self):
         sys.path.insert(0, str(ROOT))
         from tools import demo_capture as demo
-        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand')
+        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus')
         for name in opt_in:
             self.assertNotIn(name, demo.SHOTS)
             self.assertIn(name, demo.OPT_IN_SHOTS)
@@ -406,7 +422,7 @@ with demo.isolated_data() as directory:
                patch.object(storage.db,'path',str(out.parent/'decoy.sqlite3')),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()[:-1]),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()+[{'id':'decoy'}])]
-        for shot in ('twin-overview', 'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand'):
+        for shot in ('twin-overview', 'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus'):
             for case in cases:
                 with case:
                     try: demo._save_still(page,shot,out,data,True)
