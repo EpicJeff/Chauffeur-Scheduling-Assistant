@@ -481,7 +481,7 @@ export function buildTwin(plan, kit, tier, { previous = null, ...opts } = {}) {
   }
   let adopted = false;
   next.skyCover = createSkyCover(plan, next.roofSurfaces);
-  writeWeatherOpen(root, next.skyCover);
+  writeWeatherOpen(root, next.skyCover, 1, previous?.root);
   // Call after ready and the view's revision check, like yard.adoptParts.
   next.adoptBuildings = () => {
     if (adopted) return;

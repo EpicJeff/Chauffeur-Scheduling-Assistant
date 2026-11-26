@@ -1,16 +1,132 @@
 import * as THREE from 'three';
-import { buildingBase, buildingFootprint, inPolygon, edgeDistance } from '../twin_ground.js';
+import { buildingBase, buildingFootprint, inPolygon } from '../twin_ground.js';
 import { roofMeshGroups } from '../twin_roof.js';
 
 const FT=.3048, EDGE=.6, EPS=.002;
+const heightSlack=(min,max)=>(max-min)*3e-6+(Math.abs(min)+Math.abs(max)+1)*1e-9;
+const EMPTY=[];
 export const HEIGHT_NONE=-1e4;
 const owners=new WeakMap();
 const written=new WeakMap();
 const unclipped=new WeakMap();
+const coverParts=new WeakMap();
+const coverIds=new WeakMap();let nextCoverId=0;
+// Only the two covers being compared live here; never retain a history chain.
+const changes=new WeakMap();
+const edgeCaches=new WeakMap();
+const edgeChanges=new WeakMap();
+const coverGeometry=new WeakMap(),edgePieces=new WeakMap(),reusePieces=new WeakMap();
+const edgeSafety=new WeakMap(),edgeRaw=new WeakMap();
+function inheritEdges(before,after) {
+  if(before===after)return;
+  if(edgeCaches.has(before))edgeCaches.set(after,edgeCaches.get(before));
+  if(edgePieces.has(before))edgePieces.set(after,edgePieces.get(before));
+  if(edgeSafety.has(before))edgeSafety.set(after,edgeSafety.get(before));
+  if(edgeRaw.has(before))edgeRaw.set(after,edgeRaw.get(before));
+}
+function sameProjection(before,after) {
+  const a=coverGeometry.get(before),b=coverGeometry.get(after);
+  if(!a||!b||a.polygons!==b.polygons||a.triangles.length!==b.triangles.length)return false;
+  for(let i=0;i<a.triangles.length;i++){
+    const x=a.triangles[i],y=b.triangles[i];if(x.roof!==y.roof)return false;
+    for(let j=0;j<3;j++)if(!Object.is(x.p[j][0],y.p[j][0])||!Object.is(x.p[j][2],y.p[j][2]))return false;
+  }
+  return true;
+}
+const clipSkipKinds=new Set(['roof','wall','room','floor','ceiling','trim','opening','fixture','furniture','planting']);
+function addDirty(boxes,box) {
+  for(let i=0;i<boxes.length;) {
+    const b=boxes[i];
+    if(box[1]<b[0]||box[0]>b[1]||box[3]<b[2]||box[2]>b[3]||(box[5]??Infinity)<(b[4]??-Infinity)||(box[4]??-Infinity)>(b[5]??Infinity)){i++;continue;}
+    box=[Math.min(box[0],b[0]),Math.max(box[1],b[1]),Math.min(box[2],b[2]),Math.max(box[3],b[3]),
+      Math.min(box[4]??-Infinity,b[4]??-Infinity),Math.max(box[5]??Infinity,b[5]??Infinity)];
+    boxes.splice(i,1);i=0;
+  }
+  boxes.push(box);
+}
+function canClip(g,o) {
+  if(o.userData.clipWeatherOpen===false||clipSkipKinds.has(o.userData.kind))return false;
+  if([].concat(o.material||[]).some(m=>m?.userData?.plantWind))return false;
+  for(let p=o;p;p=p.parent)if(p.userData?.yardPart)return ['hardscape','terrain'].includes(p.userData.yardPart);
+  const ranges=o.userData.snapRanges||g.userData.snapRanges;
+  return !ranges||ranges.some(r=>r.kind==='porch'||r.kind==='deck');
+}
+function changedEdges(before,after) {
+  const id=coverIds.get(before),cached=edgeChanges.get(after);
+  if(cached?.id===id)return cached.boxes;
+  if(sameProjection(before,after)){
+    before.clipEdges();
+    if(edgePieces.has(before))reusePieces.set(after,{pieces:edgePieces.get(before),raw:edgeRaw.get(before),safe:edgeSafety.get(before)!==false});
+  }
+  const entries=cover=>new Map(cover.clipEdges().outer.map(e=>[JSON.stringify({...e,highY:0,lowY:0}),e]));
+  const a=entries(before),b=entries(after),boxes=[];
+  for(const [k,e] of a){
+    const n=b.get(k);
+    if(!n)addDirty(boxes,[e.x0-EDGE-.02,e.x1+EDGE+.02,e.z0-EDGE-.02,e.z1+EDGE+.02]);
+    else if(e.highY!==n.highY||e.lowY!==n.lowY)addDirty(boxes,[e.x0-EDGE-.02,e.x1+EDGE+.02,e.z0-EDGE-.02,e.z1+EDGE+.02,
+      Math.min(e.highY,n.highY)-EPS,Math.max(e.highY,n.highY)-EPS]);
+  }
+  for(const [k,e] of b)if(!a.has(k))addDirty(boxes,[e.x0-EDGE-.02,e.x1+EDGE+.02,e.z0-EDGE-.02,e.z1+EDGE+.02]);
+  edgeChanges.set(after,{id,boxes});return boxes;
+}
+function changedCover(before,after) {
+  if(before===after)return [];
+  const a=coverParts.get(before),b=coverParts.get(after);
+  if(!a||!b)return null;
+  let cached=changes.get(after);
+  const id=coverIds.get(before);
+  if(cached?.id===id)return cached.boxes;
+  const boxes=[];
+  // A height-only move cannot change any sample below both complete triangles:
+  // coverage and the outside EDGE ramp are identical there. Pair exact XZ
+  // triangles to limit dirty Y to the old/new height band (no quantization).
+  const projected=key=>{
+    const prefix=key.startsWith('roof')?'roof':key.startsWith('slab')?'slab':null;
+    if(!prefix)return null;const s=key.slice(prefix.length);
+    return prefix+s.slice(0,4)+s.slice(8,16)+s.slice(20,28)+s.slice(32,36);
+  };
+  const minimum=key=>{
+    const offset=4,words=new Uint16Array(4),value=new Float64Array(words.buffer);let min=Infinity,max=-Infinity;
+    for(const start of [offset+4,offset+16,offset+28]){for(let i=0;i<4;i++)words[i]=key.charCodeAt(start+i);min=Math.min(min,value[0]);max=Math.max(max,value[0]);}
+    return min-heightSlack(min,max)-EPS;
+  };
+  const removed=new Map(),used=new Set();
+  for(const [key,box] of a)if(!b.has(key)){
+    const p=projected(key);if(p)removed.set(p,[key,box]);
+  }
+  for(const [key,box] of b)if(!a.has(key)){
+    const old=removed.get(projected(key));
+    if(old){used.add(old[0]);addDirty(boxes,[box[0],box[1],box[2],box[3],Math.min(minimum(key),minimum(old[0])),Math.max(box[5],old[1][5])]);}
+    else addDirty(boxes,box);
+  }
+  for(const [key,box] of a)if(!b.has(key)&&!used.has(key))addDirty(boxes,box);
+  changes.set(after,{id,boxes});return boxes;
+}
+function intersects(b,boxes) {
+  if(boxes===null)return true;
+  for(const d of boxes)if(b.max.x>=d[0]&&b.min.x<=d[1]&&b.max.z>=d[2]&&b.min.z<=d[3]&&b.max.y>=(d[4]??-Infinity)&&b.min.y<=(d[5]??Infinity))return true;
+  return false;
+}
+function insideChanged(x,y,z,boxes) {
+  if(boxes===null)return true;
+  for(const d of boxes)if(x>=d[0]&&x<=d[1]&&z>=d[2]&&z<=d[3]&&y>=(d[4]??-Infinity)&&y<=(d[5]??Infinity))return true;
+  return false;
+}
 // Generated roof snapshots are immutable; slab refresh replaces its array.
 // Identity keys avoid serializing every roof vertex on each editor drag frame.
 const references=new WeakMap();let nextReference=0;
 const reference=value=>{if(!references.has(value))references.set(value,++nextReference);return references.get(value);};
+// Same operations as edgeDistance, including hypot's rounding, without the
+// three temporary point arrays per edge. sqrt(dx*dx+dz*dz) changes the last bit.
+function distanceToEdge(x,z,ax,az,bx,bz,limit) {
+  const dx=bx-ax,dz=bz-az,d=dx*dx+dz*dz;
+  const t=d?Math.max(0,Math.min(1,((x-ax)*dx+(z-az)*dz)/d)):0;
+  const qx=x-ax-t*dx,qz=z-az-t*dz;
+  // A deliberately loose squared rejection; close candidates still run the
+  // original hypot, so its rounding decides every stored ramp value.
+  if(qx*qx+qz*qz>limit*limit*1.000000000001)return limit;
+  return Math.hypot(qx,qz);
+}
 
 // All samples are world metres. Roof triangles come from the generated draw
 // geometry (including awnings, shed extensions and overhangs), before batching.
@@ -18,31 +134,58 @@ const reference=value=>{if(!references.has(value))references.set(value,++nextRef
 export function createSkyCover(plan={},roofs=new Map()) {
   roofs=roofs||new Map();
   const buildings=[],triangles=[],slabs=[];
-  const staticParts=[],dynamicParts=[];
+  let lowInterior=false;
+  const localScratch=[0,0];
+  const fallbackSlabs=[];
+  const parts=new Map();
+  const keyFloat=new Float64Array(1),keyWords=new Uint16Array(keyFloat.buffer);
+  const part=(kind,data,points)=>{
+    const xs=points.map(p=>p[0]),zs=points.map(p=>p[2]);
+    // EDGE ramp, clip offset, edge-classification probe and numerical tolerance.
+    const margin=EDGE+.02;
+    // Exact IEEE words, not decimal text or a collision-prone hash. Triangle
+    // keys occupy 72 bytes rather than hundreds of decimal string characters.
+    let key=kind;
+    if(data===points)for(const p of points)for(const value of p){keyFloat[0]=value;key+=String.fromCharCode(...keyWords);}
+    else key+=JSON.stringify(data);
+    const box=[Math.min(...xs)-margin,Math.max(...xs)+margin,Math.min(...zs)-margin,Math.max(...zs)+margin];
+    if(data===points){const ys=points.map(p=>p[1]),min=Math.min(...ys),max=Math.max(...ys);box.push(-Infinity,max+heightSlack(min,max)-EPS);}
+    parts.set(key,box);
+  };
+  const staticParts=[],dynamicParts=[],projectedPolygons=[];
   let minimumRoof=Infinity;
   const bounds={x0:Infinity,x1:-Infinity,z0:Infinity,z1:-Infinity,top:-Infinity};
   const include=([x,y,z])=>{bounds.x0=Math.min(bounds.x0,x);bounds.x1=Math.max(bounds.x1,x);bounds.z0=Math.min(bounds.z0,z);bounds.z1=Math.max(bounds.z1,z);bounds.top=Math.max(bounds.top,y);};
   for(const b of plan.buildings||[]) {
     const angle=(b.rotation||0)*Math.PI/180,c=Math.cos(angle),s=Math.sin(angle),pos=b.position||[0,0],base=buildingBase(plan,b);
     const point=(x,y,h)=>[(pos[0]+x*c-y*s)*FT,(base+h)*FT,-(pos[1]+x*s+y*c)*FT];
-    const local=(x,z)=>{const dx=x/FT-pos[0],dy=-z/FT-pos[1];return [dx*c+dy*s,-dx*s+dy*c];};
+    const local=(x,z,out=[])=>{const dx=x/FT-pos[0],dy=-z/FT-pos[1];out[0]=dx*c+dy*s;out[1]=-dx*s+dy*c;return out;};
     const levels=b.levels||[],top=Math.max(0,...levels.map(l=>l.elevation+l.ceiling))*FT+base*FT;
     const footprint=buildingFootprint(b),corners=footprint.map(p=>point(...p,top/FT-base));
     buildings.push({local,footprint,top,x0:Math.min(...corners.map(p=>p[0])),x1:Math.max(...corners.map(p=>p[0])),
       z0:Math.min(...corners.map(p=>p[2])),z1:Math.max(...corners.map(p=>p[2])),
       porches:(b.rooms||[]).filter(r=>r.kind==='porch').map(r=>r.polygon)});
+    buildings.at(-1).porchBoxes=buildings.at(-1).porches.map(poly=>[
+      Math.min(...poly.map(p=>p[0])),Math.min(...poly.map(p=>p[1])),Math.max(...poly.map(p=>p[0])),Math.max(...poly.map(p=>p[1]))]);
     corners.forEach(include);
+    projectedPolygons.push([pos,angle,footprint,buildings.at(-1).porches]);
+    part('interior',[corners,buildings.at(-1).porches,pos,angle,base],corners);
     const surfaces=roofs.get(b.id),roofPositions=surfaces?.coverPositions||roofMeshGroups(b.roof?.sections||[]).positions;
     staticParts.push([b.id,pos,angle,base,footprint,top,buildings.at(-1).porches,reference(roofPositions)]);
     dynamicParts.push(surfaces?.slabPositions?reference(surfaces.slabPositions):[levels,(b.rooms||[]).map(r=>[r.level,r.kind,r.state,r.polygon,r.floor_offset_ft])]);
     for(const [positions,roof] of [[roofPositions,true],[surfaces?.slabPositions||[],false]])for(let i=0;i<positions.length;i+=9) {
       const p=[0,3,6].map(j=>point(positions[i+j],positions[i+j+1],positions[i+j+2]));
       p.forEach(include);
+      part(roof?'roof':'slab',p,p);
       if(roof)for(const v of p)minimumRoof=Math.min(minimumRoof,v[1]);
       const den=(p[1][2]-p[2][2])*(p[0][0]-p[2][0])+(p[2][0]-p[1][0])*(p[0][2]-p[2][2]);
       if(Math.abs(den)<1e-10)continue;
+      const minY=Math.min(p[0][1],p[1][1],p[2][1]),maxY=Math.max(p[0][1],p[1][1],p[2][1]);
+      // height() permits barycentric weights down to -1e-6. Its upper bound
+      // therefore includes extrapolation plus deliberately loose rounding room.
+      const ceiling=maxY+heightSlack(minY,maxY);
       triangles.push({p,den,roof,x0:Math.min(...p.map(v=>v[0])),x1:Math.max(...p.map(v=>v[0])),
-        z0:Math.min(...p.map(v=>v[2])),z1:Math.max(...p.map(v=>v[2]))});
+        z0:Math.min(...p.map(v=>v[2])),z1:Math.max(...p.map(v=>v[2])),ceiling});
     }
     // Upper slabs and ceilings remain cover when the editor peels a roof away.
     // Keep the plan's concave outlines and room offsets, rather than a box.
@@ -52,13 +195,23 @@ export function createSkyCover(plan={},roofs=new Map()) {
       for(const r of b.rooms||[])if(r.level===l.id&&r.kind!=='porch'&&r.state!=='ghost'&&r.polygon?.length>=3&&l.elevation>Math.min(...levels.map(level=>level.elevation)))
         slabs.push({local,polygon:r.polygon,height:(base+l.elevation+(r.floor_offset_ft||0))*FT});
     }
+    if(!surfaces?.slabPositions)for(const slab of slabs.filter(s=>s.local===local)){
+      const points=slab.polygon.map(p=>point(...p,slab.height/FT-base));
+      fallbackSlabs.push(points);
+      projectedPolygons.push(points.map(p=>[p[0],p[2]]));
+    }
   }
-  const grid=new Map(),cell=4;
+  // Fallback room offsets/outlines can extend beyond the legacy global gate.
+  // A gate change can affect only those slab polygons, so include its exact
+  // values in their part identity rather than dirtying the whole scene.
+  for(const points of fallbackSlabs)part('outlineSlab',[points,bounds],points);
+  const grid=new Map(),roofGrid=new Map(),cell=1;
   for(const t of triangles)for(let x=Math.floor((t.x0-EDGE)/cell);x<=Math.floor((t.x1+EDGE)/cell);x++)
     for(let z=Math.floor((t.z0-EDGE)/cell);z<=Math.floor((t.z1+EDGE)/cell);z++){
       const key=x+':'+z;if(!grid.has(key))grid.set(key,[]);grid.get(key).push(t);
+      if(t.roof){if(!roofGrid.has(key))roofGrid.set(key,[]);roofGrid.get(key).push(t);}
     }
-  const nearby=(x,z)=>grid.get(Math.floor(x/cell)+':'+Math.floor(z/cell))||[];
+  const nearby=(x,z,withSlabs=true)=>(withSlabs?grid:roofGrid).get(Math.floor(x/cell)+':'+Math.floor(z/cell))||EMPTY;
   function height(t,x,z) {
     if(x<t.x0-1e-6||x>t.x1+1e-6||z<t.z0-1e-6||z>t.z1+1e-6)return null;
     const [a,b,c]=t.p,u=((b[2]-c[2])*(x-c[0])+(c[0]-b[0])*(z-c[2]))/t.den;
@@ -67,28 +220,37 @@ export function createSkyCover(plan={},roofs=new Map()) {
   }
   const roofHeight=(x,_y,z)=>{
     let top=-Infinity;
-    for(const t of nearby(x,z)){if(!t.roof)continue;const h=height(t,x,z);if(h!==null)top=Math.max(top,h);}
+    for(const t of nearby(x,z,false)){if(t.ceiling<=top)continue;const h=height(t,x,z);if(h!==null)top=Math.max(top,h);}
     return top;
   };
-  const interior=(x,y,z)=>buildings.some(b=>{
-    if(x<b.x0-1e-6||x>b.x1+1e-6||z<b.z0-1e-6||z>b.z1+1e-6)return false;
-    const p=b.local(x,z);
-    if(!inPolygon(b.footprint,...p)||b.porches.some(poly=>inPolygon(poly,...p)))return false;
+  function inPorch(b,x,z) {
+    for(let i=0;i<b.porches.length;i++){
+      const box=b.porchBoxes[i];
+      if(x>=box[0]-1e-7&&z>=box[1]-1e-7&&x<=box[2]+1e-7&&z<=box[3]+1e-7&&inPolygon(b.porches[i],x,z))return true;
+    }
+    return false;
+  }
+  const interior=(x,y,z)=>{for(const b of buildings){
+    if(x<b.x0-1e-6||x>b.x1+1e-6||z<b.z0-1e-6||z>b.z1+1e-6)continue;
+    const p=b.local(x,z,localScratch);
+    if(!inPolygon(b.footprint,p[0],p[1])||inPorch(b,p[0],p[1]))continue;
     // Below every roof (or the fallback indoor top), the exact roof ray test
     // cannot change the answer. This is most floor, furniture and wall data.
-    if(y<Math.min(b.top,minimumRoof)-EPS)return true;
+    if(y<Math.min(b.top,minimumRoof)-EPS){lowInterior=true;return true;}
     const roof=roofHeight(x,y,z),top=Number.isFinite(roof)?roof:b.top;
-    return y<top-EPS;
-  });
+    if(y<top-EPS)return true;
+  }return false;};
   function open(x,y,z,roofFace=false,withSlabs=true) {
+    lowInterior=false;
     if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(z))return 0;
     if(roofFace)return 1;
     if(y>=bounds.top-EPS||x<bounds.x0-EDGE||x>bounds.x1+EDGE||z<bounds.z0-EDGE||z>bounds.z1+EDGE)return 1;
     if(interior(x,y,z))return 0;
-    if(withSlabs)for(const slab of slabs)if(y<slab.height-EPS&&inPolygon(slab.polygon,...slab.local(x,z)))return 0;
+    if(withSlabs)for(const slab of slabs)if(y<slab.height-EPS&&inSlab(slab,x,z))return 0;
     let distance=EDGE;
-    for(const t of nearby(x,z)) {
+    for(const t of nearby(x,z,withSlabs)) {
       if(!withSlabs&&!t.roof)continue;
+      if(y>=t.ceiling-EPS)continue;
       if(x<t.x0-EDGE||x>t.x1+EDGE||z<t.z0-EDGE||z>t.z1+EDGE)continue;
       const h=height(t,x,z);
       if(h!==null&&y<h-EPS)return 0;
@@ -96,18 +258,23 @@ export function createSkyCover(plan={},roofs=new Map()) {
       for(let i=0;i<3;i++){
         const a=t.p[i],b=t.p[(i+1)%3];
         if(y>=Math.max(a[1],b[1])-EPS)continue;
-        distance=Math.min(distance,edgeDistance([x,z],[a[0],a[2]],[b[0],b[2]]));
+        distance=Math.min(distance,distanceToEdge(x,z,a[0],a[2],b[0],b[2],distance));
       }
     }
     // The ramp is OUTSIDE the eave: everything physically covered stays dry.
     return Math.max(0,Math.min(1,distance/EDGE));
   }
   function slabOpen(x,y,z) {
-    for(const slab of slabs)if(y<slab.height-EPS&&inPolygon(slab.polygon,...slab.local(x,z)))return 0;
-    for(const t of nearby(x,z))if(!t.roof){const h=height(t,x,z);if(h!==null&&y<h-EPS)return 0;}
+    for(const slab of slabs)if(y<slab.height-EPS&&inSlab(slab,x,z))return 0;
+    for(const t of nearby(x,z))if(!t.roof&&y<t.ceiling-EPS){const h=height(t,x,z);if(h!==null&&y<h-EPS)return 0;}
     return 1;
   }
   for(const slab of slabs){const xs=slab.polygon.map(p=>p[0]),ys=slab.polygon.map(p=>p[1]);slab.box=[Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)];}
+  function inSlab(slab,x,z) {
+    const p=slab.local(x,z,localScratch),b=slab.box;
+    // inPolygon accepts an on-edge tolerance of 1e-9.
+    return p[0]>=b[0]-1e-9&&p[0]<=b[2]+1e-9&&p[1]>=b[1]-1e-9&&p[1]<=b[3]+1e-9&&inPolygon(slab.polygon,p[0],p[1]);
+  }
   // Every cover rule is "covered below some height here", so blocked(x,y,z) is
   // exactly y < coverTop(x,z)-EPS (apart from a point lying exactly on an eave
   // line). -Infinity: open sky at every height.
@@ -116,17 +283,17 @@ export function createSkyCover(plan={},roofs=new Map()) {
     let top=-Infinity;
     for(const b of buildings){
       if(x<b.x0-1e-6||x>b.x1+1e-6||z<b.z0-1e-6||z>b.z1+1e-6)continue;
-      const p=b.local(x,z);
-      if(!inPolygon(b.footprint,...p)||b.porches.some(poly=>inPolygon(poly,...p)))continue;
+      const p=b.local(x,z,localScratch);
+      if(!inPolygon(b.footprint,p[0],p[1])||inPorch(b,p[0],p[1]))continue;
       const roof=roofHeight(x,0,z);
       top=Math.max(top,Math.min(b.top,minimumRoof),Number.isFinite(roof)?roof:b.top);
     }
     for(const slab of slabs){
       if(slab.height<=top)continue;
-      const [u,v]=slab.local(x,z);
+      const [u,v]=slab.local(x,z,localScratch);
       if(u>=slab.box[0]&&v>=slab.box[1]&&u<=slab.box[2]&&v<=slab.box[3]&&inPolygon(slab.polygon,u,v))top=slab.height;
     }
-    for(const t of nearby(x,z)){const h=height(t,x,z);if(h!==null&&h>top)top=h;}
+    for(const t of nearby(x,z)){if(t.ceiling<=top)continue;const h=height(t,x,z);if(h!==null&&h>top)top=h;}
     return Math.min(top,bounds.top);
   }
   // Baked once per cover for GPU lookups (falling rain). Texel centres sample
@@ -150,7 +317,14 @@ export function createSkyCover(plan={},roofs=new Map()) {
   // collinear sub-segments along a single eave are merged.
   let edgeCache=null;
   function buildCoverEdges() {
+    if(!edgeCache)edgeCache=edgeCaches.get(cover);
     if(edgeCache)return edgeCache;
+    const reuse=reusePieces.get(cover),previousPieces=reuse?.safe?reuse.pieces:null;
+    reusePieces.delete(cover);
+    const pieces=previousPieces?previousPieces.map(p=>({...p,highY:coverTop(p.coverX,p.coverZ)})):[];
+    if(previousPieces)edgeRaw.set(cover,reuse.raw);
+    let safeProjection=true;
+    if(!previousPieces){
     const r=v=>Math.round(v*1e3);
     const ptKey=(x,z)=>`${r(x)},${r(z)}`;
     const raw=[],seen=new Set();
@@ -174,6 +348,7 @@ export function createSkyCover(plan={},roofs=new Map()) {
         for(const [u,v] of [[a,b],[b,c],[c,a]]){
           const dk=`${ptKey(u[0],u[2])}>${ptKey(v[0],v[2])}`;
           const prev=directed.get(dk);
+          if(prev&&(prev.ax!==u[0]||prev.az!==u[2]||prev.bx!==v[0]||prev.bz!==v[2]))safeProjection=false;
           const h=Math.max(u[1],v[1]);
           if(!prev||h>prev.h)directed.set(dk,{ax:u[0],az:u[2],bx:v[0],bz:v[2],h,rk:`${ptKey(v[0],v[2])}>${ptKey(u[0],u[2])}`});
         }
@@ -195,19 +370,34 @@ export function createSkyCover(plan={},roofs=new Map()) {
       const poly=slab.polygon.map(toW);
       for(let i=0;i<poly.length;i++){const a=poly[i],d=poly[(i+1)%poly.length];offer(a[0],a[1],d[0],d[1],slab.height);}
     }
+    edgeRaw.set(cover,raw);
+    // Rounded edge keys can have several exact endpoints. If heights choose a
+    // different winner, use the full path; otherwise the old projected splits
+    // remain exact even on a scene with such an ambiguity elsewhere.
+    const sameRaw=reuse?.raw?.length===raw.length&&raw.every((e,i)=>{
+      const p=reuse.raw[i];return Object.is(e.ax,p.ax)&&Object.is(e.az,p.az)&&Object.is(e.bx,p.bx)&&Object.is(e.bz,p.bz);
+    });
+    if(sameRaw)pieces.push(...reuse.pieces.map(p=>({...p,highY:coverTop(p.coverX,p.coverZ)})));
+    else {
     // Split overlapping perimeter segments at mutual XZ intersections and keep
     // only true outer drip-line pieces (covered on one side, open sky on the other).
-    const pieces=[],outer=[],outerGrid=new Map(),edgeCell=2;
-    const put=(map,e)=>{
-      for(let gx=Math.floor((e.x0-1)/edgeCell);gx<=Math.floor((e.x1+1)/edgeCell);gx++)
-        for(let gz=Math.floor((e.z0-1)/edgeCell);gz<=Math.floor((e.z1+1)/edgeCell);gz++){
-          const k=gx+':'+gz;if(!map.has(k))map.set(k,[]);map.get(k).push(e);
+    const rawGrid=new Map(),rawCell=2;
+    for(let i=0;i<raw.length;i++){
+      const e=raw[i];
+      for(let x=Math.floor((e.x0-1e-4)/rawCell);x<=Math.floor((e.x1+1e-4)/rawCell);x++)
+        for(let z=Math.floor((e.z0-1e-4)/rawCell);z<=Math.floor((e.z1+1e-4)/rawCell);z++){
+          const key=x+':'+z;if(!rawGrid.has(key))rawGrid.set(key,[]);rawGrid.get(key).push(i);
         }
-    };
+    }
     const delta=.012;
     for(let i=0;i<raw.length;i++){
       const e=raw[i],dx=e.bx-e.ax,dz=e.bz-e.az,cuts=[0,1];
-      for(let j=0;j<raw.length;j++){
+      const candidates=new Set();
+      for(let x=Math.floor((e.x0-1e-4)/rawCell);x<=Math.floor((e.x1+1e-4)/rawCell);x++)
+        for(let z=Math.floor((e.z0-1e-4)/rawCell);z<=Math.floor((e.z1+1e-4)/rawCell);z++)
+          for(const j of rawGrid.get(x+':'+z)||[])candidates.add(j);
+      // Preserve the old order, including equal and touching cuts.
+      for(const j of [...candidates].sort((a,b)=>a-b)){
         if(i===j)continue;
         const o=raw[j];
         if(o.x1<e.x0-1e-4||o.x0>e.x1+1e-4||o.z1<e.z0-1e-4||o.z0>e.z1+1e-4)continue;
@@ -235,15 +425,28 @@ export function createSkyCover(plan={},roofs=new Map()) {
         if(len<1e-3)continue;
         let tx=(bx-ax)/len,tz=(bz-az)/len,nx=-tz,nz=tx;
         const mx=(ax+bx)*.5,mz=(az+bz)*.5;
-        const topP=coverTop(mx+nx*delta,mz+nz*delta),topN=coverTop(mx-nx*delta,mz-nz*delta);
+        const px=mx+nx*delta,pz=mz+nz*delta,nxSample=mx-nx*delta,nzSample=mz-nz*delta;
+        const topP=coverTop(px,pz),topN=coverTop(nxSample,nzSample);
         const finP=Number.isFinite(topP),finN=Number.isFinite(topN);
         if(finP===finN)continue;
         let highY;
         if(finP){nx=-nx;nz=-nz;highY=topP;const ta=ax,tb=az;ax=bx;az=bz;bx=ta;bz=tb;tx=-tx;tz=-tz;}
         else highY=topN;
-        pieces.push({a:[ax,az],b:[bx,bz],tx,tz,nx,nz,len,highY,lowY:-Infinity,outer:true});
+        pieces.push({a:[ax,az],b:[bx,bz],tx,tz,nx,nz,len,highY,lowY:-Infinity,outer:true,
+          coverX:finP?px:nxSample,coverZ:finP?pz:nzSample});
       }
     }
+    }
+    }
+    edgePieces.set(cover,pieces);
+    edgeSafety.set(cover,safeProjection);
+    const outer=[],outerGrid=new Map(),edgeCell=2;
+    const put=(map,e)=>{
+      for(let gx=Math.floor((e.x0-1)/edgeCell);gx<=Math.floor((e.x1+1)/edgeCell);gx++)
+        for(let gz=Math.floor((e.z0-1)/edgeCell);gz<=Math.floor((e.z1+1)/edgeCell);gz++){
+          const k=gx+':'+gz;if(!map.has(k))map.set(k,[]);map.get(k).push(e);
+        }
+    };
     // Merge adjacent collinear outer pieces along the same drip line.
     const used=new Uint8Array(pieces.length);
     for(let i=0;i<pieces.length;i++){
@@ -268,6 +471,7 @@ export function createSkyCover(plan={},roofs=new Map()) {
       outer.push(seg);put(outerGrid,seg);
     }
     edgeCache={outer,outerGrid,edgeCell};
+    edgeCaches.set(cover,edgeCache);
     return edgeCache;
   }
   function coverSignedDistance(x,z) {
@@ -279,13 +483,20 @@ export function createSkyCover(plan={},roofs=new Map()) {
     let best=1,bestTop=HEIGHT_NONE;
     for(const e of list){
       if(x<e.x0-best||x>e.x1+best||z<e.z0-best||z>e.z1+best)continue;
-      const d=edgeDistance([x,z],e.a,e.b);
+      const d=distanceToEdge(x,z,e.a[0],e.a[1],e.b[0],e.b[1],best);
       if(d<best){best=d;bestTop=e.highY;}
     }
     return {distance:covered?-best:best,top:covered?top-EPS:(best<.9&&Number.isFinite(bestTop)?bestTop-EPS:HEIGHT_NONE)};
   }
   const staticKey=JSON.stringify(staticParts),key=staticKey+'|'+JSON.stringify(dynamicParts);
-  return {key,staticKey,bounds,open,slabOpen,staticOpen:(x,y,z,roofFace)=>open(x,y,z,roofFace,false),interior,roofHeight,coverTop,heightField,coverSignedDistance,clipEdges:buildCoverEdges,blocked:(x,y,z)=>open(x,y,z)===0};
+  const cover={key,staticKey,bounds,open,slabOpen,staticOpen:(x,y,z,roofFace)=>open(x,y,z,roofFace,false),interior,roofHeight,coverTop,heightField,coverSignedDistance,clipEdges:buildCoverEdges,blocked:(x,y,z)=>open(x,y,z)===0};
+  // minimumRoof is only a lower-bound shortcut: below it every roof ray is
+  // above the receiver. Changing it cannot change interior's final answer.
+  // bounds encloses triangle cover, interior tops and ramps. Exceptional
+  // fallback slabs include that gate in their identity above.
+  coverParts.set(cover,parts);coverIds.set(cover,++nextCoverId);
+  coverGeometry.set(cover,{triangles,polygons:JSON.stringify(projectedPolygons),
+    indoorKey:JSON.stringify(staticParts.map(p=>p.slice(0,-1))),lowLimit:minimumRoof-EPS,lowWitness:()=>lowInterior});return cover;
 }
 
 // Split a convex vertex polygon by a world-XZ line: (p.x - ax)*nx + (p.z - az)*nz = offset.
@@ -325,11 +536,7 @@ function polyXzArea(poly) {
 // triangle crosses a boundary.
 function clipHorizontalToCover(g,o,effective,cover) {
   if(!cover.clipEdges||!cover.bounds||!Number.isFinite(cover.bounds.x0))return null;
-  if(o.userData.clipWeatherOpen===false)return null;
-  const skipKinds=new Set(['roof','wall','room','floor','ceiling','trim','opening','fixture','furniture','planting']);
-  if(o.userData.kind&&skipKinds.has(o.userData.kind))return null;
-  const mats=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];
-  if(mats.some(m=>m?.userData?.plantWind))return null;
+  if(!canClip(g,o))return null;
   let yardPart=null;
   for(let p=o;p;p=p.parent)if(p.userData?.yardPart){yardPart=p.userData.yardPart;break;}
   if(yardPart&&yardPart!=='hardscape'&&yardPart!=='terrain')return null;
@@ -539,9 +746,69 @@ function clipHorizontalToCover(g,o,effective,cover) {
 
 // Run only at generation, adoption, late import or editor deformation. Each
 // instance has its own exposure; regular batches retain one float per vertex.
-export function writeWeatherOpen(root,cover,worldScale=1) {
+export function writeWeatherOpen(root,cover,worldScale=1,previousRoot=null) {
   root.updateWorldMatrix(true,true);
   const p=new THREE.Vector3(),n=new THREE.Vector3(),matrix=new THREE.Matrix4(),normal=new THREE.Matrix3(),effective=new THREE.Matrix4();
+  const candidates=new Map(),sampleBuckets=new Map(),sampleGroups=new WeakMap(),samples=new Map(),rangeSources=new Map();
+  const buildingOf=o=>{
+    for(let node=o;node;node=node.parent)if(node.userData.buildingId)return node.userData.buildingId;
+    return o.userData.snapRanges?.[0]?.buildingId;
+  };
+  const sampleGroup=o=>{
+    if(!sampleGroups.has(o))sampleGroups.set(o,JSON.stringify([buildingOf(o),o.userData.kind,
+      [].concat(o.material||[]).map(m=>[m.name,m.userData.materialKey])]));
+    return sampleGroups.get(o);
+  };
+  const signature=o=>sampleGroup(o)+'|'+JSON.stringify(o.userData.snapRanges||o.geometry.userData.snapRanges);
+  const rangeKey=(o,r)=>sampleGroup(o)+'|'+JSON.stringify([r.kind,r.pieceId,r.parentPieceId,r.part]);
+  if(previousRoot)previousRoot.traverse(o=>{
+    const state=written.get(o);
+    if(!state||!buildingOf(o)||state.geometry!==o.geometry||state.positionVersion!==o.geometry.attributes.position.version)return;
+    const key=signature(o);if(!candidates.has(key))candidates.set(key,[]);candidates.get(key).push(o);
+    const bucket=sampleGroup(o);if(!sampleBuckets.has(bucket))sampleBuckets.set(bucket,[]);sampleBuckets.get(bucket).push(o);
+    if(!o.isInstancedMesh&&!o.geometry.index)for(const range of o.userData.snapRanges||o.geometry.userData.snapRanges||[]){
+      const key=rangeKey(o,range);if(!rangeSources.has(key))rangeSources.set(key,[]);
+      rangeSources.get(key).push({state,range,changed:changedCover(state.cover,cover),sameIndoor:coverGeometry.get(state.cover)?.indoorKey===coverGeometry.get(cover)?.indoorKey});
+    }
+  });
+  const equalGeometry=(a,b)=>{
+    if(a.name!==b.name||a.drawRange.start!==b.drawRange.start||a.drawRange.count!==b.drawRange.count||JSON.stringify(a.groups)!==JSON.stringify(b.groups))return false;
+    if(a.userData!==b.userData){
+      const serial=value=>JSON.stringify(value,(_key,v)=>{
+        if(typeof v==='function'||v&&typeof v==='object'&&!Array.isArray(v)&&Object.getPrototypeOf(v)!==Object.prototype)throw new Error('identity-only geometry metadata');
+        return v;
+      });
+      try{if(serial(a.userData)!==serial(b.userData))return false;}catch{return false;}
+    }
+    const names=Object.keys(a.attributes).filter(k=>k!=='weatherOpen');
+    if(names.length!==Object.keys(b.attributes).filter(k=>k!=='weatherOpen').length)return false;
+    for(const k of [...names,'index']){
+      const x=k==='index'?a.index:a.attributes[k],y=k==='index'?b.index:b.attributes[k];
+      if(!x||!y){if(x!==y)return false;continue;}
+      if(x.itemSize!==y.itemSize||x.normalized!==y.normalized||x.array.constructor!==y.array.constructor||x.array.length!==y.array.length)return false;
+      if(!!x.isInterleavedBufferAttribute!==!!y.isInterleavedBufferAttribute||x.offset!==y.offset||x.data?.stride!==y.data?.stride)return false;
+      for(let i=0;i<x.array.length;i++)if(!Object.is(x.array[i],y.array[i]))return false;
+    }
+    return true;
+  };
+  const sampleKey=(x,y,z,face)=>x+','+y+','+z+','+face;
+  const oldSamples=(receiver,range)=>{
+    const id=range?rangeKey(receiver,range):sampleGroup(receiver);
+    if(samples.has(id))return samples.get(id);
+    const map=new Map(),v=new THREE.Vector3();samples.set(id,map);
+    const sources=range?rangeSources.get(id)||EMPTY:(sampleBuckets.get(id)||EMPTY).filter(o=>!o.isInstancedMesh).map(o=>({state:written.get(o),range:null}));
+    for(const source of sources){
+      const s=source.state,pos=s.geometry.attributes.position,start=source.range?.start||0,end=source.range?start+source.range.count:pos.count;
+      const dirty=changedCover(s.cover,cover);
+      for(let i=start;i<end;i++){
+        if(s.faces[i]&1)continue; // Upward roof samples are always the finite-point fallback 1.
+        v.fromBufferAttribute(pos,i).applyMatrix4(s.world).multiplyScalar(s.worldScale);
+        if(!insideChanged(v.x,v.y,v.z,dirty))
+          map.set(sampleKey(v.x,v.y,v.z,0),[s.base[i],s.faces[i],s.attribute.getX(i)]);
+      }
+    }
+    return map;
+  };
   root.traverse(o=>{
     if(o.userData?.syncBakeCover)o.userData.syncBakeCover(cover,worldScale,o.matrixWorld);
     if(!o.isMesh||!o.geometry?.attributes.position||o.layers.isEnabled(31))return;
@@ -556,31 +823,109 @@ export function writeWeatherOpen(root,cover,worldScale=1) {
     // Deeper children multiply in a different order before and after adoption;
     // ten significant digits absorb that last-bit difference (a miss resamples).
     const transform=[o.instanceMatrix?.version,...effective.elements.map(v=>+v.toPrecision(10))].join(',');
-    const savedBase=unclipped.get(o);
+    let previous=written.get(o);
+    // Rebuilt batches may have the exact same base buffers. Transfer their
+    // samples and clipped buffers without retaining the previous scene/root.
+    let matched=false;
+    if(!previous&&!o.isInstancedMesh&&previousRoot)for(const old of candidates.get(signature(o))||[]){
+      const state=written.get(old),saved=unclipped.get(old),base=saved?.base||old.geometry;
+      if(state.transform!==transform||!equalGeometry(g,base))continue;
+      previous=state;matched=true;
+      const dirty=changedCover(state.cover,cover);
+      if(!base.boundingBox)base.computeBoundingBox();
+      if(saved&&!intersects(base.boundingBox.clone().applyMatrix4(effective),dirty)){
+        const clipped=old.geometry.clone();
+        if(saved.snapRanges)o.userData.snapRanges=old.userData.snapRanges.map(r=>({...r}));
+        unclipped.set(o,{...saved,base:g,clipped,clippedVersion:clipped.attributes.position.version});
+        g=o.geometry=clipped;
+      }
+      break;
+    }
+    let savedBase=unclipped.get(o);
+    // Main did not save bases for merged building batches. Once atlas prepare
+    // has replaced one, its prepared geometry is the baseline for its next
+    // clip. Preserve that ordering (including its rounding) on bound batches.
+    const legacyAtlas=!!(savedBase&&!savedBase.legacyBase&&savedBase.clipped!==g&&g.attributes.lmRoom);
+    if(legacyAtlas){unclipped.delete(o);savedBase=null;}
+    if(savedBase&&savedBase.clipped!==g&&g.attributes.lmRoom&&previous&&previous.staticKey!==cover.staticKey){
+      const dirty=changedCover(previous.cover,cover);
+      if(dirty?.length===0)inheritEdges(previous.cover,cover);
+      const edges=dirty?.length&&canClip(savedBase.base,o)?changedEdges(previous.cover,cover):dirty;
+      if(!savedBase.base.boundingBox)savedBase.base.computeBoundingBox();
+      // Main re-clips an atlas-bound receiver from its saved base when a new
+      // roof snapshot arrives. An unchanged boundary has the very same pre-
+      // atlas result already saved; restore that topology and ownership ranges.
+      if(!intersects(savedBase.base.boundingBox.clone().applyMatrix4(effective),edges)){
+        g.dispose();g=o.geometry=savedBase.clipped;
+        if(savedBase.clippedRanges)o.userData.snapRanges=savedBase.clippedRanges.map(r=>({...r}));
+      }
+    }
     const sameClippedGeo=savedBase&&savedBase.clipped===g;
     const boundByAtlas=!!(savedBase&&!sameClippedGeo&&g.attributes.lmRoom);
     const isOurClipped=sameClippedGeo&&savedBase.clippedVersion===g.attributes.position.version;
     if(savedBase&&!isOurClipped&&!boundByAtlas)unclipped.delete(o);
     const baseGeo=isOurClipped||boundByAtlas?savedBase.base:g;
     const stamp=baseGeo.attributes.position.version+':'+g.attributes.position.version+':'+transform;
-    const previous=written.get(o);
-    if(previous?.geometry===g&&previous.attribute===(instanceExposure||g.attributes.weatherOpen)&&previous.stamp===stamp&&previous.coverKey===cover.key)return;
+    const faceKinds=()=>JSON.stringify([o.userData.kind,(o.userData.snapRanges||g.userData.snapRanges||[]).map(r=>[r.start,r.count,r.kind])]);
+    const kinds=faceKinds();
+    const hasRoof=o.userData.kind==='roof'||(o.userData.snapRanges||g.userData.snapRanges||EMPTY).some(r=>r.kind==='roof');
+    const sameFaces=matched||o.isInstancedMesh||!!previous&&previous.kinds===kinds&&(!hasRoof||previous.normal===g.attributes.normal&&previous.normalVersion===g.attributes.normal?.version);
+    const sameCount=previous?.base.length===(instanceExposure?o.instanceMatrix.count:o.isInstancedMesh?o.count:g.attributes.position.count);
+    const sameAttribute=previous?.attribute===(instanceExposure||g.attributes.weatherOpen);
+    const samePositions=matched||previous?.position===g.attributes.position;
+    if(samePositions&&sameCount&&sameFaces&&sameAttribute&&previous?.geometry===g&&previous.stamp===stamp&&previous.coverKey===cover.key){
+      // Equal keys certify identical immutable cover inputs. Advance the owner
+      // reference too, so successive yard-only edits cannot retain old covers.
+      inheritEdges(previous.cover,cover);previous.cover=cover;return;
+    }
+    const sourceState=previous||written.get(candidates.values().next().value?.[0]);
+    const changed=sourceState?changedCover(sourceState.cover,cover):null;
+    if(changed?.length===0)inheritEdges(sourceState.cover,cover);
+    const samePlace=!!previous&&previous.transform===transform;
+    const beforeIndoor=sourceState&&coverGeometry.get(sourceState.cover),afterIndoor=coverGeometry.get(cover);
+    const sameIndoor=!!beforeIndoor&&beforeIndoor.indoorKey===afterIndoor?.indoorKey;
+    // Collinear eaves may merge beyond the edited part. Compare the actual
+    // edge records too, so a changed merged highY invalidates its entire line.
+    const clips=!o.isInstancedMesh&&canClip(baseGeo,o);
+    // Main's clip decision is static-cover/position driven. A slab-only post
+    // refresh must not build a new edge graph for meshes it cannot re-clip.
+    const mayClip=clips&&!(sameClippedGeo&&!isOurClipped)&&(!previous||
+      (boundByAtlas?previous.staticKey!==cover.staticKey:previous.staticKey!==cover.staticKey||previous.stamp!==stamp));
+    const clipChanged=mayClip?(sourceState&&changed?.length?changedEdges(sourceState.cover,cover):changed):EMPTY;
+    const sameVertices=samePositions&&sameCount&&sameFaces&&samePlace&&(previous.geometry===g||matched)&&previous.positionVersion===g.attributes.position.version;
+    if(sameVertices){
+      if(!g.boundingBox)g.computeBoundingBox();
+      // Instanced geometry's box describes a blade, not its world placements.
+      const box=o.isInstancedMesh?previous.bounds:g.boundingBox.clone().applyMatrix4(effective);
+      const closedIndoor=sameIndoor&&box&&box.max.y<afterIndoor.lowLimit&&previous.faces.every(face=>face===2);
+      if((matched||sameAttribute)&&box&&!intersects(box,clipChanged)&&(closedIndoor||!intersects(box,changed))){
+        if(matched){
+          const attribute=previous.attribute.clone();g.setAttribute('weatherOpen',attribute);
+          written.set(o,{...previous,geometry:g,attribute,cover,coverKey:cover.key,staticKey:cover.staticKey,stamp,
+            base:previous.base.slice(),faces:previous.faces.slice(),world:o.matrixWorld.clone(),worldScale,
+            position:g.attributes.position,
+            normal:g.attributes.normal,normalVersion:g.attributes.normal?.version,kinds});
+        }else{previous.cover=cover;previous.coverKey=cover.key;previous.staticKey=cover.staticKey;previous.stamp=stamp;}
+        return;
+      }
+    }
     if(!instanceExposure){
       const deformedInPlace=sameClippedGeo&&!isOurClipped;
-      const roofChanged=!previous||previous.staticKey!==cover.staticKey;
+      if(!baseGeo.boundingBox)baseGeo.computeBoundingBox();
+      const roofChanged=!previous||previous.staticKey!==cover.staticKey&&((previous.geometry!==g&&!matched)||boundByAtlas||legacyAtlas||intersects(baseGeo.boundingBox.clone().applyMatrix4(effective),clipChanged));
       const shouldClip=!o.isInstancedMesh&&!deformedInPlace&&(boundByAtlas?roofChanged:(roofChanged||previous.stamp!==stamp));
       if(shouldClip){
+        matched=false; // Only exact point checks may transfer samples across a new clip decision.
         const origSnap=isOurClipped||boundByAtlas?savedBase.snapRanges:(o.userData.snapRanges?o.userData.snapRanges.map(r=>({...r})):null);
         if(origSnap&&o.userData.snapRanges)o.userData.snapRanges=origSnap.map(r=>({...r}));
         const clipped=clipHorizontalToCover(baseGeo,o,effective,cover);
         if(clipped){
           if(isOurClipped||boundByAtlas)g.dispose();
-          // Building batches rebuild from scratch on roof edits, so only reused
-          // yard ground/hardscape and non-merged meshes retain baseGeo.
           let yardPart=null;
-          for(let p=o;p;p=p.parent)if(p.userData?.yardPart){yardPart=p.userData.yardPart;break;}
-          if(!o.userData.merged||yardPart==='hardscape'||yardPart==='terrain')unclipped.set(o,{base:baseGeo,clipped,clippedVersion:clipped.attributes.position.version,snapRanges:origSnap});
-          else unclipped.delete(o);
+          for(let node=o;node;node=node.parent)if(node.userData?.yardPart){yardPart=node.userData.yardPart;break;}
+          unclipped.set(o,{base:baseGeo,clipped,clippedVersion:clipped.attributes.position.version,snapRanges:origSnap,
+            legacyBase:!o.userData.merged||yardPart==='hardscape'||yardPart==='terrain',
+            clippedRanges:o.userData.snapRanges?.map(r=>({...r}))});
           g=o.geometry=clipped;
           owners.set(g,o.uuid);
         }else if(isOurClipped||boundByAtlas){
@@ -605,11 +950,31 @@ export function writeWeatherOpen(root,cover,worldScale=1) {
     normal.getNormalMatrix(o.matrixWorld);
     const ranges=[...(o.userData.snapRanges||g.userData.snapRanges||[])].sort((a,b)=>a.start-b.start);
     let rangeIndex=0;
-    // A room edit can change slab cover without changing any roof. Reuse the
-    // static exposure, resampling it only for changed position ranges; dynamic
-    // slabs still re-evaluate every potentially exposed receiver.
-    const reuse=previous?.geometry===g&&previous.staticKey===cover.staticKey&&previous.transform===transform&&previous.base.length===count;
-    const base=reuse?previous.base:new Float32Array(count),faces=reuse?previous.faces:new Uint8Array(count);
+    const directRanges=new Map(),oldPoint=new THREE.Vector3();
+    const matchesDirect=(s,offset)=>{
+      const j=s.range.start+offset;
+      if(offset<0||offset>=s.range.count||j>=s.state.base.length||(s.state.faces[j]&1))return false;
+      oldPoint.fromBufferAttribute(s.state.geometry.attributes.position,j).applyMatrix4(s.state.world).multiplyScalar(s.state.worldScale);
+      return Object.is(oldPoint.x,p.x)&&Object.is(oldPoint.y,p.y)&&Object.is(oldPoint.z,p.z);
+    };
+    const directSample=(range,i)=>{
+      if(!range||o.isInstancedMesh||g.index)return null;
+      const offset=i-range.start;
+      let source=directRanges.get(range);
+      if(source===undefined){
+        source=null;
+        for(const candidate of rangeSources.get(rangeKey(o,range))||EMPTY)if(matchesDirect(candidate,offset)){source=candidate;break;}
+        directRanges.set(range,source);
+      }else if(source&&!matchesDirect(source,offset))return null;
+      if(!source)return null;
+      const index=source.range.start+offset;
+      if(insideChanged(p.x,p.y,p.z,source.changed)&&!(source.sameIndoor&&(source.state.faces[index]&2)&&p.y<afterIndoor.lowLimit))return null;
+      source.index=index;return source;
+    };
+    // Reuse static and slab samples only at unchanged world positions and face
+    // classes outside changed cover; partial editor updates keep their ranges.
+    const reuse=samePositions&&sameFaces&&(previous?.geometry===g||matched)&&previous.transform===transform&&previous.base.length===count;
+    const base=reuse?(matched?previous.base.slice():previous.base):new Float32Array(count),faces=reuse?(matched?previous.faces.slice():previous.faces):new Uint8Array(count);
     const moved=!reuse||previous.positionVersion!==g.attributes.position.version;
     let dirty=null;
     if(reuse&&moved&&!o.isInstancedMesh&&g.attributes.position.updateRanges.length){
@@ -617,6 +982,7 @@ export function writeWeatherOpen(root,cover,worldScale=1) {
       for(const r of g.attributes.position.updateRanges)dirty.fill(1,Math.max(0,Math.floor(r.start/3)),Math.min(count,Math.ceil((r.start+r.count)/3)));
     }
     let updated=false;
+    const bounds=new THREE.Box3();
     const position=i=>{
       if(o.isInstancedMesh){o.getMatrixAt(i,matrix);p.set(0,0,0).applyMatrix4(matrix).applyMatrix4(o.matrixWorld);}
       else p.fromBufferAttribute(g.attributes.position,i).applyMatrix4(o.matrixWorld);
@@ -624,39 +990,76 @@ export function writeWeatherOpen(root,cover,worldScale=1) {
     };
     for(let i=0;i<count;i++) {
       while(rangeIndex<ranges.length&&i>=ranges[rangeIndex].start+ranges[rangeIndex].count)rangeIndex++;
-      const sample=!reuse||moved&&(!dirty||dirty[i]);
+      let sample=!reuse||moved&&(!dirty||dirty[i]);
+      position(i);
+      if(o.isInstancedMesh)bounds.expandByPoint(p);
+      // Bit 2 witnesses the unchanged indoor volume below every roof. It is
+      // still closed after any roof/slab edit while that footprint/top/porch
+      // identity and the lower-height proof hold; no extra sample array.
+      if(reuse&&!sample&&sameIndoor&&(faces[i]&2)&&p.y<afterIndoor.lowLimit){
+        if(attribute.getX(i)!==0){attribute.setX(i,0);updated=true;}
+        continue;
+      }
+      if(reuse&&!sample&&!insideChanged(p.x,p.y,p.z,changed)){
+        const value=previous.attribute.getX(i);
+        if(attribute.getX(i)!==value){attribute.setX(i,value);updated=true;}
+        continue;
+      }
+      sample=sample||insideChanged(p.x,p.y,p.z,changed);
       if(sample){
-        position(i);
         const range=ranges[rangeIndex],kind=(range&&i>=range.start?range.kind:null)||o.userData.kind;
         const roofFace=!o.isInstancedMesh&&kind==='roof'&&g.attributes.normal&&n.fromBufferAttribute(g.attributes.normal,i).applyMatrix3(normal).normalize().y>.001;
-        base[i]=cover.staticOpen(p.x,p.y,p.z,roofFace);faces[i]=roofFace?1:0;
+        if(roofFace){
+          const value=Number.isFinite(p.x)&&Number.isFinite(p.y)&&Number.isFinite(p.z)?1:0;
+          base[i]=value;faces[i]=1;
+          if(attribute.getX(i)!==value){attribute.setX(i,value);updated=true;}
+          continue;
+        }
+        const direct=!reuse&&previousRoot?directSample(range,i):null;
+        if(direct){
+          const s=direct.state,j=direct.index,value=s.attribute.getX(j);base[i]=s.base[j];faces[i]=s.faces[j];
+          if(attribute.getX(i)!==value){attribute.setX(i,value);updated=true;}continue;
+        }
+        // A changed roof's side vertices usually moved in height. The ordinal
+        // range check above already reuses exact matches; computing a fresh
+        // remaining roof-side sample avoids building a large, fruitless map.
+        const stored=!reuse&&previousRoot&&kind!=='roof'&&!insideChanged(p.x,p.y,p.z,changed)?oldSamples(o,range).get(sampleKey(p.x,p.y,p.z,0)):null;
+        if(stored){base[i]=stored[0];faces[i]=stored[1];if(attribute.getX(i)!==stored[2]){attribute.setX(i,stored[2]);updated=true;}continue;}
+        base[i]=cover.staticOpen(p.x,p.y,p.z,roofFace);faces[i]=afterIndoor?.lowWitness()?2:0;
       }
       let value=base[i];
-      if(value&&!faces[i]){if(!sample)position(i);value*=cover.slabOpen(p.x,p.y,p.z);}
+      if(value&&!faces[i])value*=cover.slabOpen(p.x,p.y,p.z);
       if(attribute.getX(i)!==value){attribute.setX(i,value);updated=true;}
     }
     if(updated)attribute.needsUpdate=true;
-    written.set(o,{geometry:g,attribute,stamp:finalStamp,coverKey:cover.key,staticKey:cover.staticKey,transform,base,faces,positionVersion:g.attributes.position.version});
+    written.set(o,{geometry:g,attribute,stamp:finalStamp,cover,coverKey:cover.key,staticKey:cover.staticKey,transform,base,faces,positionVersion:g.attributes.position.version,world:o.matrixWorld.clone(),worldScale,bounds,
+      position:g.attributes.position,normal:g.attributes.normal,normalVersion:g.attributes.normal?.version,kinds:faceKinds()});
   });
 }
 
 // Drag/settle can replace room triangles inside a retained material batch.
 // Refresh only this building's slab snapshot before resampling exposure.
-export function refreshSlabCover(root,plan,roofs,buildingId) {
+export function refreshSlabCover(root,plan,roofs,buildingId,{postsOnly=false}={}) {
   const b=plan.buildings?.find(b=>b.id===buildingId),surface=roofs.get(buildingId);
   if(!b||!surface)return;
+  // The post caller (46e1361f) supplies immutable slab slices and a targeted
+  // CPU-proxy refresh. Keep its contract without changing legacy captures.
+  if(postsOnly&&surface.refreshPostCover?.())return;
+  const proxyCover='refreshPostCover' in surface;
+  if(proxyCover)surface.refreshPostCover=null;
   root.updateWorldMatrix(true,true);
   const frame=new THREE.Matrix4().makeRotationY((b.rotation||0)*Math.PI/180);
   frame.setPosition(b.position?.[0]||0,buildingBase(plan,b),-(b.position?.[1]||0));
   const inverse=frame.invert().multiply(new THREE.Matrix4().makeScale(1/FT,1/FT,1/FT));
   const positions=[],a=new THREE.Vector3(),c=new THREE.Vector3(),d=new THREE.Vector3(),n=new THREE.Vector3();
   root.traverse(o=>{
-    if(!o.isMesh||o.layers.isEnabled(31)||!o.geometry?.attributes.position)return;
-    const g=o.geometry,p=g.attributes.position,matrix=inverse.clone().multiply(o.matrixWorld);
-    for(const r of o.userData.snapRanges||[{start:0,count:g.index?.count??p.count,...o.userData}]) {
+    if(!o.isMesh||(proxyCover?o.userData.ghost:o.layers.isEnabled(31))||!o.geometry?.attributes.position)return;
+    const g=o.geometry,cover=proxyCover&&o.userData.coverPositions,p=cover?new THREE.BufferAttribute(cover,3):g.attributes.position;
+    const index=cover?null:g.index,matrix=inverse.clone().multiply(o.matrixWorld);
+    for(const r of o.userData.snapRanges||[{start:0,count:index?.count??p.count,...o.userData}]) {
       if(r.buildingId!==buildingId||!['floor','room'].includes(r.kind))continue;
       for(let i=r.start;i<r.start+r.count;i+=3) {
-        for(const [v,j] of [[a,0],[c,1],[d,2]])v.fromBufferAttribute(p,g.index?g.index.getX(i+j):i+j).applyMatrix4(matrix);
+        for(const [v,j] of [[a,0],[c,1],[d,2]])v.fromBufferAttribute(p,index?index.getX(i+j):i+j).applyMatrix4(matrix);
         THREE.Triangle.getNormal(a,c,d,n);
         if(r.part==='ceiling'?Math.abs(n.y)<=.001:n.y<=.001)continue;
         for(const v of [a,c,d])positions.push(v.x,-v.z,v.y);

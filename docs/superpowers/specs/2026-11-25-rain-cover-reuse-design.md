@@ -24,3 +24,4 @@ Same output, less work. `weatherOpen`, clipped geometry, ranges and bake inputs 
 - Owner's export, the same CPU profile: `writeWeatherOpen` under 0.8 s for a post delete and for a pool-house roof edit, under 2 s for a main-house roof edit. First load no slower.
 - Memory: the stored samples add no more than 10 percent to geometry memory; report it.
 - 0 draws, programs, samplers; no shader change; atlas and bake keys identical.
+- Also gate: a post move in the editor (`rebuildLevel` then `settle`) calls `writeWeatherOpen` over the whole root: 2.6 s on the owner's house (post move by field, branch porch-posts 46e1361f). With reuse it must be under 0.3 s.
