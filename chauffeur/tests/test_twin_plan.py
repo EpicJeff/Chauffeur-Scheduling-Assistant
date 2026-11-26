@@ -31,7 +31,10 @@ def _raises(fn, exc):
 def scenario_the_fixture_normalizes_clean():
     plan, notes = tp.normalize(_fixture())
     check(plan['schema'] == tp.SCHEMA == 'chauffeur.twin.plan/2', plan.get('schema'))
-    check(notes == [], f'the hand-checked fixture is clean: {notes}')
+    check(len(notes) == 2 and all(n.startswith('Converted ') for n in notes),
+          f'the clean fixture adds only the two ordinary-roof conversion notes: {notes}')
+    check(not plan['buildings'][0]['roof']['extensions']
+          and len(plan['buildings'][0]['roof']['sections']) == 3, 'both attached roofs kept as ordinary sections')
     b = plan['buildings'][0]
     check([l['id'] for l in b['levels']] == ['L1', 'L2'], 'levels kept')
     check(b['roof']['sections'][0]['pitch'] == 11, 'pitch kept')
@@ -73,7 +76,9 @@ def scenario_bad_openings_are_dropped_with_notes():
         {'gable': 'front', 'kind': 'window', 'x': 33, 'width': 2, 'sill': 2, 'head': 5})
     plan, notes = tp.normalize(raw)
     check(len(plan['buildings'][0]['openings']) == n0, 'all five bad openings dropped')
-    check(len(notes) == 5, f'one note per dropped opening: {notes}')
+    conversion_notes = tp.normalize(_fixture())[1]
+    check(notes[:len(conversion_notes)] == conversion_notes and len(notes) == len(conversion_notes) + 5,
+          f'one note per dropped opening, in addition to unchanged conversions: {notes}')
     check(any('front' in n and 'outside' in n for n in notes), notes)
     check(any('nope' in n for n in notes), notes)
 
@@ -283,7 +288,9 @@ def scenario_test_ridge_x_gable_opening_outside_dropped():
     raw['buildings'][0]['openings'].append(_gable_opening(id='gx3', gable='rear', y=54.5))
     plan, notes = tp.normalize(raw)
     check(len(plan['buildings'][0]['openings']) == n0, 'all three dropped')
-    check(len(notes) == 3 and all('outside' in n for n in notes), notes)
+    conversion_notes = tp.normalize(_draft())[1]
+    check(notes[:len(conversion_notes)] == conversion_notes and len(notes) == len(conversion_notes) + 3
+          and all('outside' in n for n in notes[len(conversion_notes):]), notes)
 
 
 def scenario_test_ridge_y_gable_opening_unchanged():

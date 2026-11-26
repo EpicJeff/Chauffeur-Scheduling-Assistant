@@ -43,16 +43,57 @@ function overlap(points, target) {
   return polygon;
 }
 
-export function bindReceivers(atlas, meshes) {
+// Heightfield charts already define an affine top-down address space, independent
+// of tessellation and height. Projecting Low's 2 ft cells onto High's triangles
+// would subdivide the drawn grid (and miss non-coplanar grade transitions).
+function bindHeightfield(mesh, charts, pageSize) {
+  const g=mesh.geometry,p=g.attributes.position,count=p.count;
+  const uv=new Float32Array(count*2),rooms=new Float32Array(count).fill(-1),pages=new Float32Array(count).fill(-1);
+  const faces=new Map(),tiles=new Map(),x0=Math.min(...charts.map(c=>c.field[0])),y0=Math.min(...charts.map(c=>c.field[1]));
+  for(const chart of charts) {
+    tiles.set(`${Math.round((chart.field[0]-x0)/64)},${Math.round((chart.field[1]-y0)/64)}`,
+      chart);
+    faces.set(chart,[]);
+  }
+  const a=new THREE.Vector3(),b=a.clone(),c=a.clone(),n=a.clone(),point=a.clone();
+  for(let f=0;f<count/3;f++) {
+    a.fromBufferAttribute(p,f*3);b.fromBufferAttribute(p,f*3+1);c.fromBufferAttribute(p,f*3+2);
+    n.subVectors(b,a).cross(point.subVectors(c,a));
+    if(n.length()/2<1e-6 || Math.abs(n.normalize().y)<.25)continue;
+    const tx=Math.floor(((a.x+b.x+c.x)/3-x0)/64),ty=Math.floor((-(a.z+b.z+c.z)/3-y0)/64);
+    const chart=tiles.get(`${tx},${ty}`);if(!chart)continue;
+    faces.get(chart).push(f);
+    for(let k=0;k<3;k++) {
+      const i=f*3+k;
+      uv[i*2]=(chart.rect.x+(p.getX(i)-chart.field[0])*chart.density)/pageSize;
+      uv[i*2+1]=(chart.rect.y+(-p.getZ(i)-chart.field[1])*chart.density)/pageSize;
+      rooms[i]=chart.room;pages[i]=chart.page;
+    }
+  }
+  g.setAttribute('uv3',new THREE.BufferAttribute(uv,2));
+  g.setAttribute('lmRoom',new THREE.BufferAttribute(rooms,1));
+  g.setAttribute('lmLightPage',new THREE.BufferAttribute(pages,1));
+  return {mesh,faces};
+}
+
+export function bindReceivers(atlas, meshes, pageSize) {
   const sourceMeshes=[...new Set(atlas.room.charts.flatMap(c=>[c.mesh,...(c.proxies||[]).map(p=>p.mesh)]))];
   const sameArray=(a,b)=>a?.length===b?.length && a.every((v,i)=>v===b[i]);
-  const matched=new Map(),unused=new Set(meshes);
+  const matched=new Map(),heightfields=new Map(),unused=new Set(meshes);
   for(const source of sourceMeshes) {
     const match=[...unused].find(m=>domain(m)===domain(source) &&
       sameArray(m.matrixWorld.elements,source.matrixWorld.elements) &&
       sameArray(m.geometry.attributes.position.array,source.geometry.attributes.position.array) &&
       sameArray(m.geometry.attributes.normal?.array,source.geometry.attributes.normal?.array));
-    if(match){matched.set(source,match);unused.delete(match);}
+    if(match && (!source.geometry.userData.bakeHeightfield ||
+        ['uv3','lmRoom','lmLightPage'].every(name=>source.geometry.attributes[name]))) {
+      matched.set(source,match);unused.delete(match);continue;
+    }
+    if(source.geometry.userData.bakeHeightfield) {
+      const mesh=[...unused].find(m=>m.geometry.userData.bakeHeightfield && domain(m)===domain(source) &&
+        sameArray(m.matrixWorld.elements,source.matrixWorld.elements));
+      if(mesh){heightfields.set(source,bindHeightfield(mesh,atlas.room.charts.filter(c=>c.mesh===source),pageSize));unused.delete(mesh);}
+    }
   }
   // A drawn mesh identical to its source takes the source's attributes as they are,
   // even when others differ (a finished wall, or the yard beside a default house);
@@ -74,6 +115,8 @@ export function bindReceivers(atlas, meshes) {
     compound.add(chart.faces);
     for(const part of [{mesh:chart.mesh,faces:chart.faces},...(chart.proxies||[])]) {
       const proxy=part.mesh!==chart.mesh || part.faces!==chart.faces, drawn=matched.get(part.mesh);
+      const field=heightfields.get(part.mesh);
+      if(field){const faces=field.faces.get(chart);if(faces?.length)chart.receivers.push({mesh:field.mesh,faces,proxy});continue;}
       if(drawn){chart.receivers.push({mesh:drawn,faces:part.faces,proxy});continue;}
       const g=part.mesh.geometry,role=domain(part.mesh);
       for(const f of part.faces) {
@@ -94,6 +137,8 @@ export function bindReceivers(atlas, meshes) {
     const old=mesh.geometry,attrs=Object.entries(old.attributes).filter(([k])=>!['uv3','lmRoom','lmLightPage','uv2','lmSkyPage'].includes(k));
     const output=attrs.map(()=>[]),uv=[],rooms=[],pages=[],byChart=new Map(),inverse=mesh.matrixWorld.clone().invert();
     const bary=new THREE.Vector3(),world=new THREE.Vector3();let written=0;
+    const sourceRanges=old.userData.snapRanges||mesh.userData.snapRanges,snapRanges=[];
+    let rangeIndex=0,currentRange=null,previousRange=null;
     const emit=(points,record,original,indices)=>{
       const triangle=new THREE.Triangle(...original),target=record&&new THREE.Triangle(...record.points);
       for(let i=1;i+1<points.length;i++) {
@@ -113,9 +158,18 @@ export function bindReceivers(atlas, meshes) {
           else uv.push(0,0);
           rooms.push(record?.chart.room??-1);pages.push(record?.chart.page??-1);written++;
         }
+        if(currentRange) {
+          if(currentRange===previousRange)snapRanges.at(-1).count+=3;
+          else snapRanges.push({...currentRange,start:written-3,count:3});
+          previousRange=currentRange;
+        } else previousRange=null;
       }
     };
     for(let f=0;f<old.attributes.position.count/3;f++) {
+      if(sourceRanges?.length) {
+        while(rangeIndex+1<sourceRanges.length&&sourceRanges[rangeIndex].start+sourceRanges[rangeIndex].count<=f*3)rangeIndex++;
+        const r=sourceRanges[rangeIndex];currentRange=f*3>=r.start&&f*3<r.start+r.count?r:null;
+      }
       const indices=[f*3,f*3+1,f*3+2],points=indices.map(i=>new THREE.Vector3().fromBufferAttribute(old.attributes.position,i).applyMatrix4(mesh.matrixWorld));
       const normal=new THREE.Triangle(...points).getNormal(new THREE.Vector3());
       const role=domain(mesh),alias=mesh.userData.yardPart&&domain(mesh,false);
@@ -139,7 +193,9 @@ export function bindReceivers(atlas, meshes) {
     geometry.setAttribute('uv3',new THREE.Float32BufferAttribute(uv,2));
     geometry.setAttribute('lmRoom',new THREE.Float32BufferAttribute(rooms,1));
     geometry.setAttribute('lmLightPage',new THREE.Float32BufferAttribute(pages,1));
-    geometry.userData={...old.userData};mesh.geometry=geometry;old.dispose();
+    geometry.userData={...old.userData};
+    if(sourceRanges)geometry.userData.snapRanges=mesh.userData.snapRanges=snapRanges;
+    mesh.geometry=geometry;old.dispose();
     for(const [chart,groups] of byChart)for(const [kind,faces] of Object.entries(groups))if(faces.length)
       chart.receivers.push({mesh,faces,proxy:kind==='proxy'});
   }

@@ -56,6 +56,15 @@ export const KINDS = [
     "item": null
   },
   {
+    "kind": "gutter",
+    "label": "Gutters",
+    "scope": "building",
+    "fallback": {
+      "role": "trim"
+    },
+    "item": null
+  },
+  {
     "kind": "casing",
     "label": "Casing",
     "scope": "building",
@@ -97,6 +106,12 @@ export const KINDS = [
     "scope": "building",
     "fallback": { "role": "door" },
     "item": "opening"
+  },
+  {
+    "kind": "support", "label": "Supports", "scope": "building", "fallback": {"role": "trim"}, "item": "roof"
+  },
+  {
+    "kind": "underside", "label": "Ceiling underneath", "scope": "building", "fallback": {"role": "porch_ceiling"}, "item": "roof"
   },
   {
     "kind": "column",
@@ -233,6 +248,7 @@ export const PANEL_ROLES = [
 ];
 
 export const ITEM_PARTS = {
+  "roof": ["support", "underside"],
   "opening": [
     "casing",
     "window_frame",

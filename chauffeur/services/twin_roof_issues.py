@@ -1,5 +1,6 @@
 """Pure geometry warnings for the draft roof check (feet, building frame)."""
 import math
+from services.twin_model_supports import is_supported
 
 
 _EPS = 1e-9
@@ -130,7 +131,8 @@ def _bearing_area(rect, level, walls):
 def roof_issues(building) -> list[dict]:
     """Find contradictions without changing the building or deciding its roof."""
     levels = building.get('levels', [])
-    sections = [s for s in building.get('roof', {}).get('sections', []) if s.get('state') != 'ghost']
+    sections = [s for s in building.get('roof', {}).get('sections', [])
+                if s.get('state') != 'ghost' and not is_supported(s)]
     walls = [w for w in building.get('walls', []) if w.get('state') != 'ghost']
     ground = min((l['elevation'] for l in levels), default=0)
     upper = [l for l in levels if l['elevation'] > ground]

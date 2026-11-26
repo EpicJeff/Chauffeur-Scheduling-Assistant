@@ -4,6 +4,7 @@ from copy import deepcopy
 import math
 
 from services import twin_blocks, twin_joints, twin_roof_issues
+from services.twin_model_supports import is_supported, carry_fields, wall_axis
 
 
 _EPS = 1e-8
@@ -25,7 +26,8 @@ def _metadata(piece, excluded):
 
 def from_section(section: dict) -> dict:
     """Convert a rectangular section without changing its drawn roof planes."""
-    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of', 'plane_edges'})
+    roof = _metadata(section, {'rect', 'ends', 'pitches', 'low_side', 'dormer_of', 'plane_edges',
+                               'gutters', 'downspouts'})
     if 'plane_edges' in section and 'plane_materials' in roof:
         # A section becomes a canonical rectangle, whose edge order may differ
         # from the authored area's (and whose other sections have other edges).
@@ -42,7 +44,7 @@ def from_section(section: dict) -> dict:
     ends = (ridge + '0', ridge + '1')
     pitches = section.get('pitches') or {}
     roof['edges'] = []
-    for side in _SIDES:
+    for index, side in enumerate(_SIDES):
         setting = 'sloped'
         if kind == 'shed':
             setting = 'sloped' if side == section['low_side'] else 'gable'
@@ -52,6 +54,15 @@ def from_section(section: dict) -> dict:
                 setting = 'sloped'
         roof['edges'].append({'setting': setting,
                               'pitch': 0 if kind == 'flat' else pitches.get(side, section['pitch'])})
+        authored = section.get('edges', [])
+        if isinstance(authored, list) and index < len(authored) and isinstance(authored[index], dict):
+            roof['edges'][-1].update(_metadata(authored[index], {'gutters', 'downspouts', 'setting', 'pitch'}))
+        if section.get('gutters', {}).get(side) is True:
+            roof['edges'][-1]['gutter'] = True
+        if side in section.get('downspouts', {}):
+            roof['edges'][-1]['downspouts'] = deepcopy(section['downspouts'][side])
+    closed = {str(i): 'closed' for i in range(4) if section.get('ends', {}).get(str(i)) == 'closed'}
+    if closed: roof['ends'] = closed
     return roof
 
 
@@ -144,13 +155,57 @@ def _section(roof, rect, edges):
     return section
 
 
+def eave_edge_indices(roof: dict) -> set[int]:
+    """Authored indices of the actual horizontal eaves, matching gutters.js.
+
+    Resolve through the same partition and plane_edges as the flat view; a
+    sloped label alone does not make a shed's high side an eave.
+    """
+    result = set()
+    for section in to_sections(roof):
+        for side, index in section['plane_edges'].items():
+            if index is None or roof['edges'][index]['setting'] != 'sloped':
+                continue
+            kind = section['kind']
+            if (kind == 'flat' or kind == 'shed' and section['low_side'] == side
+                    or kind in ('hip', 'gable') and (side[0] != section['ridge']
+                        or section.get('ends', {}).get(side, kind) == 'hip')):
+                result.add(index)
+    return result
+
+
 def to_sections(roof: dict) -> list[dict]:
     """Extend partition rectangles to the boundary, inheriting edge settings."""
     rectangles = _rectangles(roof['area'])
     sections = []
     for i, rect in enumerate(rectangles):
-        section = _section(roof, rect, _rectangle_edges(roof, rect))
+        edges = _rectangle_edges(roof, rect)
+        section = _section(roof, rect, edges)
+        # Keep opt-in edge data without adding fields to legacy flat sections.
+        known = {'setting', 'pitch', 'wall', 'wall_offset', 'gutter', 'downspouts', 'gutter_ack'}
+        if any(set(e) - known for e in edges.values()):
+            section['edges'] = [deepcopy(edges[side]) for side in _SIDES]
         section['plane_edges'] = _rectangle_edge_indices(roof, rect)
+        carry_fields(roof, section, overwrite=True)
+        if 'edges' in section:
+            corners = [[rect[0], rect[1]], [rect[2], rect[1]], [rect[2], rect[3]], [rect[0], rect[3]]]
+            for index, side in enumerate(_SIDES):
+                origin = section['plane_edges'][side]
+                if origin is None:
+                    continue
+                axis = _edge(*_segments(roof['area'])[origin])[0]
+                for key, coordinate in (('wall_offset', axis), ('wall_along_offset', 1-axis)):
+                    value = section['edges'][index].get(key)
+                    if type(value) in (int, float):
+                        section['edges'][index][key] = value + corners[index][coordinate] - roof['area'][origin][coordinate]
+        for field, key in (('gutters', 'gutter'), ('downspouts', 'downspouts')):
+            values = {side: deepcopy(roof['edges'][index][key])
+                      for side, index in section['plane_edges'].items()
+                      if index is not None and key in roof['edges'][index]
+                      and (roof['edges'][index][key] is True if key == 'gutter'
+                           else isinstance(roof['edges'][index][key], list))}
+            if values:
+                section[field] = values
         section['id'] = roof['id'] if len(rectangles) == 1 else f"{roof['id']}~{i + 1}"
         sections.append(section)
     return sections
@@ -171,6 +226,29 @@ def attach_edges(roof: dict, walls: list, joints) -> dict:
     roof = deepcopy(roof)
     roof['edges'] = [deepcopy(edge) for edge in roof['edges']]
     lines = _wall_lines(walls, joints)
+    if is_supported(roof):
+        host = roof.get('host')
+        roof.pop('host', None)
+        candidates = []
+        for i, (a, b) in enumerate(_segments(roof['area'])):
+            axis, line, start, end = _edge(a, b)
+            for wall in lines:
+                if wall.get('level') != roof.get('level') or wall_axis(wall['from'], wall['to']) != axis:
+                    continue
+                named = ((isinstance(host, dict) and host.get('wall') == wall['id'] and host.get('edge') == i)
+                         or roof['edges'][i].get('wall') == wall['id'])
+                overlap = twin_joints._overlap(start, end, wall['from'][1-axis], wall['to'][1-axis])
+                distance = abs(wall['from'][axis] - line)
+                if named or (wall.get('exterior') and wall.get('state') != 'ghost'
+                             and overlap > _EPS
+                             and distance <= roof.get('overhang', 1) + .5 + _EPS):
+                    candidates.append((not named, distance, -overlap, i, wall['id'], axis, line, wall))
+        if candidates:
+            _, _, _, i, _, axis, line, wall = min(candidates, key=lambda c: c[:5])
+            roof['host'] = {'wall': wall['id'], 'edge': i}
+            roof['edges'][i].update(wall=wall['id'], wall_offset=line-wall['from'][axis],
+                                   wall_along_offset=roof['area'][i][1-axis]-wall['from'][1-axis])
+        return roof
     # The caller has resolved the bearing level (R10). This API has no level
     # elevations; neutral heights let _bearing apply its plan-line, storey,
     # exterior and settled-wall filters without inventing floor elevations.
@@ -191,10 +269,56 @@ def attach_edges(roof: dict, walls: list, joints) -> dict:
     return roof
 
 
-def follow_walls(roof: dict, walls: list, joints) -> dict:
+def follow_walls(roof: dict, walls: list, joints, previous=None) -> dict:
     """Keep each attached edge's original offset as its wall line moves."""
     roof = deepcopy(roof)
     lines = {w['id']: w for w in _wall_lines(walls, joints)}
+    if is_supported(roof):
+        host = roof.get('host', {})
+        wall = lines.get(host.get('wall'))
+        index = host.get('edge')
+        if wall is not None and wall.get('level') != roof.get('level'):
+            roof.pop('host', None)
+            return roof
+        if wall is not None and type(index) is int and 0 <= index < len(roof['area']):
+            a, b = _segments(roof['area'])[index]
+            axis, line, _, _ = _edge(a, b)
+            if wall_axis(wall['from'], wall['to']) == axis:
+                turn_shift = [0, 0]
+                old_wall = next((w for w in _wall_lines(previous['walls'], previous['joints']) if w['id'] == wall['id']), None) if previous else None
+                def tangent(w):
+                    return math.atan2(w['to'][1]-w['from'][1], w['to'][0]-w['from'][0])
+                # Modulo pi makes the direction independent of joint order.
+                turn = (tangent(wall)-tangent(old_wall)+math.pi/2) % math.pi-math.pi/2 if old_wall else 0
+                if abs(turn) > _EPS:
+                    roof.setdefault('roof_frame', dict(origin=[(a[k]+b[k])/2 for k in (0, 1)], angle=0))
+                    roof['roof_frame']['angle'] += turn
+                    origin = roof['roof_frame']['origin']
+                    c, s = math.cos(turn), math.sin(turn)
+                    x, y = [origin[k]-old_wall['from'][k] for k in (0, 1)]
+                    turn_shift = [c*x-s*y-x, s*x+c*y-y]
+                    for point in roof['support'].get('at', {}).values():
+                        x, y = [point[k]-origin[k] for k in (0, 1)]
+                        point[:] = [origin[0]+c*x-s*y, origin[1]+s*x+c*y]
+                edge = roof['edges'][index]
+                delta = [0, 0]
+                delta[axis] = wall['from'][axis] + edge.get('wall_offset', 0) - line
+                delta[1-axis] = wall['from'][1-axis] + edge.get('wall_along_offset', a[1-axis]-wall['from'][1-axis]) - a[1-axis]
+                for k in (0, 1):
+                    delta[k] += turn_shift[k]
+                for key, k in (('wall_offset', axis), ('wall_along_offset', 1-axis)):
+                    if key in edge:
+                        edge[key] += turn_shift[k]
+                for point in roof['area']:
+                    for k in (0, 1):
+                        point[k] += delta[k]
+                for point in roof['support'].get('at', {}).values():
+                    for k in (0, 1):
+                        point[k] += delta[k]
+                if roof.get('roof_frame'):
+                    for k in (0, 1):
+                        roof['roof_frame']['origin'][k] += delta[k]
+        return roof
     for i, (edge, (a, b)) in enumerate(zip(roof['edges'], _segments(deepcopy(roof['area'])))):
         wall = lines.get(edge.get('wall'))
         if wall is None or 'wall_offset' not in edge:
@@ -268,4 +392,6 @@ def dormer_sections(dormer: dict, roof: dict) -> list[dict]:
                    overhang=dormer.get('overhang', roof['overhang']), roof=roof['id'])
     if 'level' in roof:
         section['level'] = roof['level']
+    if 'support' in roof:
+        section['support'] = deepcopy(roof['support'])
     return [section]

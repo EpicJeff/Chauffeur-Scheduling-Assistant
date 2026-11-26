@@ -479,6 +479,12 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
   const check = () => { if (signal?.aborted) throw new Error('Atlas cancelled.'); };
   check();
   const job = atlasJob(root, plan, layout);
+  // Coarse terrain has the same bake addresses, but different cached buffers.
+  // Never let a Low parent publish those buffers for a 1 ft baking desk, or
+  // let that desk read them out of the same browser's local cache.
+  const coarseTerrain = job.terrainStep !== 1;
+  const suffix = coarseTerrain ? ':terrain-step-' + job.terrainStep : '';
+  const localKey = key => key + suffix, localInput = localKey(job.cacheKey);
   const opening = openCache(indexedDB).catch(() => null);
   opening.then(db => { if (signal?.aborted) db?.close(); });
   const db = await atlasWait(opening, signal);
@@ -486,6 +492,7 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
   const url = () => base() + 'api/house/atlases/' + job.cacheKey;
   // Publish local hits too: the baking desk may already have a pre-server-cache atlas.
   const publish = data => {
+    if (coarseTerrain) return;
     (async () => {
       check();
       const body = await encodeAtlas(data, { signal }); check();
@@ -494,21 +501,27 @@ export async function loadAtlas(root, plan, layout, { Worker = globalThis.Worker
       if (!response.ok && response.status !== 403) throw new Error(`Atlas upload: HTTP ${response.status}`);
     })().catch(error => reportAtlasServer(error, signal));
   };
-  const answer = data => { check(); return apply ? applyAtlas(data, root, layout) :
-    { key: data.key, apply: () => { check(); return applyAtlas(data, root, layout); } }; };
+  const answer = data => {
+    check();
+    // Placements no longer invalidate this cache. Reach and per-lamp occluder
+    // keys must read today's plan, rather than the plan saved with its geometry.
+    const current = { ...data, room: { ...data.room, plan } };
+    return apply ? applyAtlas(current, root, layout) :
+      { key: data.key, apply: () => { check(); return applyAtlas(current, root, layout); } };
+  };
   const save = async data => {
-    check(); await wait(cached(db, data.key, data).catch(() => null));
-    check(); await wait(cached(db, 'input:' + job.cacheKey, data.key).catch(() => null));
-    check(); await wait(remember(db, data.key, job.cacheKey).catch(() => null));
+    check(); await wait(cached(db, localKey(data.key), data).catch(() => null));
+    check(); await wait(cached(db, 'input:' + localInput, localKey(data.key)).catch(() => null));
+    check(); await wait(remember(db, localKey(data.key), localInput).catch(() => null));
   };
   try {
-    const key = await wait(cached(db, 'input:' + job.cacheKey).catch(() => null));
+    const key = await wait(cached(db, 'input:' + localInput).catch(() => null));
     const stored = key && await wait(cached(db, key).catch(() => null));
     // One layout key can hold geometry from another base uv (random_offset on/off):
     // that copy is not this scene's, so lay out afresh and replace it.
     const hit = stored?.uvKey === job.uvKey ? stored : null;
     check();
-    if (hit) { await wait(remember(db, hit.key, job.cacheKey).catch(() => null)); check(); publish(hit); return answer(hit); }
+    if (hit) { await wait(remember(db, localKey(hit.key), localInput).catch(() => null)); check(); publish(hit); return answer(hit); }
     try {
       const response = await wait(fetch(url(), { signal })); check();
       if (response.ok) {

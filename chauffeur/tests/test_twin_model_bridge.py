@@ -321,15 +321,15 @@ def test_household_roofs_round_trip():
     model = copy.deepcopy(_migrated()[0])
     mb = _by_id(model['buildings'])
     new = _by_id(_b().flatten(copy.deepcopy(model))['buildings'])
-    expect_roofs = {'main-house': 13, 'pool-house': 2}
+    expect_roofs = {'main-house': 14, 'pool-house': 3}  # ordinary sections plus migrated awnings
     expect_dormers = {'main-house': 1, 'pool-house': 0}
     for bid, ob in old.items():
         check(len(_live(mb[bid]['roofs'])) == expect_roofs[bid],
-              f"{bid}: {len(mb[bid]['roofs'])} roofs, expected one per non-dormer section ({expect_roofs[bid]})")
+              f"{bid}: {len(mb[bid]['roofs'])} roofs, expected sections plus migrated awnings ({expect_roofs[bid]})")
         check(len(mb[bid]['dormers']) == expect_dormers[bid],
               f"{bid}: {len(mb[bid]['dormers'])} dormers, expected {expect_dormers[bid]}")
         sections = new[bid]['roof']['sections']
-        plain = [s for s in sections if not s.get('dormer_of')]
+        plain = [s for s in sections if not s.get('dormer_of') and not s.get('support')]
         olds = [s for s in ob['roof']['sections'] if not s.get('dormer_of')]
         check(len(plain) == len(olds), f'{bid}: {len(plain)} flattened sections for {len(olds)} old ones')
         for s in olds:
@@ -410,7 +410,21 @@ def test_household_keeps_stairs_porches_and_extensions():
         nb = new[bid]
         check(nb['stairs'] == ob['stairs'], f'{bid}: stairs must carry over unchanged')
         ext = _by_id(nb['extensions'])
+        roofs = _by_id(nb['roofs'])
         for e in ob['roof']['extensions']:
+            if e['kind'] == 'awning':
+                got = roofs.get(e['id'])
+                check(got is not None and got['kind'] == 'shed', f"{bid}: awning {e['id']} becomes an ordinary shed roof")
+                check(got['support']['kind'] == 'bracket' and got['support']['count'] == e['brackets'],
+                      f"{bid}: awning support count must survive migration")
+                check(got['host']['wall'] == e['wall'] and got['pitch'] == e['pitch'] and got['plate'] == e['eave'],
+                      f"{bid}: awning host, pitch and eave must survive migration")
+                xs = [p[0] for p in got['area']]; ys = [p[1] for p in got['area']]
+                check(abs(max(xs)-min(xs) - (e['x1']-e['x0'])) <= TOL and
+                      abs(max(ys)-min(ys) - e['depth']) <= TOL,
+                      f"{bid}: awning span and depth must survive migration")
+                check(e['id'] not in ext, f"{bid}: converted awning must leave no extension")
+                continue
             got = ext.get(e['id'])
             check(got is not None, f"{bid}: roof extension {e['id']} was dropped")
             for key in ('kind', 'x0', 'x1', 'depth', 'pitch', 'eave', 'brackets', 'wall'):
@@ -453,8 +467,11 @@ def test_flatten_normalizes_and_keeps_extras():
         for key in ('walls', 'rooms'):
             check(len(n[key]) == len(f[key]), f'{bid}: normalize dropped {key}')
         check(len(n['roof']['sections']) == len(f['roof']['sections']), f'{bid}: normalize dropped roof sections')
-        check(len(n['roof']['extensions']) == len(ob['roof']['extensions']),
-              f"{bid}: roof extensions {len(ob['roof']['extensions'])} -> {len(n['roof']['extensions'])}")
+        remaining = [e for e in ob['roof']['extensions'] if e['kind'] not in ('awning', 'shed_continuation')]
+        check(len(n['roof']['extensions']) == len(remaining), f"{bid}: only unconverted extension kinds remain")
+        check({e['id'] for e in ob['roof']['extensions'] if e['kind'] == 'awning'} <=
+              {s['id'] for s in n['roof']['sections'] if s.get('support')},
+              f"{bid}: migrated awning identities remain roof sections through normalize")
         separators = [w for w in n['walls'] if w.get('kind') == 'separator']
         check(separators and len(separators) == len([w for w in _live(m['walls']) if w['kind'] == 'separator']),
               f'{bid}: separator walls must reach the flat walls with kind separator')
@@ -877,7 +894,9 @@ def test_legacy_person_dormer_block_stays_one_dormer():
     section['block'] = section.pop('dormer_of')
     model, _ = _b().assemble(flat, model)
     house = _by_id(model['buildings'])['main-house']
-    check(len(house['roofs']) == 13 and len(house['dormers']) == 1, (house['roofs'], house['dormers']))
+    check(len([r for r in house['roofs'] if not r.get('support')]) == 13 and len(house['dormers']) == 1,
+          (house['roofs'], house['dormers']))
+    check(len([r for r in house['roofs'] if r.get('support')]) == 1, 'the migrated awning remains a separate roof')
     section = _by_id(_by_id(_b().flatten(model)['buildings'])['main-house']['roof']['sections'])[dormer['id']]
     check(section['pitch'] == 11 and section['src']['person'] and section.get('dormer_of') and 'block' not in section, section)
 

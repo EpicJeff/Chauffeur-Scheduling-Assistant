@@ -251,22 +251,22 @@
     #twin-time-preview button { min-height:44px; padding:8px 12px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); background:var(--twinGlassStrong); }
     #twin-time-preview button[aria-pressed=true] { color:var(--twinSelectedText); background:var(--twinSelected); }
     #twin-time-preview label { display:block; margin:12px 0; }
-    #twin-time-scrub { display:block; width:100%; min-height:44px; accent-color:var(--twinSelected); }
-    #twin-time-scrub-value { color:var(--twinTextDim); font-size:12px; }
+    #twin-time-scrub, #twin-night-brightness { display:block; width:100%; min-height:44px; accent-color:var(--twinSelected); }
+    #twin-time-scrub-value, #twin-night-brightness-value { color:var(--twinTextDim); font-size:12px; }
     html[data-twin-idle] #twin-path, html[data-twin-idle] .twin-level-targets { visibility:hidden; }
     @media (max-width:800px) { #twin-path { max-width:calc(100vw - 32px); } #twin-controls { top:142px; right:16px; max-width:calc(100vw - 32px); } html[data-twin-wall] #twin-controls { top:72px; } }
-    /* Mode icons, centred at the top (2c-2). Name as tooltip on hover; a long press shows it on touch. */
+    /* Shared mode toggles, centred at the top; hold or Shift+Enter solos a mode. */
     #twin-controls #twin-modes { position:fixed; left:50%; top:86px; transform:translateX(-50%); z-index:47; flex-wrap:nowrap; }
     html[data-twin-wall] #twin-controls #twin-modes { top:16px; }
     #twin-modes button { position:relative; min-width:48px; padding:6px 12px; display:inline-flex; align-items:center; justify-content:center; }
     #twin-modes button svg { width:22px; height:22px; flex:none; }
-    .twin-mode-tip { position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%); white-space:nowrap; padding:4px 10px; border-radius:8px; border:1px solid var(--twinBorder); background:var(--twinGlassStrong); color:var(--twinText); font:500 12px system-ui; pointer-events:none; }
+    .twin-mode-tip { position:fixed; top:calc(100% + 8px); left:50%; transform:translateX(-50%); width:260px; max-width:calc(100vw - 32px); white-space:normal; padding:4px 10px; border-radius:8px; border:1px solid var(--twinBorder); background:var(--twinGlassStrong); color:var(--twinText); font:500 12px system-ui; pointer-events:none; }
     #twin-modes button:hover .twin-mode-tip { display:block !important; }
     @media (max-width:800px) { #twin-controls #twin-modes { top:206px; } html[data-twin-wall] #twin-controls #twin-modes { top:72px; } }
     [hidden] { display:none !important; }
-    #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:16px; right:16px; z-index:46; pointer-events:none; }
+    #twin-glance-home { position:fixed; bottom:max(calc(var(--panel-shelf-h, 0px) + 16px), var(--twin-glance-clearance, 0px)); left:50%; transform:translateX(-50%); width:max-content; max-width:calc(100% - 32px); z-index:46; pointer-events:none; }
     /* Shared tiles; glass and thin type follow the approved tiles brief. */
-    #twin-glance { display:flex; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
+    #twin-glance { display:flex; box-sizing:border-box; width:max-content; max-width:100%; margin-inline:auto; flex-wrap:nowrap; gap:12px 28px; padding:12px 18px; border:1px solid var(--twinBorder); border-radius:24px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:14px/1.3 system-ui; overflow-x:auto; pointer-events:auto; }
     #twin-glance > div { display:flex; flex:none; align-items:center; gap:10px; min-width:0; }
     #twin-glance svg { flex:none; width:28px; height:28px; }
     #twin-glance strong { display:block; white-space:nowrap; font-size:22px; font-weight:400; }
@@ -275,7 +275,20 @@
     #twin-tier { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
     #twin-hud { bottom:calc(var(--panel-shelf-h, 0px) + 136px); }
     #twin-status { bottom:calc(var(--panel-shelf-h, 0px) + 90px); }
-    #twin-mode-legend { pointer-events:auto; align-self:center; padding:8px 12px; background:var(--twinGlass); backdrop-filter:blur(16px); border-radius:8px; color:var(--twinText); max-width:calc(100vw - 32px); }
+    #twin-modes #twin-mode-key-button { width:48px; height:44px; padding:0; font-size:20px; font-weight:400; }
+    #twin-mode-key-button[hidden], #twin-mode-key[hidden] { display:none; }
+    #twin-mode-key { position:fixed; z-index:48; box-sizing:border-box; width:220px; max-width:calc(100vw - 16px); max-height:min(60dvh, var(--twin-key-space, 60dvh)); overflow:auto; overscroll-behavior:contain; pointer-events:auto; padding:12px 14px; border:1px solid var(--twinBorder); border-radius:16px; background:var(--twinGlass); backdrop-filter:blur(16px); color:var(--twinText); font:400 12.5px/1.4 system-ui; scrollbar-width:thin; scrollbar-color:var(--twinBorder) transparent; }
+    #twin-mode-key [data-mode-key] + [data-mode-key] { margin-top:12px; padding-top:12px; border-top:1px solid var(--twinBorder); }
+    #twin-mode-key h2 { display:flex; align-items:center; gap:7px; margin:0 0 7px; font:600 12.5px/1.4 system-ui; }
+    #twin-mode-key h2 svg { width:16px; height:16px; flex:none; }
+    .twin-key-row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+    .twin-key-swatch { display:inline-flex; align-items:center; justify-content:center; flex:none; width:12px; height:12px; border-radius:3px; }
+    .twin-key-swatch[data-key-cone] { font-size:18px; }
+    .twin-key-note { margin:7px 0 0; color:var(--twinTextDim); font-size:12px; overflow-wrap:anywhere; }
+    .twin-key-status { width:fit-content; margin:8px 0 0; padding:4px 7px; border:1px solid var(--twinBorder); border-radius:8px; background:var(--twinHover); }
+    .twin-key-alarms summary { cursor:pointer; }
+    .twin-key-alarms p { margin:6px 0; overflow-wrap:anywhere; color:var(--twinTextDim); }
+    #twin-mode-key :focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
     .twin-mode-labels { position:fixed; inset:0; pointer-events:none; z-index:44; overflow:hidden; }
     .twin-mode-labels span { position:absolute; transform:translate(-50%, -50%); white-space:nowrap; padding:4px 8px; border-radius:8px; background:var(--twinGlassStrong); backdrop-filter:blur(16px); color:var(--twinText); font:600 13px system-ui; }
     /* Room cards use the idle clock's dark glass and the glance bar's thin readings. */
@@ -301,7 +314,7 @@
     .twin-weather-reading svg { width:clamp(36px, 5vw, 64px); height:clamp(36px, 5vw, 64px); }
     .twin-weather-reading strong { white-space:nowrap; font:300 clamp(36px, 5vw, 64px)/1.1 system-ui; }
     #twin-idle-weather small { display:block; margin-top:8px; color:var(--twinTextDim); font:300 clamp(16px, 2vw, 22px)/1.4 system-ui; }
-    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; flex-wrap:wrap; gap:20px 32px; border:0; border-top:1px solid var(--twinBorder); border-radius:0; background:transparent; backdrop-filter:none; overflow:visible; }
+    #twin-idle #twin-glance { margin-top:24px; padding:22px 0 0; gap:20px 32px; border:0; border-top:1px solid var(--twinBorder); border-radius:0; background:transparent; backdrop-filter:none; }
     #twin-idle #twin-glance strong { font-size:clamp(24px, 3vw, 34px); font-weight:400; }
     #twin-idle #twin-glance svg { width:34px; height:34px; }
     html[data-twin-idle] #twin-controls, html[data-twin-idle] #twin-tier, html[data-twin-idle] #twin-hud, html[data-twin-idle] #top-nav-bar, html[data-twin-idle] .twin-mode-labels, html[data-twin-idle] .twin-room-cards { visibility:hidden; }
@@ -347,7 +360,7 @@
     #twin-energy-settings fieldset { margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; }
     /* Energy check reuses the energy drawer's fieldsets; the legend reads the same rows. */
     .twin-energy-check { color:var(--twinText); }
-    .twin-energy-check fieldset, #twin-mode-legend .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); }
+    .twin-energy-check fieldset, #twin-mode-key .twin-energy-check fieldset { display:block; margin:12px 0; padding:10px; border:1px solid var(--twinBorder); border-radius:8px; color:var(--twinText); }
     .twin-energy-check p { margin:6px 0; overflow-wrap:anywhere; }
     .twin-energy-check legend { color:var(--twinText); font-weight:700; }
     .twin-energy-check [data-energy-summary] { font-size:16px; line-height:1.5; font-weight:600; }
@@ -356,10 +369,9 @@
     .twin-energy-check [data-energy-mark=error] { color:#f87171; }
     .twin-energy-check [data-energy-flow][data-status=hidden] { color:var(--twinTextDim); }
     /* The check's role names are fieldset legends; the controls bar hides its legends, so show these. */
-    #twin-mode-legend legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
-    #twin-mode-legend a { display:inline-block; min-height:44px; padding:10px 0; text-decoration:underline; }
-    #twin-mode-legend .twin-energy-check { max-height:50dvh; overflow-y:auto; }
-    #twin-mode-legend a:focus-visible { outline:2px solid var(--twinText); outline-offset:2px; }
+    #twin-mode-key legend { position:static; width:auto; height:auto; overflow:visible; clip-path:none; font-weight:700; padding:0 4px; }
+    #twin-mode-key a { display:inline-flex; align-items:center; box-sizing:border-box; min-height:44px; color:inherit; text-decoration:underline; }
+    #twin-mode-key .twin-energy-check { overflow-wrap:anywhere; }
   </style>
 </head>
 <body>
@@ -391,6 +403,8 @@
       {% endfor %}
       <label>Time of day <input id="twin-time-scrub" type="range" min="0" max="24" step="0.08333333333333333" value="12" aria-label="Time of day"></label>
       <output id="twin-time-scrub-value" for="twin-time-scrub">12:00</output>
+      <label>Night brightness <input id="twin-night-brightness" type="range" min="0" max="100" step="5" value="50" aria-label="Night brightness"></label>
+      <output id="twin-night-brightness-value" for="twin-night-brightness">50%</output>
     {% endcall %}
     {% if request.query_params.get('panel') != 'true' and request.query_params.get('kiosk') != 'true' and request.query_params.get('tabs') is none %}
     {% call settings_section('twin-glance-settings', 'Live readings and idle face') %}

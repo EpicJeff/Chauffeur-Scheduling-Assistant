@@ -62,6 +62,7 @@ sys.path.insert(0, ROOT)
 
 from services import twin_library as tl  # noqa: E402
 from services import twin_plan  # noqa: E402
+from services.twin_model_supports import is_supported  # noqa: E402
 
 TWIN = os.path.join(ROOT, 'static', 'twin')
 VENDOR = os.path.join(ROOT, 'static', 'vendor', 'three-r187')
@@ -95,8 +96,9 @@ registerHooks({
 });
 globalThis.window = globalThis.window || {};
 const roof = await import(pathToFileURL(path.join(job.twin, 'twin_roof.js')).href);
+const {isSupported}=await import(pathToFileURL(path.join(job.twin, 'roof_supports.js')).href);
 const building = job.plan.buildings.find(b => b.id === job.building);
-const sections = building.roof?.sections || [];
+const sections = (building.roof?.sections || []).filter(s=>!isSupported(s));
 const result = {};
 // Roof height (twin_roof.heightAt) and the section that sets it, per point.
 result.heights = (job.heights || []).map(([x, y]) => {
@@ -208,6 +210,11 @@ def plan():
 
 def building(p):
     return next(b for b in p['buildings'] if b['id'] == BID)
+
+
+def walled_sections(b):
+    """Envelope/joint checks exclude ordinary independently supported roofs."""
+    return [s for s in b['roof']['sections'] if not is_supported(s)]
 
 
 def run(p, rays=None, heights=None, bounds=None, triangles=None, level_view=None):
@@ -797,7 +804,7 @@ def test_rear_seams_closed():
     p = plan()
     b = building(p)
     l1, l2 = level(b, 'L1'), level(b, 'L2')
-    rects = [section_bounds(s) for s in b['roof']['sections']]
+    rects = [section_bounds(s) for s in walled_sections(b)]
     X0, Y0 = min(r[0] for r in rects), min(r[1] for r in rects)
     X1, Y1 = max(r[2] for r in rects), max(r[3] for r in rects)
 
@@ -942,7 +949,7 @@ def test_no_siding_on_roof_faces():
         pts += [[t[0], t[1]], [t[3], t[4]], [t[6], t[7]],
                 [(t[0] + t[3] + t[6]) / 3, (t[1] + t[4] + t[7]) / 3]]
     heights = run(p, heights=pts)['heights'] if pts else []
-    names = [s.get('id') or f'roof:{i}' for i, s in enumerate(b['roof']['sections'])]
+    names = [s.get('id') or f'roof:{i}' for i, s in enumerate(walled_sections(b))]
     bad = []
     for k, t in enumerate(sloped):
         zs = [t[2], t[5], t[8], (t[2] + t[5] + t[8]) / 3]
@@ -973,7 +980,7 @@ def free_eave_points(b, step=1.0, corner=0.75):
     where the section is the envelope there and nothing covers the point
     0.05 ft further out (a free edge, not a step onto another section)."""
     out = []
-    for i, s in enumerate(b['roof']['sections']):
+    for i, s in enumerate(walled_sections(b)):
         X0, Y0, X1, Y1 = section_bounds(s)
         for side in _eave_sides(s):
             if side in ('y0', 'y1'):
@@ -1054,7 +1061,7 @@ def test_eave_trim_present():
     underside or soffit supplies the hit from below."""
     p = plan()
     b = building(p)
-    sections = b['roof']['sections']
+    sections = walled_sections(b)
     cand = free_eave_points(b)
     beyond = [[q[0] + 0.05 * n[0], q[1] + 0.05 * n[1]] for _, _, q, n in cand]
     info = run(p, heights=[list(q) for _, _, q, _ in cand] + beyond)['heights']

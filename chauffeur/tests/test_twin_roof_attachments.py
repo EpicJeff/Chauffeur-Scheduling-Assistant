@@ -151,30 +151,46 @@ class RoofAttachments(unittest.TestCase):
         # The new triangular face permits a ten-foot-wide rectangle here.
         self.assertGreaterEqual(zone['rect'][2]-zone['rect'][0], 10-1e-6)
 
-    def test_legacy_shed_continuation_keeps_its_depth(self):
+    def test_legacy_shed_continuation_becomes_independent_and_keeps_its_depth(self):
         m = house()
         m['buildings'][0]['extensions'] = [dict(id='continuation', kind='shed_continuation',
              section='r', side='x1', to_x=48, pitch=3, overhang=1, state='settled')]
         self.load(m)
+        saved = copy.deepcopy(next(r for r in self.store.current_model()['buildings'][0]['roofs']
+                                   if r['id'] == 'continuation'))
         m = self.post(dict(op='move_roof_edge', building='b', roof='r', edge=1, by=3))['model']
-        self.assertEqual(m['buildings'][0]['extensions'][0]['to_x'], 51)
+        continuation = next(r for r in m['buildings'][0]['roofs'] if r['id'] == 'continuation')
+        self.assertEqual(continuation, saved, 'the converted ordinary roof owns its own unchanged geometry')
+        self.assertEqual(max(p[0] for p in continuation['area'])-min(p[0] for p in continuation['area']), 8)
+        self.assertFalse(m['buildings'][0].get('extensions'))
 
-    def test_deleted_roof_extensions_stay_as_recoverable_ghosts(self):
+    def test_deleted_parent_keeps_migrated_roofs_independent_and_undo_restores_all(self):
         from services import twin_plan
         m = house()
+        m['buildings'][0]['joints'] = [dict(id='a', level='L1', at=[0, 0]), dict(id='b', level='L1', at=[40, 0])]
+        m['buildings'][0]['walls'] = [dict(id='front', level='L1', joints=['a', 'b'], height=10,
+                                              thickness=.5, exterior=True)]
         m['buildings'][0]['extensions'] = [dict(id='continuation', kind='shed_continuation',
              section='r', side='x1', to_x=48, pitch=3, overhang=1, state='settled'),
-             dict(id='awning', kind='awning', section='r', x0=5, x1=15, depth=4, pitch=2,eave=9,state='settled')]
+             dict(id='awning', kind='awning', section='r', wall='front', x0=5, x1=15, depth=4, pitch=2,eave=9,state='settled')]
         self.load(m); before=self.store.current_id()
+        saved = self.store.current_model()['buildings'][0]
+        independent = [r for r in saved['roofs'] if r['id'] != 'r']
+        self.assertEqual({r['id'] for r in independent}, {'continuation', 'awning'})
+        self.assertTrue(all(r.get('state') != 'ghost' for r in independent))
         result = self.post(dict(op='delete', building='b', id='r'))
-        for e in result['model']['buildings'][0]['extensions']:
-            self.assertEqual(e['state'],'ghost')
-            self.assertIn('lost its roof',e['why'])
-            self.assertEqual(len(e['position']),2)
+        self.assertEqual(result['model']['buildings'][0]['roofs'], independent)
+        self.assertFalse(result['model']['buildings'][0].get('extensions'))
+        shade = next(r for r in independent if r['id'] == 'awning')
+        self.assertEqual(shade['host']['wall'], 'front')
+        self.assertEqual(shade['level'], 'L1')
         flat = twin_plan.normalize(result['plan'])[0]
-        self.assertEqual(len(flat['buildings'][0]['roof']['extensions']),2)
+        self.assertEqual({s['roof'] for s in flat['buildings'][0]['roof']['sections']}, {'continuation', 'awning'})
+        self.assertFalse(flat['buildings'][0]['roof']['extensions'])
         self.store.revert(before)
-        self.assertEqual(self.store.current_model()['buildings'][0]['extensions'],m['buildings'][0]['extensions'])
+        restored = self.store.current_model()['buildings'][0]
+        self.assertEqual(restored['roofs'], saved['roofs'])
+        self.assertEqual(restored.get('extensions'), saved.get('extensions'))
 
     def test_delete_cascades_source_scoped_and_one_undo_restores_both(self):
         m = self.seed()

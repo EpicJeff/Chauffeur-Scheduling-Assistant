@@ -35,14 +35,104 @@ await check('manual_idle_poll_and_relight_never_start_but_button_does',async()=>
   assert.equal(desk.server.writes().length,0,'relight waits for a person');
   b.dispatchEvent(new Event('click'));
   await until(()=>desk.controller.state().baking&&desk.controller.state().total===4,'button begins whole-house run');
-  assert.match(outputOf(desk).textContent,/^Baking lights [0-4] of 4$/);
+  assert.match(outputOf(desk).textContent,/^Baking lights [0-4] of 4(?: · Grid [1-9]\d* points)?$/);
+  assert.ok(!outputOf(desk).textContent.includes('Grid 0 points'));
   assert.equal(desk.host.querySelectorAll('progress')[0].hidden,false);
   await until(()=>desk.controller.fresh().length===4&&!desk.controller.state().baking,'manual bake lands');
-  assert.equal(outputOf(desk).textContent,'Lighting is up to date');
+  assert.ok(desk.controller.state().grid.points>0);
+  assert.ok(desk.controller.state().grid.bytes>0);
+  assert.ok(desk.controller.state().grid.ms>0);
+  assert.ok(Number.isFinite(desk.controller.state().grid.maskMs)&&desk.controller.state().grid.maskMs>=0);
+  const grid=desk.controller.state().grid;
+  await desk.controller.refresh();
+  assert.deepEqual(desk.controller.state().grid,grid,'idle refresh retains last grid counters');
+  assert.equal(outputOf(desk).textContent,`Lighting is up to date · Grid ${grid.points} points, ${Math.ceil(grid.bytes/1024)} KB`);
   assert.equal(b.hidden,true);assert.equal(buttonOf(desk,'Re-bake all lighting').hidden,false);
   assert.equal(buttonOf(desk,'Re-bake all lighting').disabled,false);
  }finally{desk.controller.stop();}
 });
+
+await check('manual_no_display_reports_crowded_models_and_zero_hides_suffix',async()=>{
+ for(const n of [8,9]) {
+  const plan=structuredClone(job.plan);
+  const at=lot([9.3,5.2,4]);
+  plan.site={...plan.site,furniture:[{id:'stats-chair',asset:'import-missing-stats',at:at.slice(0,2),elevation:at[2]}]};
+  const lamps=Array.from({length:n},(_,i)=>({...k1,device:`crowd-${i}`,at:lot([9.3+i*.01,5.2,9.8])}));
+  const desk=await context('high',null,lamps,{mode:'manual',display:false,plan,poll:0,host:new Node('div')});
+  try {
+   await desk.controller.start();
+   assert.equal(desk.controller.models,null,'editor does not mount model lighting');
+   assert.equal(desk.controller.state().error,null);
+   const grid=desk.controller.state().grid;
+   assert.equal(grid.foldedOrDropped,n===9?1:0);
+   assert.equal(outputOf(desk).textContent,`Lighting is up to date \u00b7 Grid ${grid.points} points, ${Math.ceil(grid.bytes/1024)} KB${n===9?' \u00b7 1 models folded or dropped lamps':''}`);
+   const chunks=[...desk.server.grids.values()];
+   const {decodeGridChunk}=await import(file('static/twin/bake/grid_chunk.js'));
+   let totalPoints=0,totalBytes=0;
+   for(const bytes of chunks){totalPoints+=(await decodeGridChunk(bytes)).indices.length;totalBytes+=bytes.length;}
+   assert.equal(grid.points,totalPoints,'settled points sum all chunks in the run');assert.equal(grid.bytes,totalBytes);
+   if(n===9){
+    const before=desk.server.calls.length;await desk.controller.start();
+    assert.equal(desk.controller.state().grid.foldedOrDropped,1,'settle also counts against reused chunks');
+    assert.match(outputOf(desk).textContent,/1 models folded or dropped lamps$/);
+    assert.ok(!desk.server.calls.slice(before).some(c=>c.method==='POST'&&c.path.endsWith('.png')),'stats-only settle keeps pages');
+   }
+
+  }finally{desk.controller.stop();}
+ }
+});
+
+
+await check('manual_complete_pages_offer_grid_only_button_for_old_or_missing_grids',async()=>{
+ const seed=await context('high',null,null,{mode:'manual',display:false,poll:0,host:new Node('div')});
+ try{
+  await seed.controller.start();
+  const key=seed.controller.state().key,initial=structuredClone(seed.server.manifests.get(key));
+  for(const defect of ['old-rule','missing-name','missing-file']){
+   seed.server.manifests.set(key,structuredClone(initial));const m=seed.server.manifests.get(key);
+   if(defect==='old-rule')for(const e of Object.values(m.lights))delete e.gridRule;
+   if(defect==='missing-name')for(const e of Object.values(m.lights))delete e.grid;
+   if(defect==='missing-file')for(const e of Object.values(m.lights))seed.server.grids.delete(`${key}/${e.grid}`);
+   const before=seed.server.calls.length,pages=new Map(seed.server.pages);
+   const desk=await context('high',seed.server,null,{mode:'manual',display:false,poll:0,host:new Node('div')});
+   try{
+    await until(()=>outputOf(desk)?.textContent==='Lighting grid out of date: 4 lights','cheap grid status '+defect);
+    assert.deepEqual(desk.controller.state().stale,[],'pages remain fresh');
+    assert.equal(desk.controller.packing(),null,'idle check never builds atlas');
+    const button=buttonOf(desk,'Bake lighting');assert.equal(button.hidden,false);assert.equal(button.disabled,false);
+    await sleep(100);await desk.controller.refresh();assert.equal(seed.server.writes(before).length,0,'poll never bakes');
+    assert.equal(desk.renderer.log.renders,0,'idle check never renders');
+    button.dispatchEvent(new Event('click'));
+    await until(()=>desk.controller.state().baked.length===4&&!desk.controller.state().baking,'grid-only button lands '+defect);
+    assert.equal(desk.controller.state().error,null);
+    const writes=seed.server.writes(before);
+    assert.equal(writes.filter(c=>c.method==='POST'&&c.path.includes('/grid/')).length,4);
+    assert.ok(!writes.some(c=>c.path.endsWith('.png')),'no page writes');assert.deepEqual(seed.server.pages,pages);
+    assert.equal(buttonOf(desk,'Bake lighting').hidden,true,JSON.stringify({defect,status:outputOf(desk).textContent,state:desk.controller.state()}));assert.match(outputOf(desk).textContent,/^Lighting is up to date/);
+   }finally{desk.controller.stop();}
+  }
+ }finally{seed.controller.stop();}
+});
+await check('manual_stats_read_failure_warns_once_and_never_retries_published_bake',async()=>{
+ const plan=structuredClone(job.plan),at=lot([9.3,5.2,0]);
+ plan.site={...plan.site,furniture:[{id:'floor-copy',asset:'import-missing-stats',at:at.slice(0,2),elevation:at[2]}]};
+ const lamps=Array.from({length:9},(_,i)=>({...k1,device:`stats-${i}`,at:lot([9.3+i*.01,5.2,9.8])}));
+ let broken=false,warnings=0;const warn=console.warn;
+ const desk=await context('high',null,lamps,{mode:'manual',display:false,plan,poll:0,host:new Node('div'),api:(path,init,next)=>{
+  const h=new Headers(init?.headers);if(broken&&path.includes('/grid/')&&h.get('If-None-Match')!=='*')return Promise.resolve(new Response('{}',{status:503}));
+  return next(path,init);
+ }});
+ try{
+  await desk.controller.start();assert.equal(desk.controller.state().grid.foldedOrDropped,1,'nominal box sits above the floor');
+  broken=true;console.warn=()=>{warnings++;};
+  const since=desk.server.calls.length;await desk.controller.start();
+  assert.equal(warnings,1);assert.equal(desk.controller.state().error,null);assert.equal(desk.controller.state().retryAt,null);
+  assert.equal(desk.controller.state().grid.foldedOrDropped,0);assert.ok(!outputOf(desk).textContent.includes('folded or dropped'));
+  assert.ok(desk.server.manifests.get(desk.controller.state().key).complete);
+  await sleep(100);assert.equal(desk.server.writes(since).length,0,'no retry writes after optional stats failure');
+ }finally{console.warn=warn;desk.controller.stop();}
+});
+
 await check('manual_drag_pauses_every_render_slice_then_resumes',async()=>{
  const desk=await context('high',null,null,{mode:'manual',poll:0,host:new Node('div')});
  try {
@@ -56,6 +146,17 @@ await check('manual_drag_pauses_every_render_slice_then_resumes',async()=>{
   desk.view.plan=authored;
   window.dispatchEvent(event('pointerup'));await sleep(100);assert.equal(desk.renderer.log.renders,before);
   await run;assert.equal(desk.controller.fresh().length,4);
+ }finally{desk.controller.stop();}
+});
+await check('manual_bake_publishes_grids_independent_of_live_palette',async()=>{
+ const desk=await context('high',null,null,{mode:'manual',poll:0,host:new Node('div')});
+ try {
+  await ready(desk);
+  desk.view.live={layout:()=>liveLayout([k1,k2,h1,c1]),paletteLines:()=>['k1']};
+  await desk.controller.start();
+  const lights=desk.server.manifests.get(desk.controller.state().key).lights;
+  assert.ok(lights.k1.grid&&lights.k1.gridLayout,'live palettes cannot exclude bake grids');
+  assert.ok(lights.k2.grid&&lights.k2.gridLayout,'ordinary lights still publish grids');
  }finally{desk.controller.stop();}
 });
 await check('manual_light_edit_stales_only_that_light_without_restart',async()=>{

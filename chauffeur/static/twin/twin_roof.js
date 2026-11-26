@@ -1,7 +1,16 @@
 // Roof geometry in plan feet, with z up. No renderer or browser dependencies.
+import { isSupported, roofPoint } from './roof_supports.js';
+
 const EPS = 1e-9;
 const AREA_EPS = 1e-10;
 const valueAt = (plane, x, y) => plane[0] * x + plane[1] * y + plane[2];
+
+// Indexed choices and their outline must always come from the same record.
+// Plane form/heights remain derived from the partition section.
+export function authoredRoofShape(record, section) {
+  return record?.area ? { ...record, ...section, area: record.area,
+    host: record.host, ends: record.ends, edges: record.edges, underside: record.underside } : section;
+}
 
 // Port of twin_model_roofs._rectangle_edge_indices: longest positive overlap,
 // with the lower authored edge index breaking ties. Do not infer from winding.
@@ -23,11 +32,19 @@ export function rectangleEdgeIndices(area, rect) {
   }));
 }
 
-function bounds(section) {
+export function roofBounds(section) {
+  if (section.roof_frame) {
+    const r=roofBounds({...section,roof_frame:null});
+    const p=[[r[0],r[1]],[r[2],r[1]],[r[2],r[3]],[r[0],r[3]]].map(p=>roofPoint(section,p));
+    return [Math.min(...p.map(p=>p[0])),Math.min(...p.map(p=>p[1])),Math.max(...p.map(p=>p[0])),Math.max(...p.map(p=>p[1]))];
+  }
   const [x0, y0, x1, y1] = section.rect;
   const overhang = section.overhang ?? 0;
-  return [x0 - overhang, y0 - overhang, x1 + overhang, y1 + overhang];
+  if (!section.edges) return [x0 - overhang, y0 - overhang, x1 + overhang, y1 + overhang];
+  const edge = index => section.edges?.[index]?.overhang_ft ?? overhang;
+  return [x0 - edge(3), y0 - edge(0), x1 + edge(1), y1 + edge(2)];
 }
+const bounds = roofBounds;
 
 function covers(rect, x, y) {
   return x >= rect[0] && y >= rect[1] && x <= rect[2] && y <= rect[3];
@@ -42,6 +59,7 @@ export function endKind(section, end) {
 // A section is the minimum of its side planes, restricted to its footprint.
 // Distances are signed: extending a plane past the plate lowers the eave.
 export function planes(section) {
+  if (section.roof_frame) return planes({...section,roof_frame:null}).map(p=>rotatePlane(section,p));
   const [x0, y0, x1, y1] = section.rect;
   const plate = section.plate;
   const side = name => (section.pitches?.[name] ?? section.pitch) / 12;
@@ -75,7 +93,8 @@ export function planes(section) {
 
 /** Height of one section, including its signed-slope overhang. */
 export function sectionHeight(section, x, y) {
-  if (!covers(bounds(section), x, y)) return null;
+  const local=section.roof_frame?roofPoint(section,[x,y],true):[x,y];
+  if (!covers(section.roof_frame?bounds({...section,roof_frame:null}):bounds(section), ...local)) return null;
   return Math.min(...planes(section).map(plane => valueAt(plane, x, y)));
 }
 
@@ -86,6 +105,56 @@ export function heightAt(sections, x, y) {
     const z = sectionHeight(section, x, y);
     if (z !== null && (height === null || z > height)) height = z;
   }
+  return height;
+}
+
+/** Nearest roof above a floor, rather than the uppermost roof in the building. */
+export function lowestRoofAbove(sections, x, y, floor) {
+  let height = null;
+  for (const section of sections) {
+    const z = sectionHeight(section, x, y);
+    if (z !== null && z > floor + EPS && (height === null || z < height)) height = z;
+  }
+  return height;
+}
+
+/** Storeys whose occupied volume or floor structure reaches this roof slab.
+ * The caller supplies its actual outlines (triangulated for roofMesh). */
+export function supportedRoofCutters(section, levels, polygons, thickness = 0.25) {
+  const heights = sectionFaces(section, 0).flatMap(face =>
+    face.polygon.map(p => valueAt(face.plane, ...p)));
+  if (!heights.length) return [];
+  const low = Math.min(...heights) - thickness, high = Math.max(...heights);
+  return levels.filter(level => level.elevation - 0.8 <= high + EPS
+    && level.elevation + level.ceiling >= low - EPS).flatMap(level => polygons.get(level.id) || []);
+}
+
+function insidePolygon(polygon, x, y) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[j], b = polygon[i], dx = b[0] - a[0], dy = b[1] - a[1];
+    if (Math.abs(dx * (y - a[1]) - dy * (x - a[0])) <= EPS
+        && x >= Math.min(a[0], b[0]) - EPS && x <= Math.max(a[0], b[0]) + EPS
+        && y >= Math.min(a[1], b[1]) - EPS && y <= Math.max(a[1], b[1]) + EPS) return true;
+    if ((a[1] > y) !== (b[1] > y) && x < (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+  }
+  return inside;
+}
+
+/** Optional support cap, restricted to the same cut footprint as drawing. */
+export function supportedRoofAbove(sections, x, y, floor, ceiling = Infinity,
+  { cuts = () => [], thickness = 0.25, underside = false, ceilingAt = () => null } = {}) {
+  let height = null;
+  sections.forEach((section, index) => {
+    if (!isSupported(section) || ['ghost', 'proposal'].includes(section.state)) return;
+    const z = sectionHeight(section, x, y);
+    const depth = section.thickness_ft ?? thickness;
+    const flat = underside ? ceilingAt(section, index) : null;
+    const result = underside ? Math.min(z - depth, flat ?? Infinity) : z;
+    if (z === null || result <= floor + EPS || (flat === null ? z : result) >= ceiling - EPS
+        || cuts(section, index).some(poly => insidePolygon(poly, x, y))) return;
+    if (height === null || result < height) height = result;
+  });
   return height;
 }
 
@@ -163,7 +232,16 @@ function subtract(polygon, cutter) {
   return pieces;
 }
 
+function rotatePlane(section, plane) {
+  const {origin,angle}=section.roof_frame,c=Math.cos(angle),s=Math.sin(angle);
+  const a=c*plane[0]-s*plane[1],b=s*plane[0]+c*plane[1];
+  return Object.defineProperties([a,b,plane[2]+(plane[0]-a)*origin[0]+(plane[1]-b)*origin[1]],
+    {side:{value:plane.side},edge:{value:plane.edge}});
+}
+
 function sectionFaces(section, index) {
+  if (section.roof_frame) return sectionFaces({...section,roof_frame:null},index).map(face=>
+    ({...face,polygon:face.polygon.map(p=>roofPoint(section,p)),plane:rotatePlane(section,face.plane)}));
   const all = planes(section);
   const faces = [];
   for (let i = 0; i < all.length; i++) {
@@ -205,7 +283,7 @@ function gableEnds(sections, index) {
         [alongX ? plane[1] : plane[0], -1, valueAt(plane, ...xy(0))])).filter(piece => piece.length);
     }
     for (let j = 0; j < sections.length; j++) {
-      if (j === index) continue;
+      if (j === index || isSupported(sections[j])) continue;
       const other = sections[j], rect = bounds(other);
       const fixedMin = alongX ? rect[0] : rect[1];
       const fixedMax = alongX ? rect[2] : rect[3];
@@ -242,6 +320,13 @@ function gableEnds(sections, index) {
  * have no lower roof and are left to the roof shell. Convex exclusions use
  * the same per-section convention as roofMesh (occupied upper floors). */
 export function stepFaces(sections, { section: only = null, exclude = [], wallCover = () => [] } = {}) {
+  if (sections.some(isSupported)) {
+    const indices = sections.flatMap((s, i) => isSupported(s) ? [] : [i]);
+    if (only !== null && !indices.includes(only)) return new Float32Array();
+    return stepFaces(indices.map(i => sections[i]), {
+      section: only === null ? null : indices.indexOf(only), exclude: indices.map(i => exclude[i] || []),
+      wallCover: (i, ...args) => wallCover(indices[i], ...args) });
+  }
   const rects = sections.map(bounds), allPlanes = sections.map(planes), positions = [];
   sections.forEach((section, index) => {
     if (only !== null && only !== index) return;
@@ -320,8 +405,8 @@ export function stepFaces(sections, { section: only = null, exclude = [], wallCo
 }
 
 /** Upper envelope and gable ends; optionally retain lower roofs. Per-section
- * convex exclusions cut only retained pieces below the visible envelope. */
-export function roofMesh(sections, { retainLower = false, exclude = [], materialKey = null } = {}) {
+ * convex exclusions cut retained lower pieces, or every piece with cutAll. */
+export function roofMesh(sections, { retainLower = false, exclude = [], materialKey = null, cutAll = false } = {}) {
   const faces = sections.flatMap(sectionFaces);
   const positions = [], labels = [], sides = [], edges = [], gables = [];
   for (const face of faces) {
@@ -340,7 +425,7 @@ export function roofMesh(sections, { retainLower = false, exclude = [], material
           // Different finishes retain their own section's territory. Partition
           // a shared plane by section centres, rather than painting all of the
           // overlap with the lower index. Both owners use the same boundary.
-          const rawCentre = i => { const r = sections[i].rect; return [(r[0]+r[2])/2,(r[1]+r[3])/2]; };
+          const rawCentre = i => { const r = sections[i].rect; return roofPoint(sections[i],[(r[0]+r[2])/2,(r[1]+r[3])/2]); };
           const centre = i => {
             const c = rawCentre(i);
             const tied = faces.filter(f => samePlane(f.plane,face.plane)
@@ -370,7 +455,9 @@ export function roofMesh(sections, { retainLower = false, exclude = [], material
       if (!pieces.length) break;
     }
     const cutters = exclude[face.section] || [];
-    if (retainLower && cutters.length) {
+    if (cutAll) {
+      for (const cutter of cutters) pieces = pieces.flatMap(piece => subtract(piece, cutter));
+    } else if (retainLower && cutters.length) {
       // Coplanar ownership is already resolved. Apply the normal envelope
       // cut to find the visible pieces, which occupied floors must not erase.
       let envelopePieces = pieces;
@@ -396,10 +483,42 @@ export function roofMesh(sections, { retainLower = false, exclude = [], material
     }
   }
   sections.forEach((section, index) => {
+    if (isSupported(section)) return;
     if (!['gable', 'hip'].includes(section.kind)) return;
     const ends = gableEnds(sections, index);
     if (ends.length) gables.push({ section: index, positions: new Float32Array(ends) });
   });
   return { positions: new Float32Array(positions), section: new Int32Array(labels),
     side: sides, edge: new Int32Array(edges), gables };
+}
+
+/** Independent envelopes; section labels are local to each group's input. */
+export function roofEnvelope(sections, options) {
+  return {
+    walled: roofMesh(sections.filter(section => !isSupported(section)), options),
+    supported: roofMesh(sections.filter(isSupported), options),
+  };
+}
+
+/** Consumer mesh with independent support groups and original section labels.
+ * Concave sections of one authored supported roof still share an envelope. */
+export function roofMeshGroups(sections, options = {}) {
+  if (!sections.some(isSupported)) return roofMesh(sections, options);
+  const groups = new Map([['walled', []]]);
+  sections.forEach((section, index) => {
+    const key = isSupported(section) ? `supported:${section.roof || section.id || index}` : 'walled';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(index);
+  });
+  const meshes = [...groups.values()].map(indices => {
+    const mesh = roofMesh(indices.map(i => sections[i]), { ...options,
+      exclude: indices.map(i => options.exclude?.[i] || []),
+      materialKey: options.materialKey ? face => options.materialKey({ ...face, section: indices[face.section] }) : null });
+    return { ...mesh, section: Int32Array.from(mesh.section, i => indices[i]),
+      gables: mesh.gables.map(g => ({ ...g, section: indices[g.section] })) };
+  });
+  return { positions: new Float32Array(meshes.flatMap(m => Array.from(m.positions))),
+    section: new Int32Array(meshes.flatMap(m => Array.from(m.section))),
+    side: meshes.flatMap(m => m.side), edge: new Int32Array(meshes.flatMap(m => Array.from(m.edge))),
+    gables: meshes.flatMap(m => m.gables) };
 }

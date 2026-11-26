@@ -1,3 +1,4 @@
+import { roomInQuestion } from './room_context.js';
 import { slotDragTarget, sendSlotDrag } from './slot_row.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
@@ -8,6 +9,9 @@ import { svgIcon } from '../live/glance_icons.js';
 import { contains, FT, allPorches, PICK_LAYER } from '../twin_generator.js';
 import { findPiece } from './piece_operations.js';
 import { ITEM_PARTS, kindRow } from '../surface_kinds.js';
+import { supportMaterialSurface } from '../support_material.js';
+import { undersideMaterialSurface } from '../underside_material.js';
+import { isSupported } from '../roof_supports.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
 import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
@@ -91,7 +95,8 @@ export function contextSurfaceForHit(plan, hit) {
     if (building?.dormers?.some(p => p.id === id)) { kind = 'dormer'; slot = 'roof'; }
     else {
       const section = building?.roof?.sections?.find(p => p.id === id) || piece;
-      if (section.rect && localPoint) {
+      if (slot.startsWith('support:')) slot = 'support';
+      else if (section.rect && localPoint) {
         const [x, y] = localPoint;
         const plane = planes(section).reduce((best, candidate) => !best
           || candidate[0] * x + candidate[1] * y + candidate[2] < best[0] * x + best[1] * y + best[2] ? candidate : best, null);
@@ -157,7 +162,10 @@ export function materialLines(record, plan, kit) {
   if (['item', 'fixture'].includes(kind) && piece.rect) return (['counter', 'vanity'].includes(piece.kind) ? ['cabinet', 'counter']
     : piece.kind === 'shower' ? ['shower_tile', 'shower_glass'] : []).filter(part => ITEM_PARTS.fixture.includes(part)).map(part => itemLine(part, piece, 'item'));
   const porch = kind === 'room' && piece.kind === 'porch'
-    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece : kind === 'porch' ? piece : null;
+    ? [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === piece.id) || piece
+    : kind === 'porch' ? piece
+      : kind === 'porch_post' ? record.porch || [...allPorches(building), ...(building.porches_detail || [])].find(p => p.id === record.porchId) || null : null;
+  if (kind === 'porch_post') return porch ? [itemLine('column', porch, 'porch')] : [];
   const porchLines = porch ? ITEM_PARTS.porch.filter(part => part !== 'screen' || porch.screened).map(part => itemLine(part, porch, 'porch')) : [];
   if (kind === 'porch') return porchLines;
   if (kind === 'wall') return ['left', 'right'].map(side => {
@@ -191,7 +199,17 @@ export function materialLines(record, plan, kit) {
     // Concave roofs may have multiple authored edges on the same side.
     const counts = new Map(); for (const row of planeRows) counts.set(row.label, (counts.get(row.label) || 0) + 1);
     for (const row of planeRows) if (counts.get(row.label) > 1) row.label += ` ${row.target.plane + 1}`;
-    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows];
+    const support = isSupported(roof) ? (() => {
+      const target = {roof:id,part:'support'}, description = supportMaterialSurface(plan, building, roof, kit);
+      return [line('Supports', 'support', roof.materials?.support, target, null,
+        {target, label:'supports'}, {role:description.role, level:description.level, fallback:description.fallback})];
+    })() : [];
+    const underside = roof.underside?.kind === 'flat' ? (() => {
+      const target = {roof:id,part:'underside'}, description = undersideMaterialSurface(plan, building, roof, kit);
+      return [line('Ceiling underneath', 'underside', roof.materials?.underside, target, null,
+        {target, label:'ceiling underneath'}, {level:description.level, fallback:description.fallback})];
+    })() : [];
+    return [line('Roof', 'roof', roof.material, { roof:id }, null, { label:'roof' }), ...planeRows, ...support, ...underside];
   }
   if (kind === 'dormer') return [line('Roof', 'roof', piece.material, { dormer: piece.id }, null, { label: 'roof' })].filter(Boolean);
   return [];
@@ -438,6 +456,14 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const piece = kind === 'pool' ? pool : pool?.features?.find(f => f.kind === 'spa' && f.id === id);
       return piece && { kind, piece, role: 'water', target: { [kind]: piece.id, part: 'water' }, label: `${piece.name || (kind === 'spa' ? 'Spa' : 'Pool')} water` };
     }
+    if (kind === 'porch_post') {
+      const porchId = picked.parentPieceId || picked.porchId || findPiece(getPlan(), id, building?.id)?.porchId;
+      const porch = porchId && [...allPorches(building || {}), ...(building?.porches_detail || [])].find(p => p.id === porchId);
+      const name = building?.rooms?.find(r => r.id === porch?.id)?.name || porch?.name || 'porch';
+      if (porch) return { building, kind: 'porch', piece: porch, role: 'column', target: { porch: porch.id, part: 'column' },
+        level: porch.level, point: picked.point && local(building, new THREE.Vector3(...picked.point)).toArray(),
+        label: `${name} column` };
+    }
     const targetKind = kind === 'fixture' ? 'item' : kind;
     if (picked.part && ITEM_PARTS[targetKind === 'item' ? 'fixture' : targetKind]?.includes(picked.part)) {
       const pieces = kind === 'porch' ? [...allPorches(building || {}), ...(building?.porches_detail || [])]
@@ -494,6 +520,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       if (!target) return true;
       const id = target.id || target.pieceId, bid = target.building || target.buildingId;
       if (target.kind === 'building') return surface.building?.id === (bid || id);
+      if (target.kind === 'porch_post' && surface.kind === 'porch') {
+        const porchId = target.parentPieceId || target.porchId || findPiece(getPlan(), id, bid)?.porchId;
+        return surface.piece.id === porchId && (surface.building?.id || null) === (bid || null);
+      }
       return (surface.piece.id === id || surface.piece.roof === id)
         && (surface.building?.id || null) === (bid || null);
     };
@@ -518,9 +548,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
   // In the floor cutaway the ceiling has no rendered slab to raycast. An
   // explicit ceiling placement still uses its real plane and room boundary.
   function ceilingAt(event, fromBelow = false) {
-    const selected = tools.selection();
-    const building = getPlan()?.buildings.find(b => b.id === selected.building);
-    const room = building?.rooms.find(r => r.id === selected.room && r.state !== 'ghost');
+    const { building, room } = roomInQuestion(getPlan(), tools.selection()) || {};
     if (!room) return null;
     const level = building.levels.find(l => l.id === room.level);
     if (!level) return null;

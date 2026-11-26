@@ -20,10 +20,10 @@ export async function runDirector(view, {
     log(`${/^Round \d+:/i.test(text) ? text : `Round ${n + 1}: ${text}`}\nRun cost: $${spent.toFixed(2)}`);
     if (result.notes?.length) log(result.notes.join('\n'));
     if (result.stale) log('This critique is stale: a newer edit or return won. The current house is shown; the director has stopped.');
-    roundBase = result.round;
     if (onRound) await onRound(result);
     else await view.rebuild(result.plan);
-    if (result.done || result.stale) return;
+    if (result.done || result.stale || result.round === roundBase) return;
+    roundBase = result.round;
   }
   log('Round cap reached (5 rounds).');
 }

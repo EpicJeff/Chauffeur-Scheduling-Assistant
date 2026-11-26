@@ -43,6 +43,7 @@ const plan={generatorVersion:'test',materials:{},buildings:[building],site:{
 const options={room:{density:1,page:256,gutter:2}};
 const lamp={device:'lamp',building:'house',level:'L1',room:'room',at:[6,6,6]};
 const {authoredGeometry}=await import(file('static/twin/bake/geometry_key.js'));
+const {placedCopies,occluderHash}=await import(file('static/twin/bake/model_occluders.js'));
 const ref={id:'wood_floor',color:'#224466',uv:{u:.25,v:.5,rot:90}};
 for(const edit of [p=>p.materials.wall=ref,p=>p.buildings[0].materials={roof:ref},
  p=>p.buildings[0].levels[0].materials={floor:ref},p=>p.buildings[0].walls[0].faces={left:ref,right:ref},
@@ -57,12 +58,19 @@ for(const edit of [p=>p.materials.wall=ref,p=>p.buildings[0].materials={roof:ref
  original.buildings[0].items=changed.buildings[0].items.map(({materials,...o})=>o);
  assert.equal(authoredGeometry(changed),authoredGeometry(original),'every authored finish scope is excluded');
 }
-for(const edit of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotation=90,
+for(const edit of [p=>p.site.terraces[0].height--,
  p=>p.buildings[0].walls[0].to[0]++,p=>p.buildings[0].levels[0].ceiling++,
  p=>p.buildings[0].foundation.thickness_ft++,p=>p.buildings[0].rooms[0].polygon[1][0]++,
- p=>p.site.furniture[0].asset='different-model',p=>p.site.hardscape[0].polygon[0][0]--]) {
+ p=>p.site.hardscape[0].polygon[0][0]--]) {
  const changed=structuredClone(plan);edit(changed);
  assert.notEqual(authoredGeometry(changed),authoredGeometry(plan),'authored geometry still invalidates');
+}
+for(const edit of [p=>p.site.furniture[0].rotation=90,p=>p.site.furniture[0].asset='different-model',
+ p=>p.buildings[0].items.push({id:'chair',asset,host:{floor:'room',u:.5,v:.5}})]) {
+ const changed=structuredClone(plan);edit(changed);
+ assert.equal(authoredGeometry(changed),authoredGeometry(plan),'model placements leave atlas geometry');
+ assert.notEqual(occluderHash(placedCopies(changed),{x:0,y:0,z:0},6),
+  occluderHash(placedCopies(plan),{x:0,y:0,z:0},6),'nearby model changes invalidate the occluder hash');
 }
 console.log('Passed: finish scope exclusion and geometry-invalidation directions');
 async function scene(tier, source=plan) {
@@ -128,9 +136,19 @@ assert.ok(covered(drawnLow).reduce((n,m)=>n+m.geometry.attributes.position.count
 assert.notEqual(buildAtlas(await scene('high',changed),changed,options).key,b.key,'authored wall geometry invalidates');
 assert.notEqual(bakeLayout(b,options,[{...lamp,at:[7,6,6]}]).entries.lamp.key,
  bakeLayout(b,options,[lamp]).entries.lamp.key,'moving the light invalidates its bake');
-for(const mutate of [p=>p.site.terraces[0].height--,p=>p.site.furniture[0].rotation=90]) {
+for(const mutate of [p=>p.site.terraces[0].height--]) {
  const p=structuredClone(plan);mutate(p);
- assert.notEqual(buildAtlas(await scene('high',p),p,options).key,b.key,'authored terrain and object geometry edits invalidate');
+ assert.notEqual(buildAtlas(await scene('high',p),p,options).key,b.key,'authored terrain geometry edits invalidate');
+}
+for(const mutate of [p=>p.site.furniture[0].rotation=90,
+ p=>p.buildings[0].items.push({id:'chair',asset,host:{floor:'room',u:.5,v:.5}})]) {
+ const p=structuredClone(plan);mutate(p);
+ const moved=buildAtlas(await scene('high',p),p,options);
+ assert.equal(moved.key,b.key,'placed models preserve the stored atlas key');
+ assert.notEqual(bakeLayout(moved,options,[lamp]).entries.lamp.key,bakeLayout(b,options,[lamp]).entries.lamp.key,
+  'model placements change the nearby lamp key');
+ assert.equal(bakeLayout(moved,options,[lamp]).entries.lamp.grid,bakeLayout(b,options,[lamp]).entries.lamp.grid,
+  'model placements preserve the grid key');
 }
 for(const mutate of [p=>p.site.furniture[0].tint='#224466',p=>p.materials.wall={color:'#224466'},
  p=>p.buildings[0].walls[0].faces={left:{color:'#224466'}},

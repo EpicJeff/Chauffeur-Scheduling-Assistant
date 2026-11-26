@@ -1,7 +1,7 @@
 export const MARQUEE_THRESHOLD_PX = 4;
 
 function isCandidatePickable(candidate, visibility, view) {
-  if (!candidate) return false;
+  if (!candidate || view?.isInSelectionFocus?.(candidate) === false) return false;
   if (visibility?.isPickable && visibility.isPickable(candidate) === false) return false;
   if (view?.isPiecePickable && view.isPiecePickable(candidate) === false) return false;
   if (view?.isPieceHidden?.(candidate)) return false;
@@ -42,7 +42,7 @@ export function createMarquee({ view, selection, visibility, getPlan, isEmpty = 
 
   function matchRect(rect) {
     const plan = getPlan?.() || {};
-    const floor = view?.selectionFloor?.() || view?.state?.view || 'ext';
+    const floor = view?.interactionFloor?.() || view?.selectionFloor?.() || view?.state?.view || 'ext';
     const restrictFloor = floor && floor !== 'ext' && floor !== 'house';
     const rows = view?.selectionBounds?.() || [];
     const matched = [];
@@ -57,6 +57,7 @@ export function createMarquee({ view, selection, visibility, getPlan, isEmpty = 
       if (item.level != null) ref.level = item.level;
       if (item.entity_id !== undefined) ref.entity_id = item.entity_id;
       if (item.poolId !== undefined) ref.poolId = item.poolId;
+      if (item.porchId !== undefined || item.parentPieceId !== undefined) ref.porchId = item.porchId ?? item.parentPieceId;
       matched.push(ref);
     }
     return matched;

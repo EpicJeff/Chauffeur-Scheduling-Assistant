@@ -43,7 +43,7 @@ await check('ha_move_at_same_round_stales_one_and_press_bakes_exact_key_changes'
   assert.deepEqual(d.controller.state().stale,['c1']);assert.equal(output(d).textContent,'Lighting out of date: 1 light');
   const since=d.server.calls.length;await d.controller.start();
   const expected=Object.entries(d.controller.packing().entries).filter(([id,e])=>!((e.key===before.lights[id]?.key)&&(e.location===before.lights[id]?.location)&&(e.channel===before.lights[id]?.channel))).map(([id])=>id);
-  assert.deepEqual(d.controller.state().baked.slice(4),expected);assert.deepEqual(expected,['c1']);assert.equal(output(d).textContent,'Lighting is up to date');
+  assert.deepEqual(d.controller.state().baked.slice(4),expected);assert.deepEqual(expected,['c1']);assert.match(output(d).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   assert.ok(d.server.writes(since).length);
  }finally{d.controller.stop();}
 });
@@ -118,9 +118,27 @@ await check('committed_wall_finish_press_rebakes_only_real_changes_and_preserves
   const {matchesEntry}=await import(file('static/twin/bake/freshness.js'));
   const entries=next.controller.packing().entries,dirty=Object.entries(entries).filter(([id,e])=>!matchesEntry(e,before.lights[id])).map(([id])=>id);
   assert.ok(dirty.length>0&&dirty.length<list.length);assert.ok(!dirty.includes('remote'));
-  assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort());assert.equal(output(next).textContent,'Lighting is up to date');
+  assert.deepEqual([...next.controller.state().baked].sort(),dirty.sort());assert.match(output(next).textContent,/^Lighting is up to date · Grid \d+ points, \d+ KB$/);
   const changed=new Set(dirty.flatMap(id=>entries[id].pages)),untouched=before.lights.remote.pages.filter(p=>!changed.has(p));assert.ok(untouched.length);
   for(const p of untouched){assert.deepEqual(d.server.pages.get(key+'/'+p),bytes.get(key+'/'+p));assert.ok(!d.server.writes(since).some(c=>c.path===`api/house/bakes/${key}/${p}.png`));}
+ }finally{next?.controller.stop();d.controller.stop();}
+});
+await check('pressed_grid_existence_uses_exact_key_even_when_latest_key_has_every_chunk',async()=>{
+ const d=await seeded();let next;
+ try{
+  const key=d.controller.state().key,m=structuredClone(d.server.manifests.get(key)),other='a'.repeat(32);
+  m.round=41;d.server.manifests.set(other,m);
+  for(const e of Object.values(m.lights))d.server.grids.set(`${other}/${e.grid}`,d.server.grids.get(`${key}/${e.grid}`).slice());
+  d.server.grids.delete(`${key}/${m.lights.k1.grid}`);
+  next=await context('high',d.server,null,opts());await ready(next);
+  assert.equal(output(next).textContent,'Lighting out of date since your edits');
+  const since=d.server.calls.length,pages=new Map(d.server.pages);
+  await next.controller.start();
+  assert.equal(next.controller.state().key,key);assert.deepEqual(next.controller.state().baked,['k1']);
+  const writes=d.server.writes(since);
+  assert.deepEqual(writes.filter(c=>c.method==='POST'&&c.path.includes('/grid/')).map(c=>c.path),[`api/house/bakes/${key}/grid/${m.lights.k1.grid}.bin`]);
+  assert.ok(!writes.some(c=>c.path.endsWith('.png')));assert.deepEqual(d.server.pages,pages);
+  assert.equal(next.controller.state().stale.length,0);assert.match(output(next).textContent,/^Lighting is up to date/);
  }finally{next?.controller.stop();d.controller.stop();}
 });
 console.log(`${passed}/${ran} passed`);process.exit(passed===ran?0:1);

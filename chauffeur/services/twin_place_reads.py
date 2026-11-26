@@ -111,7 +111,7 @@ def _publish(row, changed):
     """Save place, registrations and any built-footprint refits together."""
     registry = twin_store._place(row)
     footprints = {b['id']: b['footprint'] for b in registry['buildings'] if b['id'] in changed}
-    plan = twin_store.current() if changed else None
+    plan = twin_store.current_model() if changed else None
     fits = {}
     for building in (plan or {}).get('buildings', []):
         bid = building['id']
@@ -126,15 +126,17 @@ def _publish(row, changed):
             for building in current['buildings']:
                 if building['id'] in fits:
                     move = fits[building['id']]
-                    building.update(position=move['offset'], rotation=move['angle'])
+                    rotation = move['angle'] % 360
+                    building.update(position=move['offset'], rotation=0 if rotation == 360 else rotation)
             return current
 
         def update_state(state):
             state['place'] = registry
             state['registrations'] = row['registrations']
 
-        twin_store.update_current(refit, kind='edit', note='Placed buildings on their confirmed footprints.',
-                                  state_mutator=update_state)
+        twin_store.update_model(refit, kind='edit', note='Placed buildings on their confirmed footprints.',
+                                state_mutator=update_state,
+                                building_fields={bid: ('position', 'rotation') for bid in fits})
     else:
         twin_store._save(row)
 

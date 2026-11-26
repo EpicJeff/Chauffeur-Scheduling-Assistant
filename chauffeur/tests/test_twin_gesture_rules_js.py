@@ -328,13 +328,13 @@ await test('read_only_browse_delegate_keeps_its_press_and_release',async({tools,
   fire('pointerdown',[500,500]);fire('pointerup',[500,500]);
   assert.equal(downs,1);assert.equal(ups,1);assert.equal(tools.selection().id,null);assert.equal(ops.length,0);
 });
-await test('shift_click_add_room_still_focuses_the_room',async({view,tools,ops,pixel,look,fire,ready})=>{
+await test('shift_click_add_room_selects_without_focus',async({view,tools,ops,pixel,look,fire,ready})=>{
   const room=building.rooms.find(r=>r.id==='room:5d7de10ca48340ae85c407d22337c6f7');
   view.setView(B+':L1');tools.chooseFloor(B+':L1');await ready();
   const centre=[0,1].map(i=>room.polygon.reduce((sum,p)=>sum+p[i],0)/room.polygon.length);
   look([...centre,0],building);const p=pixel([...centre,0],building);
   fire('pointerdown',p,0,{shiftKey:true});fire('pointerup',p,0,{shiftKey:true});
-  assert.equal(tools.selection().room,room.id);assert.deepEqual(tools.selectedRooms(),[room.id]);assert.equal(ops.length,0);
+  assert.equal(tools.selection().room,null);assert.equal(tools.selection().id,room.id);assert.deepEqual(tools.selectedRooms(),[room.id]);assert.equal(ops.length,0);
 });
 await test('yard_click_refreshes_its_selection_outline',async({view,look,pixel,click})=>{
   look([200,200,0]);click(pixel([200,200,0]));
@@ -426,9 +426,11 @@ await test('esc_cancels_pad_vertex_drag',async({view,tools,terrain,ops,look,fire
 await test('esc_without_drag_goes_back',async({view,tools,ready})=>{
   const room=building.rooms.find(r=>r.id==='room:5d7de10ca48340ae85c407d22337c6f7');
   view.setView(B+':L1');tools.select({kind:'room',id:room.id,building:B});await ready();
+  assert.equal(tools.selection().room,null);
+  tools.focusRoom({kind:'room',id:room.id,building:B});await view.selectionReady;
   const boundary=tools.selection().tinted.walls[0];assert.ok(boundary);
   tools.select({kind:'wall',id:boundary,building:B});assert.equal(tools.selection().room,room.id);
-  escape();assert.equal(tools.selection().id,room.id);assert.equal(tools.selection().room,room.id);
+  escape();assert.equal(tools.selection().id,room.id);assert.equal(tools.selection().room,null);
   escape();assert.equal(tools.selection().id,null);assert.equal(tools.selection().room,null);
 });
 await test('esc_during_armed_pad_press_keeps_the_tools_own_cancel',async({view,terrain,ops,look,pixel,fire})=>{

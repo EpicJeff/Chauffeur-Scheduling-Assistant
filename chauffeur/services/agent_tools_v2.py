@@ -7746,18 +7746,24 @@ class HouseDesignTool(BaseModel):
         "set_ha_display (device, show_as:controls|entities) or (kind:devices|entities, item, hidden) house view only, never HA; "
         "host is {wall, side, at, z} with side left|right, {floor: room, u, v}, or {ceiling: room, u, v}; "
         "u,v are room fractions 0..1. "
-        "draw_roof (area:rectilinear [[x,y],...], plate?, pitch?=6, overhang?=1); "
-        "roof_over (rooms:[ids] or null for top floor); set_roof_edge (roof, edge, setting:sloped|gable|clip, pitch?, clip?); "
+        "draw_roof (area:rectilinear [[x,y],...], plate?, pitch?=6, overhang?=1, support?, ends?:{edge:closed}, underside?:{kind:flat,drop_ft:0..3}|{kind:exposed}); ends and ceiling underneath need supports; closed ends cannot be on the host edge or sloped eaves; "
+        "roof_over (rooms:[ids] or null for top floor); set_roof_edge (roof, edge, setting?:sloped|gable|clip, pitch?, clip?, gutter?:bool, downspouts?:<=8 fractions from the edge's first point (number=corner snap, {\"at\":f}=exact), replaces list, []=none, null=auto); gutter needs a sloped eave; guttered edge to gable/clip: ask first, then batch [gutter:false+downspouts:null, setting]; porch gutter: set field:gutter; awnings are roofs and use set_roof_edge roof,edge,gutter. "
+        "Acknowledge gutter issues: set_roof_edge gutter_ack:[flags], or porch set field:gutter_ack; awnings use set_roof_edge gutter_ack; flags:hang|stub|no-outside-corner|inner-end|clipped-end|no-safe-landing|no-outlet|outlet-blocked|merged-override|placed-off-corner|over-opening|no-support; changing gutter/downspouts clears acknowledgement. "
         "move_roof_edge (roof, edge, by, detach? clears wall attachment), positive by grows roof; "
+        "set_roof_support (building,id,support?:{kind:walls|bracket|corbel|brace|cable|post,count:integer 0..40,inset_ft:0..6,size_ft:.05..3,style},host?:{wall,edge}|null,thickness_ft?:.05..2,fascia?:bool,at?:{index:[x,y]},ends?:{edge:open|closed},underside?:{kind:flat,drop_ft:0..3}|{kind:exposed}); patches named settings, ends and point indices in one undo step; open removes that closed end; closed ends cannot be on the host edge or sloped eaves. Ceiling underneath: None (exposed) or Flat, Drop below the roof edge (ft), default 0. Built-in styles: bracket plain (Straight), corbel scroll (Scroll, default) or plain (Stepped), brace plain (Straight, default) or arched (Arched); cable/post have no style. Other stored styles are kept but cannot be selected. at:{} resets all points; invalid edits are refused without saving; lowering count keeps remaining positions; walls removes awning settings and restores original wall attachments, including detached choices, preserving area and roof_frame; already Walls saves nothing. Awning means a roof with supports. Stored spacing_ft is a legacy hint, not an active placement control. "
+        "move_roof (building,id,by:[dx,dy] feet in building axes) moves roof, supports, gutters and panels together in one undo step; draw_roof also accepts support,host,thickness_ft,fascia,roof_frame:{origin:[x,y],angle:radians}; delete uses its roof id. "
         "add_dormer (roof, edge, at, width, pitch); move_dormer (id, at?, width?); "
         "edge is a 0-based area index, at is feet from that edge's first point. "
         "add_level (name, elevation, ceiling); move_building (to:[x,y] in lot feet); "
         "rotate_building (rotation, about?:[x,y] in lot feet); "
-        "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{level, role}|{building, role}, "
+        "add_porch_post(building,porch,at?,size?,id?); update_porch_post(building,porch,post,at?,size?); delete_porch_post(building,porch,post). "
+        "move_posts_to_roof (building, porch, roof): only by explicit request after explaining posts move to the roof, the porch floor stays, and the roof stops shaping walls and gables under it; requires porch columns, an overlapping shed roof on the same floor, and no existing roof supports; keeps positions, size and column material; one undo step. "
+        "set_material (target:{wall, side}|{room, surface:floor|ceiling|walls}|{roof}|{roof, part:support}|{roof, part:underside}|{level, role}|{building, role}, "
         "material:{id, color} or null clears override); "
         "accept_proposal (id:'<piece>:proposal'); dismiss_proposal (id:'<piece>:proposal'); "
         "move_site_item (list, index, at:[x,y]); delete_site_item (list, index); add_site_item (list, asset, at:[x,y]); "
         "site list is planting|furniture|beds|hardscape|edges|pool|fire_pit|fence; index is 0-based, or use id. "
+        "To move a piece between a building and the site (or between buildings) keep its id: send one batch with the delete op first (delete or delete_site_item), then the add op (add_item or add_site_item). "
         "yard_rooms:add/update_site_shape(name,polygon,ha_area);make_yard_room;host:yard_room,u,v. "
         "Site materials:{part:slot}:fence boards,posts,rails;fire_pit body,top;hardscape surface,edging;beds fill;pool coping,interior;edges strip;pad wall.materials.face. "
         "Pit fields: fuel wood|gas,body stone|brick|concrete,top none|granite|concrete,height_in 6..30,glass amber|blue|clear (gas),entity. "
@@ -7768,6 +7774,7 @@ class HouseDesignTool(BaseModel):
         "set_foundation (building, foundation:{mode:auto|fixed,offset_ft:0,thickness_ft:1}); auto follows the highest ground plus offset, fixed keeps base. "
         "set_porch_foundation (building,id:porch,foundation:{type:posts|enclosed|solid,lip_in:0..4=1,post_in:4..16=6,post_shape:square|round,spacing_ft:4..12=8,materials:{posts?,skirt?,solid?}}); slots:null|{id,color?} Library/kit; skirt defaults to lattice material; default posts."))
     step: Optional[str] = Field(None, description="Build step id to reread.")
+    confirm: bool = Field(False, strict=True, description='Compose re-read: ask first; true requires explicit approval to re-lay plants and beds.')
     piece: Optional[str] = Field(None, description="Piece id to describe.")
     building: Optional[str] = Field(None, description=(
         "Target building id or name (case-insensitive) for set_building or remove_building; "
@@ -9638,7 +9645,9 @@ REGISTRY_EXCEPTIONS = {
 
 def _house_design_building_summary(building) -> str:
     levels = ', '.join(level.get('name') or level['id'] for level in building['levels'])
-    roofs = ', '.join(f"{section['id']} ({section['kind']}, {section['pitch']:g} in 12)"
+    roofs = ', '.join((f"{section.get('name') or section['id']} (Awning, {section['support']['kind']}, host {section.get('host', {}).get('wall', 'None')}, {section['kind']}, {section['pitch']:g} in 12)"
+                      if section.get('support', {}).get('kind') not in (None, 'walls') else
+                      f"{section.get('name') or section['id']} ({section['kind']}, {section['pitch']:g} in 12)")
                       for section in building['roof']['sections']) or 'none'
     return (
         f"{building.get('name') or building['id']}: levels {levels or 'none'}; "
@@ -9778,6 +9787,19 @@ def handle_house_design(args: dict, actor=None) -> dict:
             plan = twin_store.current()
             if plan is None:
                 raise ValueError('Build a house before describing a piece.')
+            from services.twin_porch_posts import post_ref
+            from services.twin_plan import porches
+            post_matches = [(b, p) for b in plan['buildings'] if params.building in (None, b['id'])
+                            for p in porches(b) if p['id'] == params.piece
+                            or any(post_ref(p, i) == params.piece for i in range(len(p.get('columns', []))))]
+            if len(post_matches) > 1:
+                raise ValueError('Choose a building for that piece.')
+            posts = None
+            if post_matches:
+                b, p = post_matches[0]
+                posts = [dict(ref=post_ref(p, i), at=c['at'], size=c['size']) for i,c in enumerate(p.get('columns', []))]
+                if params.piece != p['id'] or not any(r['id'] == p['id'] for r in b.get('rooms', [])):
+                    return {'status':'ok', 'summary': f"Porch {p.get('name', p['id'])} in {b['id']}: {posts}.", 'posts':posts}
             yard = next((r for r in plan.get('site', {}).get('yard_rooms', []) if r['id'] == params.piece), None) if params.building is None else None
             if yard:
                 extra, devices = _house_design_room_devices(yard)
@@ -9813,6 +9835,9 @@ def handle_house_design(args: dict, actor=None) -> dict:
             fields = '; '.join(f"{key.replace('_', ' ')}: {words(key, value)}"
                                for key, value in piece.items() if key != 'src')
             out = {'status': 'ok', 'summary': f"{kind.capitalize()} in {building['id']}: {fields}."}
+            if posts is not None:
+                out['posts'] = posts
+                out['summary'] += f' Posts: {posts}.'
             if kind == 'room':
                 extra, devices = _house_design_room_devices(piece)
                 out['summary'] += extra
@@ -9832,7 +9857,10 @@ def handle_house_design(args: dict, actor=None) -> dict:
                 raise ValueError('The step still needs an answer. Check it in the editor.')
             summary = f'Accepted {step}.'
         else:
-            twin_build.reread(current['build'], params.step)
+            if params.step == 'compose' and twin_build.yard_occupied() and not params.confirm:
+                return {'status': 'confirmation_required', 'changed': False,
+                        'message': 'Re-laying plants and beds may change your finished yard. Do you want me to go ahead?'}
+            twin_build.reread(current['build'], params.step, confirm=params.confirm)
             summary = f'Requested a fresh read of {params.step}.'
         return {'status': 'ok', 'changed': True, 'summary': summary}
     except ValidationError:

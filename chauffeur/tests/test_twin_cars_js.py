@@ -37,6 +37,7 @@ check('car glyph textures use colour contrast and rings on the shared disc style
 check('two cars show fleet colours in every mode, labels, range and a tappable card',async()=>{
  const t=await fixture();try{
   for(const mode of ['all','energy','lights','security','climate','all']){t.live.setMode(mode);t.layer.draw();assert.equal(t.layer.snapshot().filter(r=>r.visible).length,2);}
+  for(const selection of [[],['lights','security']]){t.live.setModes(selection);t.layer.draw();assert.equal(t.layer.snapshot().filter(r=>r.visible).length,2);}
   const rows=t.layer.snapshot();assert.equal(rows[0].color,'#cc0000');assert.equal(rows[1].color,'#0000cc');
   assert.match(rows[0].label,/78%.*7 kW/);assert.equal(rows[0].charging,true);assert.equal(rows[1].charging,false);
   await press(document.querySelector('[data-car-icon="a"]'));const card=document.querySelector('[data-car-card="a"]');

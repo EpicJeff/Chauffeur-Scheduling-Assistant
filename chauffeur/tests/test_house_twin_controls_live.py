@@ -272,6 +272,11 @@ def scenario_hold_opens_ring_and_sets_brightness_and_colour():
         _ring_hook(page)
         # Lights mode draws the light in the scene (real-time or baked).
         page.evaluate("() => window.__twin.live.setMode('lights')")
+        check(page.evaluate("() => window.__twin.live.modes()") == ['lights'], 'legacy API solos Lights')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        check(page.evaluate("() => window.__twin.live.modes()") == ['lights', 'energy'], 'tap adds Energy beside Lights')
+        page.get_by_role('button', name='Energy', exact=True).click()
+        check(page.evaluate("() => window.__twin.live.modes()") == ['lights'], 'second tap removes Energy')
         L.H.settle(page, 3)
         before = _light(page)
         check(abs(before['intensity'] - 1) < .01, ('the light is on at full brightness', before))

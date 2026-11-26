@@ -1,4 +1,4 @@
-"""Atomic storage for the twin's baked light pages and manifests."""
+"""Atomic storage for the twin's baked light pages, grid chunks and manifests."""
 import hashlib
 import json
 import math
@@ -9,10 +9,13 @@ import shutil
 import tempfile
 import threading
 import time
+import zlib
 
 from services import twin_store
 
 MAX_PAGE_BYTES = 16 * 1024 * 1024
+MAX_GRID_BYTES = 8 * 1024 * 1024
+MAX_GRID_EXPANDED_BYTES = 64 * 1024 * 1024
 MAX_ATLAS_BYTES = 64 * 1024 * 1024
 KEEP_ATLASES = 2
 MAX_PAGES = 64                      # page index 0..63 (M7)
@@ -21,11 +24,14 @@ LEASE_SECONDS = 60                  # Ruling B17
 KEEP_RECENT_SECONDS = 600           # a key written this recently is a bake in progress
 PNG_SIGNATURE = b'\x89PNG\r\n\x1a\n'
 KTX2_SIGNATURE = b'\xabKTX 20\xbb\r\n\x1a\n'
+GRID_SIGNATURE = b'MVG1'
 _KEY = re.compile(r'[0-9a-f]{16,64}')
+_GRID_NAME = re.compile(r'[0-9a-f]{16,64}')
 _LOCK = threading.RLock()
 _LEASES = {}                        # key -> (owner, until); the add-on runs one worker
 _OWNER = re.compile(r'[A-Za-z0-9_.:-]{1,64}')
 _PAGE_VERSIONS = {}
+_GRID_VERSIONS = {}
 
 
 def _now():
@@ -42,6 +48,12 @@ def check_page(page):
     if not re.fullmatch(r'[0-9]+', str(page)) or int(page) >= MAX_PAGES:
         raise ValueError('Invalid bake page.')
     return int(page)
+
+
+def check_grid_name(name):
+    if not isinstance(name, str) or not _GRID_NAME.fullmatch(name):
+        raise ValueError('Invalid bake grid name.')
+    return name
 
 
 def _directory(key):
@@ -103,6 +115,77 @@ def save_page(key, page, data, owner, info=False):
             _PAGE_VERSIONS.clear()
         _PAGE_VERSIONS[path] = version
         return {'etag': version['etag'], 'version': version['stat']} if info else version['etag']
+
+
+def _check_grid_body(data):
+    """Accept raw MVG1 bytes, or gzip whose expanded bytes start with MVG1."""
+    bad = 'Bake grid must be MVG1 bytes or gzip of MVG1 bytes.'
+    if data.startswith(GRID_SIGNATURE):
+        return
+    if not data.startswith(b'\x1f\x8b'):
+        raise ValueError(bad)
+    inflater = zlib.decompressobj(wbits=31)
+    head = b''
+    total = 0
+    try:
+        pending = data
+        step = 1024 * 1024
+        while not inflater.eof:
+            out = inflater.decompress(pending, step)
+            if not out and not inflater.unconsumed_tail:
+                break
+            total += len(out)
+            if total > MAX_GRID_EXPANDED_BYTES:
+                raise ValueError('Bake grid expands beyond 64 MiB.')
+            if len(head) < len(GRID_SIGNATURE):
+                head += out[:len(GRID_SIGNATURE) - len(head)]
+            pending = inflater.unconsumed_tail
+        if not inflater.eof:
+            raise ValueError('Bake grid gzip is truncated.')
+    except zlib.error:
+        raise ValueError('Bake grid gzip is corrupt.') from None
+    if head != GRID_SIGNATURE:
+        raise ValueError(bad)
+
+
+def save_grid(key, name, data, owner):
+    path = _directory(key) / f'grid-{check_grid_name(name)}.bin'
+    if len(data) > MAX_GRID_BYTES:
+        raise ValueError('Bake grid exceeds 8 MiB.')
+    _check_grid_body(data)
+    with _LOCK:
+        _write_lease(key, owner)
+        _write(path, data)
+        stat = path.stat()
+        version = {'stat': [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)], 'etag': _etag(data)}
+        if len(_GRID_VERSIONS) >= 256:
+            _GRID_VERSIONS.clear()
+        _GRID_VERSIONS[path] = version
+        return {'etag': version['etag'], 'version': version['stat']}
+
+
+def _grid_stat_etag(path):
+    stat = path.stat()
+    stamp = [str(stat.st_size), str(stat.st_mtime_ns), str(stat.st_ctime_ns)]
+    version = _GRID_VERSIONS.get(path)
+    etag = version.get('etag') if version and version.get('stat') == stamp else None
+    return etag or f'"{stat.st_size:x}-{stat.st_mtime_ns:x}-{stat.st_ctime_ns:x}"', stat.st_size
+
+
+def grid_response(key, name, matches=()):
+    path = _directory(key) / f'grid-{check_grid_name(name)}.bin'
+    # Existence probes (If-None-Match: *) answer from stat without opening the
+    # file or contending on the global publish lock.
+    if any(tag.strip().removeprefix('W/') == '*' for tag in matches):
+        etag, size = _grid_stat_etag(path)
+        return None, etag, size
+    # Read and hash under the same publication lock as writes. No file handle
+    # survives the lock (Windows), and the content ETag survives server restarts.
+    with _LOCK:
+        data = path.read_bytes()
+        etag = _etag(data)
+        hit = any(tag.strip().removeprefix('W/') == etag for tag in matches)
+        return None if hit else data, etag, len(data)
 
 
 def _page_stat(path):
@@ -207,6 +290,10 @@ def _check_manifest(body):
         check_key(entry.get('key'))
         if 'cheap' in entry:
             check_key(entry['cheap'])
+        if 'grid' in entry:
+            check_grid_name(entry['grid'])
+        if 'gridLayout' in entry:
+            check_key(entry['gridLayout'])
     # Force intent and completed-light receipts survive reloads. Bounded tokens
     # keep the existing manifest byte cap and legacy manifests unchanged.
     for value in [body, *lights.values()]:

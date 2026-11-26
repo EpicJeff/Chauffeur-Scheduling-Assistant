@@ -50,10 +50,10 @@ export function houseMaterialsShelf(host, building, { getPlan, getKit = () => ({
   const rows = [...PANEL_ROLES.map(kind => ({ kind, label: labels[kind], scope: 'building', fallback: { role: kind } })), ...KINDS, ...YARD_ROLES];
   const groups = [
     ['Walls and floors', [...PANEL_ROLES, 'base']],
-    ['Trim', ['trim', 'fascia']],
+    ['Trim', ['trim', 'fascia', 'gutter']],
     ['Openings', ['casing', 'window_frame', 'pane', 'door', 'garage_door']],
     ['Porch and stairs', ['column', 'screen', 'stair_tread', 'stair_rail']],
-    ['Roof and ceilings', ['soffit', 'ceiling', 'roof']],
+    ['Roof and ceilings', ['soffit', 'ceiling', 'underside', 'roof', 'support']],
     ['Fixtures', ['cabinet', 'counter', 'shower_tile', 'shower_glass']],
     ['Yard', ['lawn', 'water', ...YARD_ROLES.map(row => row.kind)]],
   ];

@@ -8,6 +8,7 @@ import { objectOperation } from '../objects.js';
 import { pieceMaterialSlots, sharedMaterialRows, materialsInSelection, replacementOperations, selectUsingMaterial } from './selection_materials.js';
 import { createContextMenu } from './context_menu.js';
 import { materialName } from './material_catalog.js';
+import { drawMoveToButton } from './move_to_action.js';
 
 const noun = {
   planting: ['plant', 'plants'], furniture: ['object', 'objects'], opening: ['opening', 'openings'],
@@ -19,6 +20,7 @@ const noun = {
   roof_plane: ['roof slope', 'roof slopes'], solar_zone: ['solar zone', 'solar zones'],
   hardscape: ['path', 'paths'], fire_pit: ['fire pit', 'fire pits'], level: ['floor', 'floors'],
   ledge: ['pool ledge', 'pool ledges'], spa: ['spa', 'spas'], device: ['device', 'devices'],
+  porch_post: ['post', 'posts'],
 };
 const kinds = refs => [...new Set(refs.map(ref => ref.kind || 'piece'))].sort().join('|');
 export const selectionSubject = refs => refs.length === 1 ? JSON.stringify([refs[0].buildingId, refs[0].pieceId]) : kinds(refs);
@@ -213,9 +215,14 @@ export function drawSelectionCard(host, options) {
         if (!canEdit()) return;
         const current = sharedMaterialRows(getPlan(), owners, getKit()).find(row => row.key === shared.key)?.matches.map(match => match.slot);
         if (!current?.length) throw new Error('These pieces no longer share this slot.');
+        const seenOps = new Set();
         const ops = current.flatMap(member => {
           const next = change(member);
-          return JSON.stringify(member.ref || null) === JSON.stringify(next || null) ? [] : [member.operation(next)];
+          if (JSON.stringify(member.ref || null) === JSON.stringify(next || null)) return [];
+          const op = member.operation(next), opKey = JSON.stringify(op);
+          if (seenOps.has(opKey)) return [];
+          seenOps.add(opKey);
+          return [op];
         });
         if (ops.length) await applyBatch(ops); onSaved();
       });
@@ -252,6 +259,7 @@ export function drawSelectionCard(host, options) {
     }
   }
   const actions = document.createElement('div'); actions.className = 'editor-material-actions'; host.append(actions);
+  const moveTo = drawMoveToButton(actions, { ...options, getRefs: () => refs });
   const remove = button('Delete', () => Promise.resolve(removeSelection()).catch(report), actions);
   if (visibility) {
     button('Hide', () => visibility.setMembers(refs, { hidden: true }), actions);
@@ -259,6 +267,7 @@ export function drawSelectionCard(host, options) {
   }
   renderMaterials(); remove.disabled = !canEdit();
   function refresh() {
+    moveTo?.refresh();
     for (const field of data.fields) refreshField(fieldStates.get(field.key), field);
     remove.disabled = !canEdit();
   }

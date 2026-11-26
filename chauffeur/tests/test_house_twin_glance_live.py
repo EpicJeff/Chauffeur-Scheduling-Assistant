@@ -121,6 +121,42 @@ def no_glance_argyle_overlap(page):
     check(True, 'no glance item bounding box intersects Argyle')
 
 
+def glance_fits_and_centres(page, compact=False, overflow=False):
+    geometry = page.locator('#twin-glance').evaluate("""el => {
+      const r=el.getBoundingClientRect(), parent=el.parentElement.getBoundingClientRect(), css=getComputedStyle(el);
+      return {left:r.left,right:r.right,width:r.width,viewport:innerWidth,
+        centre:(r.left+r.right)/2, parentCentre:(parent.left+parent.right)/2,
+        client:el.clientWidth,scroll:el.scrollWidth,overflow:css.overflowX};
+    }""")
+    check(abs(geometry['centre'] - geometry['parentCentre']) < 1.1, ('centred in its home or idle clock', geometry))
+    check(geometry['left'] >= 15 and geometry['right'] <= geometry['viewport'] - 15, ('viewport margins', geometry))
+    if compact:
+        check(geometry['width'] < geometry['viewport'] - 64, ('short bar fits content instead of stretching', geometry))
+        check(geometry['scroll'] <= geometry['client'] + 1, ('short bar does not scroll', geometry))
+    if overflow:
+        check(geometry['scroll'] > geometry['client'] and geometry['overflow'] == 'auto', ('long bar scrolls within its width', geometry))
+
+
+def scenario_phone_glance_fits_then_scrolls_when_full():
+    served = setup()
+    if served is None:
+        return
+    with served.browser(launch_args=L.GPU_ARGS) as page:
+        page.set_viewport_size({'width': 390, 'height': 844})
+        L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true')
+        chosen = [{'entity': 'sensor.kitchen_temperature', 'icon': 'thermometer', 'label': 'Kitchen'}]
+        page.evaluate('(tiles) => window.__twin.glance.configure(tiles)', chosen)
+        glance_fits_and_centres(page, compact=True)
+        no_glance_argyle_overlap(page)
+        shot(page, 'glance-phone-compact.png')
+        page.evaluate('(tiles) => window.__twin.glance.configure(tiles)', chosen * 12)
+        glance_fits_and_centres(page, overflow=True)
+        page.locator('#twin-glance').evaluate('(el) => {el.scrollLeft=el.scrollWidth;}')
+        check(page.locator('#twin-glance').evaluate('(el) => el.scrollLeft > 0'), 'overflow remains reachable by scrolling')
+        shot(page, 'glance-phone-scroll.png')
+        L.no_errors(served)
+
+
 def scenario_climate_kitchen_heating_cooling_and_idle():
     served = setup()
     if served is None:
@@ -128,7 +164,7 @@ def scenario_climate_kitchen_heating_cooling_and_idle():
     with served.browser(launch_args=L.GPU_ARGS) as page:
         L.open_twin(page, served)
         L.aim_kitchen(page)
-        page.get_by_role('button', name='Climate', exact=True).click()
+        page.get_by_role('button', name='Climate', exact=True).click(modifiers=['Shift'])
         page.wait_for_timeout(1000)  # allow the actual SSE subscriber to attach
         push('climate.kitchen', attributes={'current_temperature': 60, 'unit_of_measurement': '°F', 'hvac_action': 'heating'})
         page.wait_for_function('() => window.__twin.live.state("climate.kitchen").attributes.hvac_action==="heating"', timeout=3000)
@@ -184,6 +220,7 @@ def glance_order_live_push_and_unavailable(query, screenshot):
         ids = page.locator('#twin-glance > div').evaluate_all('(nodes)=>nodes.map(n=>n.dataset.entity)')
         check(ids == ['sensor.kitchen_temperature', 'climate.kitchen'], ids)
         check(page.locator('#twin-glance').count() == 1, 'one bar')
+        glance_fits_and_centres(page, compact=True)
         no_glance_argyle_overlap(page)
         check(page.locator('#twin-glance [data-entity="climate.kitchen"] strong').inner_text() == '70 °F', 'thermostat current reading, not its mode')
         page.wait_for_timeout(1000)
@@ -215,6 +252,7 @@ def scenario_idle_orbits_moves_bar_and_tap_restores_camera():
         check(page.locator('#twin-idle-clock').is_visible(), 'clock is visible')
         check(page.locator('#twin-idle-clock .ss-time').inner_text(), 'shared clock has time')
         check(page.locator('#twin-idle-clock #twin-glance').count() == 1, 'bar moved into time card')
+        glance_fits_and_centres(page, compact=True)
         check(page.evaluate('() => document.getElementById("twin-glance")===window.__originalBar'), 'same bar identity')
         a = page.evaluate('() => window.__twin.camera.position.toArray()')
         page.wait_for_timeout(500)
@@ -306,7 +344,7 @@ def scenario_no_tiles_keeps_idle_clock_and_unavailable_weather_is_graceful():
         L.no_errors(served)
 
 
-def scenario_twelve_tiles_wrap_in_idle_without_truncating_values():
+def scenario_twelve_tiles_scroll_at_bottom_and_in_idle_without_truncating_values():
     served = setup()
     if served is None:
         return
@@ -322,9 +360,11 @@ def scenario_twelve_tiles_wrap_in_idle_without_truncating_values():
         L.open_twin(page, served, query='tier=low&test=1&panel=true&kiosk=true&idle_ms=3000')
         page.wait_for_selector('#twin-glance > div:nth-child(12)')
         check(page.locator('#twin-glance').evaluate('(n) => getComputedStyle(n).flexWrap') == 'nowrap', 'compact bottom row')
+        glance_fits_and_centres(page, overflow=True)
         page.wait_for_function('() => window.__twin.idle.active()', timeout=10000)
         check(page.locator('#twin-glance > div').count() == 12, 'all twelve tiles retained')
-        check(page.locator('#twin-glance > div').evaluate_all('(nodes) => new Set(nodes.map(n => n.getBoundingClientRect().top)).size > 1'), 'idle row wraps when needed')
+        glance_fits_and_centres(page, overflow=True)
+        check(page.locator('#twin-glance > div').evaluate_all('(nodes) => new Set(nodes.map(n => n.getBoundingClientRect().top)).size == 1'), 'idle row scrolls on one line')
         check(page.locator('#twin-glance strong').evaluate_all('(nodes) => nodes.every(n => n.scrollWidth <= n.clientWidth + 1 && getComputedStyle(n).textOverflow !== "ellipsis")'), 'all values readable')
         shot(page, 'idle-card-twelve.png')
         L.no_errors(served)
@@ -443,13 +483,14 @@ def scenario_compact_hero_stays_light_under_a_light_panel_theme():
 
 
 SCENARIOS = [scenario_climate_kitchen_heating_cooling_and_idle,
+             scenario_phone_glance_fits_then_scrolls_when_full,
              scenario_glance_order_live_push_and_unavailable,
              scenario_desk_glance_order_live_push_and_unavailable,
              scenario_idle_orbits_moves_bar_and_tap_restores_camera,
              scenario_second_idle_cycle_adds_no_shader_programs,
              scenario_three_formatted_tiles_idle_weather_and_shared_glass,
              scenario_no_tiles_keeps_idle_clock_and_unavailable_weather_is_graceful,
-             scenario_twelve_tiles_wrap_in_idle_without_truncating_values,
+             scenario_twelve_tiles_scroll_at_bottom_and_in_idle_without_truncating_values,
              scenario_idle_corners_match_the_real_screensaver_offsets,
              scenario_compact_hero_stays_light_under_a_light_panel_theme]
 

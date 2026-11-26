@@ -6,11 +6,22 @@ import math
 from services import twin_model, twin_model_graph as graph
 from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_plan
 from services import twin_porches
+from services.twin_model_supports import ROOF_FIELDS, CHOICE_FIELDS, carry_fields, edge_pairs, is_supported
 
 
 _EPS = 1e-6
 _SEPARATOR = 'I added an invisible wall here to keep two rooms apart; check it.'
 _DORMER = 'This dormer lost its roof; place it again.'
+
+
+def _migrate_extensions(value):
+    for building in value.get('buildings', []):
+        roof = building.get('roof', {})
+        for extensions in (building.get('extensions', []), roof.get('extensions', []) if isinstance(roof, dict) else []):
+            if isinstance(extensions, list) and any(isinstance(e, dict) and e.get('kind') in ('awning', 'shed_continuation') for e in extensions):
+                from services.twin_awning_migration import migrate_awnings
+                return migrate_awnings(value)
+    return value, []
 
 
 def _person(piece):
@@ -377,7 +388,9 @@ def _bearing_level(building, plate):
 
 def _roof_form(roof):
     return [(s['rect'], s['kind'], s.get('ridge'), s.get('ends'), s.get('pitches'),
-             s['pitch'], s['plate'], s['overhang']) for s in roofs.to_sections(roof)]
+             s['pitch'], s['plate'], s['overhang'],
+             *[s.get(k) for k in ROOF_FIELDS],
+             [e.get('overhang_ft') for e in s.get('edges', [{} for _ in range(4)])]) for s in roofs.to_sections(roof)]
 
 
 def _dormer_sections(dormer, parent):
@@ -405,22 +418,40 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
     for section in sections:
         if section.get('dormer_of') or section.get('state') == 'proposal':
             continue
+        supported = is_supported(old_roofs.get(section['id'], section))
         choice = next((c for c in flat_roof.get('choices', [])
-                       if all(abs(a - b) <= 1 for a, b in zip(section['rect'], c['rect']))), None)
+                       if is_supported(c) == supported
+                       and all(abs(a - b) <= 1 for a, b in zip(section['rect'], c['rect']))), None)
         if choice is not None and not migration:
             # A person's block choice that arrives in the flat plan is applied
             # to its section. On migration the section already holds it (R14).
-            for key in ('kind', 'ridge', 'ends', 'pitch', 'pitches', 'plate', 'overhang', 'low_side'):
+            for key in ('kind', 'ridge', 'ends', 'pitch', 'pitches', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS):
                 if key in choice:
                     section[key] = deepcopy(choice[key])
         roof = roofs.from_section(section)
+        # Geometry may be re-read independently of person-set support fields.
+        old = old_roofs.get(roof['id'])
+        if old is not None:
+            carry_fields(old, roof, overwrite=True)
+            if is_supported(roof) and not roof.get('level') and old.get('level'):
+                roof['level'] = old['level']
+            if choice is not None:
+                for key in ROOF_FIELDS:
+                    if key in choice:
+                        roof[key] = deepcopy(choice[key])
+                for edge, chosen in zip(roof['edges'], choice.get('edges', [])):
+                    if 'overhang_ft' in chosen:
+                        edge['overhang_ft'] = deepcopy(chosen['overhang_ft'])
         roof.setdefault('overhang', 1)
         if not roof.get('level'):
-            roof['level'] = _bearing_level(building, roof['plate'])
+            roof['level'] = (min(building['levels'], key=lambda l: l['elevation'])['id']
+                             if is_supported(roof) and building['levels']
+                             else _bearing_level(building, roof['plate']))
         if choice is not None:
             roof['src'] = {**roof.get('src', {}), 'person': True}
-        against = next((p for p in pinned if p['id'] == roof['id'] or twin_model._overlap(p['area'], roof['area'])
-                        >= twin_model._area(roof['area']) * .5), None)
+        against = next((p for p in pinned if p['id'] == roof['id'] or
+                        (not is_supported(p) and not is_supported(roof)
+                         and twin_model._overlap(p['area'], roof['area']) >= twin_model._area(roof['area']) * .5)), None)
         if against is not None:
             if choice is None or migration or _roof_form(roof) == _roof_form(against):
                 if _roof_form(roof) != _roof_form(against):
@@ -433,10 +464,14 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
             roof = roofs.attach_edges(roof, building['walls'], building['joints'])
         else:
             # A detached edge stays detached through a flat build write (R23).
-            for edge, was in zip(roof['edges'], old['edges']):
-                for key in ('wall', 'wall_offset'):
+            for target_index, source_index in edge_pairs(old, roof):
+                edge, was = roof['edges'][target_index], old['edges'][source_index]
+                for key in ('wall', 'wall_offset', 'wall_along_offset'):
                     if key in was:
                         edge[key] = was[key]
+                if 'wall_along_offset' in was:
+                    axis = roofs._edge(*roofs._segments(roof['area'])[target_index])[0]
+                    edge['wall_along_offset'] += roof['area'][target_index][1-axis] - old['area'][source_index][1-axis]
         building['roofs'].append(roof)
     building['dormers'] = [deepcopy(d) for d in previous.get('dormers', []) if _person(d)]
     # A lost dormer has no drawable section, but its record still crosses the
@@ -455,7 +490,7 @@ def _roofs(building, flat_roof, previous, cached_dormers, notes, *, migration=Fa
         parent = next((r for r in building['roofs'] if r['id'] == known), None)
         if parent is None:
             gaps = [(max(abs(a - b) for a, b in zip(twin_model._bounds(r['area']), target)), r['id'], r)
-                    for r in building['roofs']]
+                    for r in building['roofs'] if is_supported(r) == is_supported(section)]
             parent = min((g for g in gaps if g[0] <= 1), default=(None, None, None), key=lambda g: g[:2])[2]
         if parent is not None:
             try:
@@ -772,10 +807,11 @@ def _separator_flags(building):
 
 def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]:
     """Migrate a flat read, preserving person-owned pieces from the last model."""
+    flat, migration_notes = _migrate_extensions(flat)
     flat = deepcopy(flat)
     if flat.get('units') != 'ft':
         raise ValueError('Twin plan units must be ft.')
-    notes = []
+    notes = list(migration_notes)
     room_reads = {}
     flat['solar_source_building'] = (previous or {}).get('solar_source_building', flat.get('solar_source_building'))
     flat['solar_source_roof'] = (previous or {}).get('solar_source_roof', flat.get('solar_source_roof'))
@@ -880,6 +916,7 @@ def assemble(flat: dict, previous: dict | None = None) -> tuple[dict, list[str]]
 
 def flatten(model: dict) -> dict:
     """Return renderer-compatible schema 2 geometry and connected-model extras."""
+    model, _ = _migrate_extensions(model)
     flat = deepcopy(model)
     flat['schema'] = twin_plan.SCHEMA
     for building in flat.get('buildings', []):
@@ -920,7 +957,7 @@ def flatten(model: dict) -> dict:
                             'flags': [{k: deepcopy(v) for k, v in f.items() if k != 'at'}
                                       for f in building.get('flags', []) if 'block_rect' in f]}
         choices = [{**{k: deepcopy(s[k]) for k in ('kind', 'ridge', 'ends', 'pitch', 'plate',
-                                                    'overhang', 'low_side') if k in s},
+                                                    'overhang', 'low_side', *CHOICE_FIELDS) if k in s},
                     'rect': deepcopy(s['block']), 'src': {'person': True}}
                    for s in sections if s.get('src', {}).get('person') and s.get('block')
                    and not s.get('dormer_of')

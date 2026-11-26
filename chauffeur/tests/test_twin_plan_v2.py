@@ -55,14 +55,20 @@ def scenario_p0_pool_house_migrates_to_one_gable_section():
     check(plan['schema'] == 'chauffeur.twin.plan/2', plan['schema'])
     roof = plan['buildings'][0]['roof']
     main = p0['buildings'][0]['roof']['main']
-    check(roof['sections'] == [{'id': 'roof-main', 'kind': 'gable',
+    check(roof['sections'][0] == {'id': 'roof-main', 'kind': 'gable',
                                 'rect': [main['x0'], main['y0'], main['x1'], main['y1']],
                                 'ridge': main['ridge_axis'], 'pitch': main['pitch'], 'plate': main['plate'],
-                                'overhang': main['overhang'], 'pitch_source': 'drawn'}],
+                                'overhang': main['overhang'], 'pitch_source': 'drawn', 'gable_beam': True},
           roof['sections'])
-    check(len(roof['extensions']) == 2 and all(e['section'] == 'roof-main' for e in roof['extensions']),
-          roof['extensions'])
-    check(notes == [], f'migration of the clean fixture adds no notes: {notes}')
+    check(not roof['extensions'] and len(roof['sections']) == 3, roof)
+    shed, shade = roof['sections'][1:]
+    check(shed['id'] == 'shed_continuation-1' and shed['kind'] == 'shed'
+          and shed['rect'] == [31, 0, 38, 22] and not shed.get('support'), shed)
+    check(shade['id'] == 'awning-2' and shade['kind'] == 'shed' and shade['support']['count'] == 3
+          and shade['host'] == {'wall': 'front', 'edge': 2}
+          and shade['rect'] == [17.33, -4, 30, 0], shade)
+    check(len(notes) == 2 and all(n.startswith('Converted ') for n in notes),
+          f'migration adds just the two conversion notes: {notes}')
     again, _ = twin_plan.normalize(plan)
     check(again == plan, 'v2 normalize is idempotent')
 
@@ -168,9 +174,10 @@ def scenario_p0_roof_without_ridge_axis_or_with_another_kind_still_migrates():
             main['kind'] = change['kind']
         plan, notes = twin_plan.normalize(p0)
         roof = plan['buildings'][0]['roof']
-        check(len(roof['sections']) == 1 and roof['sections'][0]['kind'] == 'gable'
+        check(len(roof['sections']) == 3 and roof['sections'][0]['kind'] == 'gable'
               and roof['sections'][0]['ridge'] == 'y', (change, roof['sections']))
-        check(len(roof['extensions']) == 2, (change, roof['extensions']))
+        check(not roof['extensions'] and roof['sections'][1]['kind'] == 'shed'
+              and roof['sections'][2]['support']['kind'] == 'bracket', (change, roof))
         gables = [o for o in plan['buildings'][0]['openings'] if 'gable' in o]
         check(len(gables) == 3, (change, notes))
 

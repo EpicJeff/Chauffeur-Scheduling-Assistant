@@ -22,6 +22,7 @@ from services import (llm_stream, twin_blocks, twin_compose, twin_cost, twin_dra
                       twin_joints, twin_place, twin_plan, twin_reads, twin_register,
                       twin_model, twin_roof_derive, twin_roof_issues, twin_store, twin_stream)
 from services.twin_site_shapes import pieces as site_pieces
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields, is_supported, normalize_host
 
 _LOCK = threading.RLock()
 _BUILDS = {}
@@ -135,6 +136,11 @@ def _get(bid):
     if build['generation'] != twin_store.generation():
         _BUILDS.pop(bid, None)
         raise twin_store.StaleGeneration('The house was started over.')
+    # Old versions persisted consent. A loaded marker has no live attempt.
+    if any('recompose' in step for step in build['steps']):
+        for step in build['steps']:
+            step.pop('recompose', None)
+        _save(build)
     return build
 
 
@@ -434,10 +440,26 @@ def _chain_failed(build):
     _save(build)
 
 
+def _clear_recompose(build, ticket=None):
+    runtime = _WORKERS.get(build['id'], {})
+    if ticket is not None and runtime.get('ticket') != ticket:
+        return
+    runtime.pop('recompose', None)
+    for step in build['steps']:
+        step.pop('recompose', None)
+
+
+def _recompose_allowed(build, step):
+    runtime = _WORKERS.get(build['id'], {})
+    return bool(build.get('state') == 'running' and runtime.get('busy')
+                and runtime.get('recompose') == (step['id'], runtime.get('ticket')))
+
+
 def stop(build_id):
     cancels = []
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
+        _clear_recompose(build)
         if build['state'] != 'done':
             build['state'] = 'stopped'
             _save(build)
@@ -467,11 +489,12 @@ def stop(build_id):
     return status(build_id)
 
 
-def resume(build_id, *, reader=None, inline=None):
+def resume(build_id, *, reader=None, inline=None, _recompose_step=None):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         if build['state'] in ('running', 'done'):
             return status(build_id)
+        _clear_recompose(build)
         if any(b['id'] != build_id and b['state'] in _ACTIVE for b in _BUILDS.values()):
             raise ValueError('A build is already running.')
         runtime = _WORKERS.get(build_id, {})
@@ -480,7 +503,18 @@ def resume(build_id, *, reader=None, inline=None):
         reader = reader or runtime.get('reader') or twin_reads.read
         inline = runtime.get('inline', False) if inline is None else inline
         ticket = _launch(build, reader, inline)
-    _dispatch(build, ticket, reader, inline)
+        if _recompose_step is not None:
+            _WORKERS[build_id]['recompose'] = (_recompose_step, ticket)
+    try:
+        _dispatch(build, ticket, reader, inline)
+    except Exception:
+        with twin_store.LIFECYCLE, _LOCK:
+            _clear_recompose(build, ticket)
+            _idle(build, ticket)
+            if _WORKERS.get(build_id, {}).get('ticket') == ticket and build['state'] == 'running':
+                build['state'] = 'stopped'
+                _save(build)
+        raise
     return status(build_id)
 
 
@@ -490,6 +524,7 @@ def recover():
         for path in (Path(twin_store.DATA_DIR) / 'builds').glob('*/state.json'):
             try:
                 build = _get(path.parent.name)
+                _clear_recompose(build)
                 if (build['id'] != path.parent.name or build['state'] not in (*_ACTIVE, 'stopped', 'done', 'failed')
                         or not isinstance(build['steps'], list) or not isinstance(build['events'], list)
                         or not isinstance(build['inputs'].get('part') or build['inputs'].get('building', {}).get('id'), str)
@@ -810,14 +845,20 @@ def _centroid(points):
                 for a, b in edges) / (3 * area2) for i in (0, 1)]
 
 
+def _porch_level(piece, house):
+    return piece.get('level') or next((l['id'] for l in (house or {}).get('levels', [])), None)
+
+
 def _matches(a, b, kind, house, *, original=False):
+    if kind == 'roof' and is_supported(a) != is_supported(b):
+        return a['id'] == b['id']
     def level(p):
         if kind == 'opening':
             if 'wall' in p:
                 return next((w['level'] for w in house['walls'] if w['id'] == p['wall']), None)
             return next((s.get('level') for s in house['roof']['sections']
                          if s['id'] == p.get('section')), None)
-        return p.get('level')
+        return _porch_level(p, house) if kind == 'porch' else p.get('level')
     if level(a) != level(b) or (kind == 'site' and a.get('kind') != b.get('kind')):
         return False
     if kind == 'fixture' and (twin_plan.fixture_kind(a.get('kind')) != twin_plan.fixture_kind(b.get('kind'))
@@ -846,6 +887,10 @@ def _matches(a, b, kind, house, *, original=False):
 def _match_geometry(piece, kind, house):
     if piece.get('src', {}).get('person') and piece.get('read_geometry'):
         return piece['read_geometry']
+    if kind == 'porch' and piece.get('src', {}).get('person'):
+        room = next((r for r in (house or {}).get('rooms', []) if r['id'] == piece['id']), None)
+        if room and room.get('read_geometry'):
+            return room['read_geometry']
     return _geometry(piece, kind, house)
 
 
@@ -895,6 +940,14 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
                 continue
         old = next((p for p in sorted(merged, key=lambda p: not protected(p))
                     if (_matches(piece, p, kind, house)
+                        or (kind == 'porch' and protected(p) and not p.get('read_geometry')
+                            and _porch_level(p, house) == _porch_level(piece, house)
+                            and p.get('src', {}).get('step') == piece.get('src', {}).get('step')
+                            and ((p.get('name') and p.get('name') == piece.get('name')
+                                  and sum(q.get('name') == p.get('name') and _porch_level(q, house) == _porch_level(p, house) for q in incoming) == 1
+                                  and sum(q.get('name') == p.get('name') and _porch_level(q, house) == _porch_level(p, house) for q in existing) == 1)
+                                 or (sum(_porch_level(q, house) == _porch_level(p, house) for q in incoming) == 1
+                                     and sum(_porch_level(q, house) == _porch_level(p, house) for q in existing) == 1)))
                         or (kind == 'wall' and not protected(p) and p.get('level') == piece.get('level')
                             and p.get('src', {}).get('step') != piece.get('src', {}).get('step')
                             and _near_geometry(_geometry(p, kind, house), _geometry(piece, kind, house), kind))
@@ -910,6 +963,8 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
             if old.get('src', {}).get('person') and not old.get('read_geometry'):
                 old['read_geometry'] = deepcopy(piece['read_geometry'])
             if not protected(old):
+                if kind == 'roof':
+                    carry_fields(old, piece, overwrite=True)
                 merged[merged.index(old)] = deepcopy(piece)
                 if kind == 'wall':
                     # A wider read can cover several earlier fragments.
@@ -927,7 +982,11 @@ def _merge_list(existing, incoming, kind, house, build, step=None, *, tombstones
             merged.append(deepcopy(piece))
     if step and (step.get('reread') or build.get('existing')):
         removed = {step['id'], *step.get('removed_steps', [])}
-        merged = [p for p in merged if protected(p) or p['id'] in kept
+        # Block/floor reads do not own independent awnings. A roof read (even
+        # one with no awnings left), or an explicit supported-roof read, does.
+        keep_supports = (kind == 'roof' and step.get('kind') != 'roof'
+                         and not any(is_supported(p) for p in incoming))
+        merged = [p for p in merged if protected(p) or (keep_supports and is_supported(p)) or p['id'] in kept
                   or p.get('src', {}).get('step') not in removed]
     return merged
 
@@ -1128,7 +1187,7 @@ def _migrate_crop_draft_frame(house, draft, step, tombstones, notes):
             house['position'] = [house['position'][i] - delta[i] for i in (0, 1)]
 
 
-def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, partial=False):
+def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, partial=False, materials=None):
     """The read already uses building feet. Merge identities before references."""
     draft = deepcopy(fragment.get('building', {}) if step['kind'] == 'draft' else fragment)
     pages = _draft_pages(build, floors_only=True)
@@ -1159,6 +1218,11 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
         return [_piece(build, step, kind, i, **{'state': 'settled', **{k: v for k, v in p.items() if k != 'id'}})
                 for i, p in enumerate(draft.get(key, []) if values is None else values)]
 
+    # A roof-only historical answer can retire this step's old walls below.
+    # Their lines still locate its attachment; they never re-enter the house.
+    migration_walls = (deepcopy(house['walls']) if not draft.get('walls') and any(
+        e.get('kind') in ('awning', 'shed_continuation')
+        for e in draft.get('roof', {}).get('extensions', [])) else None)
     walls = pieces('walls', 'wall')
     old_ids = [w.get('id') for w in draft.get('walls', [])]
     # A rooms partition may continue inward from a short exterior jog. It
@@ -1214,6 +1278,28 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     house['rooms'] = _merge_list(house['rooms'], rooms, 'room', house, build, step, tombstones=tombstones)
     if step['kind'] != 'draft':
         return
+    # Cached pre-migration answers must enter the roof identity/tombstone path,
+    # using the walls just merged above and any settled parent omitted by the read.
+    roof = draft.get('roof', {})
+    legacy_extensions = any(e.get('kind') in ('awning', 'shed_continuation')
+                            for e in roof.get('extensions', []))
+    for section in roof.get('sections', []):
+        if section.get('host'):
+            section['host']['wall'] = wall_ids.get(section['host']['wall'], section['host']['wall'])
+    for extension in roof.get('extensions', []):
+        if 'wall' in extension:
+            extension['wall'] = wall_ids.get(extension['wall'], extension['wall'])
+    parent_fields = {}
+    migration_house = house if migration_walls is None else {**house, 'walls': migration_walls}
+    migrated = twin_reads._migrate_read_fragment({'building': draft},
+        {'building': migration_house, 'materials': materials or {}}, final=True, parent_fields=parent_fields)
+    draft = migrated['building']
+    if notes is not None:
+        notes.extend(line for line in migrated.get('notes', []) if line not in notes)
+    context_parents = [s for s in house['roof']['sections'] if s['id'] in parent_fields]
+    for parent in context_parents:
+        for key, value in parent_fields[parent['id']].items():
+            parent.setdefault(key, value)
     roof = draft.get('roof', {})
     current_choices = twin_plan._roof_entries(house['roof'], 'choices')
     choices = [c for c in twin_plan._roof_entries(roof, 'choices') if not any(
@@ -1227,8 +1313,8 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     old_sections = [s['id'] for s in roof.get('sections', [])]
     # A person's gable window protects its old carrier in _merge_list. Move
     # the window first so the first block rebuild can retire that old roof.
-    replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person')
-                and any(t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
+    replaced = [s for s in house['roof']['sections'] if not s.get('src', {}).get('person') and not is_supported(s)
+                and any(not is_supported(t) and t.get('block') and _roof_overlap(s['rect'], t['rect']) > 0 for t in sections)
                 and not any(_matches(t, s, 'roof', house) for t in sections)]
     incoming_ids = [s['id'] for s in sections]
     _remap_roof_attachments(house['openings'], house['roof'].get('extensions', []), replaced, sections)
@@ -1236,11 +1322,30 @@ def _merge_draft(build, step, fragment, house, *, tombstones=None, notes=None, p
     roof_step = {**step, 'removed_steps': [*step.get('removed_steps', []), 'roof_blocks']}
     house['roof']['sections'] = _merge_list(house['roof']['sections'], sections, 'roof', house, build, roof_step,
                                             tombstones=tombstones)
+    live_ids = {s['id'] for s in house['roof']['sections']}
+    house['roof']['sections'].extend(s for s in context_parents if s['id'] not in live_ids)
     merged_ids = dict(zip(incoming_ids, (s['id'] for s in sections)))
     for attachment in [*house['openings'], *house['roof'].get('extensions', [])]:
         if attachment.get('section') in merged_ids:
             attachment['section'] = merged_ids[attachment['section']]
     section_ids = dict(zip(old_sections, (s['id'] for s in sections)))
+    if migration_walls is not None:
+        live_walls = {w['id'] for w in house['walls']}
+        for section in house['roof']['sections']:
+            if section['id'] in section_ids.values() and is_supported(section):
+                normalize_host(section, house, notes if notes is not None else [])
+                for edge in section.get('edges', []):
+                    if edge.get('wall') and edge['wall'] not in live_walls:
+                        for key in ('wall', 'wall_offset', 'wall_along_offset'):
+                            edge.pop(key, None)
+    live_ids = {s['id'] for s in house['roof']['sections']}
+    for flag in draft.get('flags', []) if legacy_extensions else []:
+        if flag.get('kind') != 'roof':
+            continue
+        flag = {**flag, 'id': section_ids.get(flag.get('id'), flag.get('id'))}
+        if flag['id'] in live_ids and not any(f.get('kind') == 'roof' and f.get('id') == flag['id']
+                                            for f in house.get('flags', [])):
+            house.setdefault('flags', []).append(flag)
     openings = pieces('openings', 'opening')
     for opening in openings:
         if 'wall' in opening:
@@ -1356,6 +1461,8 @@ def _check_draft(house):
         if i == 0:
             first_failed = level_failed or (bool(walls) and all(w.get('state') == 'ghost' for w in walls))
     for section in house['roof']['sections']:
+        if is_supported(section):
+            continue
         bearing = [l for l in levels if l['elevation'] + .5 < section['plate']
                    <= l['elevation'] + l['ceiling'] + 2]
         corners = _corners(section['rect'])
@@ -1495,7 +1602,7 @@ def _images_context(build, step, sheets=None):
         house = _house(_base(plan, build), build)
         context['settled'] = {'outline': deepcopy(next((l.get('outline', []) for l in house['levels']
                                                        if l['id'] == step['level']), []))}
-        sections = house['roof']['sections']
+        sections = [s for s in house['roof']['sections'] if not is_supported(s)]
         if sections:
             bounds = _bounds([p for s in sections for p in _corners(s['rect'])])
             def where(s):
@@ -1726,7 +1833,7 @@ def _keep_partial(build, step, ticket):
         # read remain until a complete reread can reconcile them.
         partial_step = {k: v for k, v in step.items() if k not in ('reread', 'removed_steps')}
         _merge_draft({**build, 'existing': False}, partial_step, fragment, house,
-                     tombstones=twin_store.tombstones(), partial=True)
+                     tombstones=twin_store.tombstones(), partial=True, materials=plan.get('materials', {}))
         return plan
 
     twin_store.update_current(mutate, kind='build', step={'id': step['id'], 'label': step['label']},
@@ -1825,7 +1932,7 @@ def _register_draft(result):
 def _draft_preview(build, step, fragment):
     """Check a fresh read without publishing it or reusing a previous draft."""
     plan = _base(None, build)
-    _merge_draft(build, step, fragment, _house(plan, build))
+    _merge_draft(build, step, fragment, _house(plan, build), materials=plan.get('materials', {}))
     plan, _ = twin_plan.normalize(plan)
     house = _house(plan, build)
     twin_joints.snap(house)
@@ -2104,9 +2211,10 @@ def _read_roof_blocks(build, step, reader, ticket, result):
     if _cache_result(build, step, ticket, result) is None:
         return None
     try:
-        house = _house(_base(twin_store.current(), build), build)
+        plan = _base(twin_store.current(), build)
+        house = _house(plan, build)
         _migrate_crop_draft(house, draft, step, [], [])
-        _merge_draft(build, step, result['fragment'], house)
+        _merge_draft(build, step, result['fragment'], house, materials=plan.get('materials', {}))
         normalized, _ = twin_plan.normalize({'units': 'ft', 'buildings': [house]})
         house = normalized['buildings'][0]
         twin_joints.snap(house)
@@ -2175,14 +2283,14 @@ def _read_roof_blocks(build, step, reader, ticket, result):
 
         evidence = {}
         for block in blocks:
-            source = max((s for s in sections if not porch_roof(s)
+            source = max((s for s in sections if not is_supported(s) and not porch_roof(s)
                           and _roof_overlap(block['rect'], s['rect']) > 0),
                          key=lambda s: _roof_overlap(block['rect'], s['rect']), default=None)
             plan = {k: deepcopy(source[k]) for k in ('ridge', 'pitch') if k in source} if source else {}
             plan['dormers'] = deepcopy(source.get('dormers', [])) if source else []
             # Cross gables already drawn on this roof carry their plan position.
             for section in sections:
-                if (source and section is not source and section.get('kind') == 'gable'
+                if (source and section is not source and not is_supported(section) and section.get('kind') == 'gable'
                         and not porch_roof(section)
                         and section.get('ridge') != source.get('ridge')
                         and abs(section['plate'] - source['plate']) < .5
@@ -2198,8 +2306,9 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                     plan['dormers'].append({'side': side, 'centre': (r[axis] + r[axis + 2]) / 2,
                                             'width': r[axis + 2] - r[axis]})
             evidence[block['id']] = plan
-        choices = deepcopy(twin_plan._roof_entries(house['roof'], 'choices'))
-        protected = [s for s in house['roof']['sections'] if s.get('src', {}).get('person')]
+        choices = deepcopy([c for c in twin_plan._roof_entries(house['roof'], 'choices') if not is_supported(c)])
+        protected = [s for s in house['roof']['sections']
+                     if s.get('src', {}).get('person') and not is_supported(s)]
         legacy_coverage = []
         for section in protected:
             block_rect = section.get('block')
@@ -2225,22 +2334,22 @@ def _read_roof_blocks(build, step, reader, ticket, result):
                                     for c in choices):
                 continue
             choices.append({**{k: deepcopy(section[k]) for k in
-                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in section},
+                              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS) if k in section},
                             'rect': deepcopy(block['rect']), 'src': {'person': True}})
         derived, flags = twin_roof_derive.derive_roof(blocks, observations, evidence, choices)
 
-        protected_sources = [s for s in sections if any(
+        protected_sources = [s for s in sections if not is_supported(s) and any(
             _near_geometry({'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
             for p in protected)]
         # Invalid read pieces remain visible as diagnostic ghosts. They must
         # not supply a footprint for new, apparently settled roofs.
-        failed_sources = [s for s in sections if any(
-            p.get('state') == 'ghost' and _near_geometry(
+        failed_sources = [s for s in sections if not is_supported(s) and any(
+            not is_supported(p) and p.get('state') == 'ghost' and _near_geometry(
                 {'rect': s['rect']}, p.get('read_geometry') or {'rect': p['rect']}, 'roof')
             for p in house['roof']['sections'])]
         for source in failed_sources:
             source.update(state='ghost', why='This roof section does not meet its bearing walls within 3 ft.')
-        kept = [s for s in sections if s.get('src', {}).get('person') or s in protected_sources
+        kept = [s for s in sections if is_supported(s) or s.get('src', {}).get('person') or s in protected_sources
                 or s in failed_sources or porch_roof(s)]
         # Use the person's carrier, including its level and form. Keeping the
         # raw draft carrier here can create a second roof beside a block roof
@@ -2545,10 +2654,33 @@ def _expand(build, step, result):
     step['expanded'] = True
 
 
+def yard_occupied(plan=None):
+    """Only authored work blocks automatic layout; untouched reads may reflow."""
+    site = (plan if plan is not None else twin_store.current() or {}).get('site', {})
+    if any(bool(value) for value in site.get('compose_overrides', {}).values()):
+        return True
+    for name in ('planting', 'beds', 'edges'):
+        for piece in site.get(name, []):
+            if piece.get('state') in ('ghost', 'proposal'):
+                continue
+            source = piece.get('src') or {}
+            if source.get('person'):
+                return True
+            if piece.get('by') == 'compose':
+                continue
+            if source.get('step') == 'site' and not piece.get('by'):
+                continue
+            return True
+    return False
+
+
 def _settle(build, step, result, decision=None):
     """Merge against the latest round while LIFECYCLE and the module lock are held."""
     fragment, crop = result['fragment'], result.get('crop')
     kind = step['kind']
+    recompose = kind == 'compose' and _recompose_allowed(build, step)
+    if kind == 'compose':
+        _clear_recompose(build)
     def from_step(piece):
         source = piece.get('src', {}).get('step')
         return source == step['id'] or (kind == 'draft' and source == 'roof_blocks')
@@ -2623,6 +2755,9 @@ def _settle(build, step, result, decision=None):
 
     def mutate(current):
         nonlocal draft_tombstones
+        # Inspect states before _base normalizes the legacy read format (which
+        # does not retain proposal state). Neither ghosts nor proposals fill a yard.
+        keep_yard = kind == 'compose' and not recompose and yard_occupied(current or {})
         if kind == 'draft':
             draft_tombstones = twin_store.tombstones()
         plan = _base(current, build, lot_outline)
@@ -2632,7 +2767,7 @@ def _settle(build, step, result, decision=None):
         if kind in ('draft', 'draft_rooms'):
             if kind == 'draft':
                 _migrate_crop_draft(house, fragment.get('building', {}), step, draft_tombstones, notes)
-            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones, notes=notes)
+            _merge_draft(build, step, fragment, house, tombstones=draft_tombstones, notes=notes, materials=plan.get('materials', {}))
         elif kind == 'shell':
             shell = deepcopy(fragment)
             generated_levels = {w['level'] for w in house['walls']
@@ -2844,11 +2979,17 @@ def _settle(build, step, result, decision=None):
                                      if not (isinstance(target_materials.get(k), dict)
                                              and target_materials[k].get('src', {}).get('person'))})
         elif kind == 'compose':
+            yard = {name: deepcopy(plan['site'][name]) for name in ('beds', 'planting', 'edges')}
             protected = {name: [p for p in plan['site'][name] if p.get('src', {}).get('person')]
                          for name in ('beds', 'planting', 'edges')}
             plan, compose_notes = twin_compose.compose(plan, twin_library.kit('modern_farmhouse'), seed=1)
-            notes.extend(compose_notes)
-            for name, people in protected.items():
+            if keep_yard:
+                plan['site'].update(yard)
+                notes.append('Kept your yard. Plants and beds are laid out only in an empty yard.')
+                notes.extend(n for n in compose_notes if n.startswith('Foundations were skipped'))
+            else:
+                notes.extend(compose_notes)
+            for name, people in (() if keep_yard else protected.items()):
                 for piece in plan['site'][name]:
                     if piece.get('by') == 'compose' and not piece.get('src', {}).get('person'):
                         piece['src'] = {'sheet': '', 'page': 1, 'step': step['id']}
@@ -2956,6 +3097,7 @@ def _settle(build, step, result, decision=None):
     if kind in ('outline', 'registration'):
         _expand(build, step, result)
     step.pop('reread', None)
+    step.pop('recompose', None)
     step.pop('replay', None)
     step.pop('removed_steps', None)
     for note in notes:
@@ -3025,7 +3167,7 @@ def answer(build_id, step_id, decision):
     return status(build_id)
 
 
-def reread(build_id, step_id, *, reader=None, inline=None):
+def reread(build_id, step_id, *, reader=None, inline=None, confirm=False):
     with twin_store.LIFECYCLE, _LOCK:
         build = _get(build_id)
         step = next((s for s in build['steps'] if s['id'] == step_id), None)
@@ -3035,6 +3177,8 @@ def reread(build_id, step_id, *, reader=None, inline=None):
             raise ValueError('Stop the build before rereading a step.')
         if _WORKERS.get(build_id, {}).get('busy'):
             raise ValueError('The build is still stopping; wait for its read to return.')
+        if step['kind'] == 'compose' and yard_occupied() and confirm is not True:
+            raise ValueError('Re-laying plants and beds may change your yard. Send confirm: true only after you approve it.')
         step['reread'] = True
         if step['kind'] == 'draft':
             # Rooms use this exact settled geometry, and placement uses its
@@ -3057,7 +3201,8 @@ def reread(build_id, step_id, *, reader=None, inline=None):
         build['pause'] = None
         build['state'] = 'stopped'
         _save(build)
-    return resume(build_id, reader=reader, inline=inline)
+    return resume(build_id, reader=reader, inline=inline,
+                  _recompose_step=step_id if step['kind'] == 'compose' and confirm is True else None)
 
 
 def _idle(build, ticket):
@@ -3130,6 +3275,7 @@ def _run(build, ticket, reader):
     except twin_cost.CheckpointReached as exc:
         with twin_store.LIFECYCLE, _LOCK:
             if _live(build, ticket):
+                _clear_recompose(build, ticket)
                 _spend(build)
                 build['state'] = 'checkpoint'
                 step['status'] = 'pending'
@@ -3139,6 +3285,7 @@ def _run(build, ticket, reader):
     except Exception as exc:
         with twin_store.LIFECYCLE, _LOCK:
             if _live(build, ticket):
+                _clear_recompose(build, ticket)
                 _spend(build)
                 cached = _cache_path(build, step).is_file()
                 retryable = cached or isinstance(exc, _ReadError)
@@ -3170,6 +3317,13 @@ def _run(build, ticket, reader):
     finally:
         with twin_store.LIFECYCLE, _LOCK:
             try:
+                if (_BUILDS.get(build['id']) is build
+                        and _WORKERS.get(build['id'], {}).get('ticket') == ticket
+                        and (_WORKERS[build['id']].get('recompose')
+                             or any(s.get('recompose') for s in build['steps']))):
+                    _clear_recompose(build, ticket)
+                    if build['generation'] == twin_store.generation():
+                        _save(build)
                 if (step is not None and step['status'] != 'done' and build['state'] == 'stopped'
                         and _BUILDS.get(build['id']) is build
                         and _WORKERS.get(build['id'], {}).get('ticket') == ticket

@@ -102,7 +102,111 @@ def scenario_recorded_answers_build_a_house_through_the_real_reader():
     check(tc.total() > 0 and all(e['stage'].startswith('step:') for e in tc.entries()), 'every read was metered')
 
 
+YARD_NOTE = 'Kept your yard. Plants and beds are laid out only in an empty yard.'
+
+
+def scenario_automatic_builds_keep_finished_yards():
+    import test_twin_build_chain as chain
+    from services import twin_plan
+    class EmptyYardReader(chain.ThreadReader):
+        def __call__(self, kind, *a, **kw):
+            answer = super().__call__(kind, *a, **kw)
+            if kind == 'site':
+                # The shared site fixture reads a retaining wall into edges.
+                # This case specifically starts with no plants, beds or edges.
+                answer['retaining_walls'] = []
+            return answer
+    # Replay the actual place chain and single shell build, then repeat on their
+    # finished yard. Only the shell's final compose runs in the chain.
+    for part in ('place', 'shed', 'house'):
+        chain._place()
+        # Supply the confirmed lot without first composing it.
+        if part != 'place':
+            ts.push_round({'units': 'ft', 'buildings': [], 'site': {
+                'lot': [[-100, -100], [250, -100], [250, 200], [-100, 200]]}, 'materials': {}}, 'hand')
+        chain._follow(tb.start({'part': part}, reader=EmptyYardReader(), inline=True))
+        before = ts.current()
+        check(all(before['site'][n] for n in ('planting', 'beds', 'edges')), 'first empty-yard build composes')
+        # A hand-moved generated plant and a hand plant must both survive.
+        before['site']['planting'][0]['at'] = [100, -50]
+        before['site']['planting'][0]['src'] = {'person': True}
+        before['site']['planting'].append(dict(id='hand-plant', at=[100, -60], kind='shrub',
+                                               preset='Boxwood', height=4, src={'person': True}))
+        before = twin_plan.normalize(before)[0]
+        ts.push_round(before, 'hand', base=ts.current_id())
+        ids = chain._follow(tb.start({'part': part}, reader=EmptyYardReader(), inline=True))
+        after = ts.current()
+        for name in ('planting', 'beds', 'edges'):
+            check(after['site'][name] == before['site'][name], (part, 'kept', name))
+        notes = [e['text'] for b in ids for e in tb.status(b)['events'] if e['type'] == 'log']
+        check(notes.count(YARD_NOTE) == 1, notes)
+        if part == 'house':
+            # Re-reading a drawing marks dependent compose as reread too; it
+            # must not acquire the explicit Plants-and-beds API exemption.
+            tb.reread(ids[-1], 'draft', reader=EmptyYardReader(), inline=True)
+            chain._follow(ids[-1])
+            check(all(ts.current()['site'][n] == after['site'][n] for n in ('planting', 'beds', 'edges')),
+                  'drawing replay keeps the finished yard')
+
+
+def scenario_compose_guard_ignores_ghosts_and_proposals_and_keeps_other_work():
+    from unittest.mock import patch
+    from services import twin_library, twin_plan
+    import test_twin_build_chain as chain
+    import test_twin_compose as compose_tests
+    for occupied in (None, 'planting', 'beds', 'edges'):
+        chain._place()
+        plan = compose_tests._plan()
+        generated = tb.twin_compose.compose(plan, twin_library.kit('modern_farmhouse'), seed=1)[0]
+        for name in ('planting', 'beds', 'edges'):
+            plan['site'][name] = copy.deepcopy(generated['site'][name][:2])
+            for i, piece in enumerate(plan['site'][name]):
+                piece['state'] = 'ghost' if i == 0 else 'proposal'
+        if occupied:
+            plan['site'][occupied][0]['state'] = 'settled'
+            plan['site'][occupied][0]['src'] = {'person': True}
+        build = {'id': 'guard-test', 'inputs': {'part': 'lot'}, 'steps': [],
+                 'generation': ts.generation(), 'cost': 0, 'events': [], 'seq': 0}
+        step = tb._step('compose')
+        build['steps'] = [step]
+        real_compose = tb.twin_compose.compose
+        def with_other_work(*a, **kw):
+            out, notes = real_compose(*a, **kw)
+            out['materials']['trim']['color'] = '#123456'
+            return out, notes
+        captured = {}
+        def update_current(mutator, **kw):
+            captured['plan'] = mutator(copy.deepcopy(plan))
+        with patch.object(tb.twin_compose, 'compose', side_effect=with_other_work), \
+                patch.object(ts, 'update_current', side_effect=update_current):
+            tb._settle(build, step, {'fragment': {}, 'problems': []})
+        after = captured['plan']
+        check(after['materials']['trim']['color'] == '#123456', 'non-yard compose work still happens')
+        if occupied:
+            normalized = twin_plan.normalize(plan)[0]
+            check(all(after['site'][n] == normalized['site'][n] for n in ('planting', 'beds', 'edges')), occupied)
+            check(sum(e.get('text') == YARD_NOTE for e in build['events']) == 1, build['events'])
+        else:
+            check(len(after['site']['planting']) > len(plan['site']['planting']), 'ghost/proposal-only yard is empty')
+
+
+def scenario_explicit_compose_reread_still_recomposes():
+    import test_twin_build_chain as chain
+    chain._place()
+    build = tb.start({'part': 'shed'}, reader=chain.ThreadReader(), inline=True)
+    chain._follow(build)
+    plan = ts.current()
+    plan['site']['edges'].append(dict(id='extra-generated', by='compose', points=[[80, 80], [90, 80]]))
+    ts.push_round(plan, 'hand')
+    tb.reread(build, 'compose', inline=True)
+    check(not any(p['id'] == 'extra-generated' for p in ts.current()['site']['edges']), 'explicit recompose retained')
+    check(not any(e.get('text') == YARD_NOTE for e in tb.status(build)['events']), 'no misleading kept note')
+
+
 if __name__ == '__main__':
-    for fn in (scenario_recorded_answers_build_a_house_through_the_real_reader,):
+    for fn in (scenario_recorded_answers_build_a_house_through_the_real_reader,
+               scenario_automatic_builds_keep_finished_yards,
+               scenario_compose_guard_ignores_ghosts_and_proposals_and_keeps_other_work,
+               scenario_explicit_compose_reread_still_recomposes):
         fn()
         print('  ok ', fn.__name__)

@@ -11,7 +11,7 @@ photos in order; context['photo_map'] keyed by zero-based photo index), builds
 plan evidence from the draft's roof sections, calls
 services.twin_roof_derive.derive_roof and replaces every draft roof section
 that is not a porch roof and has no src.person with the derived sections.
-Extensions (the awning) are kept. Each flag is logged once, plainly, and the
+Supported roof sections (the migrated awning) are kept. Each flag is logged once, plainly, and the
 flags are stored on the draft step. roof_check is no longer called.
 require_clear() runs before each read.
 
@@ -410,13 +410,26 @@ def test_derived_roof_replaces_draft_roof():
     # The other draft sections are replaced, not kept beside the derived ones.
     for sid, rect in REPLACED.items():
         check(not _at(house, rect), ('a draft roof section is replaced by the derived roof', sid, _roof(house)))
-    # The awning stays, on the derived garage roof.
-    awnings = [e for e in house['roof'].get('extensions', []) if e.get('kind') == 'awning']
+    # The awning keeps its span, depth, eave and wall beside the derived garage.
+    awnings = [s for s in house['roof']['sections'] if s.get('support')]
     check(len(awnings) == 1 and awnings[0].get('state') != 'ghost',
-          ('the awning is kept', house['roof'].get('extensions')))
-    host = next((s for s in house['roof']['sections'] if s['id'] == awnings[0].get('section')), None)
-    check(host is not None, ('the awning names a roof section that exists', awnings[0], _roof(house)))
-    check(host is by['D'], ('the awning sits on the derived garage roof', _read_rect(host), _read_rect(by['D'])))
+          ('the awning is kept as an ordinary supported roof', awnings))
+    shade = awnings[0]
+    source = reader.draft['building']['roof']['extensions'][0]
+    check(not house['roof'].get('extensions') and
+          (shade['kind'], shade['support']['kind'], shade['support']['count'],
+           shade.get('thickness_ft'), shade.get('fascia')) == ('shed', 'bracket', source['brackets'], .3, False),
+          ('the awning keeps its ordinary slab and bracket record', shade))
+    rect = shade['rect']
+    check(abs(rect[0]-source['x0']) < .01 and abs(rect[2]-source['x1']) < .01
+          and abs(rect[3]-rect[1]-source['depth']) < .01 and abs(shade['plate']-source['eave']) < .01,
+          ('the awning keeps the read geometry', shade, source))
+    host = next((w for w in house['walls'] if w['id'] == shade.get('host', {}).get('wall')), None)
+    check(host is not None and host['level'] == shade['level'], ('the host wall exists on its floor', shade, host))
+    garage = _read_rect(by['D'])
+    check(abs(host['from'][1]-host['to'][1]) < .1 and abs(host['from'][1]-garage[1]) < .1
+          and garage[0] <= (rect[0]+rect[2])/2 <= garage[2],
+          ('the awning sits at the derived garage front wall', shade, host, garage))
 
 
 def test_no_photos_no_reads():
@@ -698,10 +711,12 @@ def test_unmatched_attachments_stay_located_ghosts():
     house = _house()
     windows = [o for o in house['openings'] if o.get('section') and o.get('x', 0) > 100]
     check(windows and all(o.get('state') == 'ghost' and o.get('position') and o.get('why') for o in windows), windows)
-    awnings = house['roof']['extensions']
+    awnings = [s for s in house['roof']['sections'] if s.get('support')]
     check(len(awnings) == 1 and awnings[0].get('state') == 'ghost' and awnings[0].get('why'), awnings)
-    check(all(not s.get('block') or s['id'] != awnings[0]['section'] for s in house['roof']['sections']),
-          'an unrelated extension never binds to the first carrier')
+    check(not house['roof'].get('extensions') and awnings[0]['support']['kind'] == 'bracket',
+          ('the unmatched attachment stays an ordinary supported roof', awnings))
+    check(awnings[0]['rect'][0] > 100 and not awnings[0].get('host') and awnings[0].get('position'),
+          ('an unrelated awning stays located and never binds to the first wall', awnings[0]))
 
 
 def test_multi_image_photo_estimates_match_build():

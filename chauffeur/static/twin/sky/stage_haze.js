@@ -89,8 +89,8 @@ uniform float stageRadius, stageEnabled, stageCanvas, stageExposure;
 // water, glass and lamp-shadowed materials ran past the 16 units ANGLE gives
 // (owner's console, 2026-11-18). Haze is a smooth gradient; 40 colours hold it.
 // vec3 array entries already cost one vector each. Their padded w lanes carry
-// extinction (0), fog RGB (1..3) and sun-disc obscuration (4); vector and
-// sampler totals are unchanged.
+// extinction (0), fog RGB (1..3), sun-disc obscuration (4), roof lift (5) and
+// covered-sky irradiance delta RGB (6..8); vector and sampler totals are unchanged.
 uniform vec4 stageRing[40];
 varying vec3 vStageWorld;
 // Callers supply azimuths 0..9 (the interpolated neighbour can cross 8).
@@ -197,13 +197,17 @@ export function installStageHaze(scene, sky) {
     walk();
   };
   return {prepare, refresh,
-    set({centre, radius, enabled, extinction, fogColour, sunAirVisibility} = {}) {
+    set({centre, radius, enabled, extinction, fogColour, sunAirVisibility, roofFade, coverDelta} = {}) {
       if (centre?.every(Number.isFinite)) uniforms.stageCentre.value.fromArray(centre);
       if (Number.isFinite(radius) && radius > 0) uniforms.stageRadius.value = radius;
       if (Number.isFinite(extinction)) ring[3]=Math.max(0,extinction);
       if (fogColour?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[(i+1)*4+3]=guard(fogColour[i]);
       // Stored as obscuration (1 - visibility) so zero-initialised rings default to clear sky.
       if (Number.isFinite(sunAirVisibility)) ring[19]=1-Math.max(0,Math.min(1,sunAirVisibility));
+      // Stored as roof lift (1 - roofFade) so zero-initialised rings default to roof on (1).
+      if (Number.isFinite(roofFade)) ring[23]=1-Math.max(0,Math.min(1,roofFade));
+      // Signed linear irradiance delta (coverBounce - hemiSky) packed into stageRing[6..8].w.
+      if (coverDelta?.every(Number.isFinite)) for(let i=0;i<3;i++)ring[(i+6)*4+3]=Math.max(-4096,Math.min(4096,coverDelta[i]));
       if (enabled !== undefined) uniforms.stageEnabled.value = enabled ? 1 : 0;
     },
     dispose() { scene.onBeforeRender = previous; },

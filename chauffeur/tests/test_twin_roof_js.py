@@ -124,6 +124,7 @@ class Node:
         self.node = shutil.which('node')
         self.dir = tempfile.mkdtemp(prefix='twin_roof_js_')
         shutil.copy(MODULE, os.path.join(self.dir, 'twin_roof.mjs'))
+        shutil.copy(os.path.join(os.path.dirname(MODULE), 'roof_supports.js'), self.dir)
         with open(os.path.join(self.dir, 'driver.mjs'), 'w', encoding='utf-8') as f:
             f.write(DRIVER)
 

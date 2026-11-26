@@ -3,11 +3,14 @@
 KINDS = [
     {'kind': 'trim', 'label': 'Trim', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
     {'kind': 'fascia', 'label': 'Fascia', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
+    {'kind': 'gutter', 'label': 'Gutters', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': None},
     {'kind': 'casing', 'label': 'Casing', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'opening'},
     {'kind': 'window_frame', 'label': 'Window frames', 'scope': 'building', 'fallback': {'role': 'window_frame'}, 'item': 'opening'},
     {'kind': 'pane', 'label': 'Panes', 'scope': 'building', 'fallback': {'builtin': 'glass'}, 'item': 'opening'},
     {'kind': 'door', 'label': 'Doors', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
     {'kind': 'garage_door', 'label': 'Garage door', 'scope': 'building', 'fallback': {'role': 'door'}, 'item': 'opening'},
+    {'kind': 'support', 'label': 'Supports', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'roof'},
+    {'kind': 'underside', 'label': 'Ceiling underneath', 'scope': 'building', 'fallback': {'role': 'porch_ceiling'}, 'item': 'roof'},
     {'kind': 'column', 'label': 'Columns', 'scope': 'building', 'fallback': {'role': 'trim'}, 'item': 'porch'},
     {'kind': 'screen', 'label': 'Screens', 'scope': 'building', 'fallback': {'builtin': 'screen'}, 'item': 'porch'},
     {'kind': 'soffit', 'label': 'Soffit', 'scope': 'building', 'fallback': {'role': 'porch_ceiling'}, 'item': None},
@@ -27,6 +30,7 @@ PANEL_ROLES = ['siding', 'interior_wall', 'floor']
 ITEM_PARTS = {
     'opening': ('casing', 'window_frame', 'pane', 'door', 'garage_door'),
     'porch': ('column', 'screen'),
+    'roof': ('support', 'underside'),
     'stair': ('stair_tread', 'stair_rail'),
     'fixture': ('cabinet', 'counter', 'shower_tile', 'shower_glass'),
     'pool': ('water',), 'spa': ('water',),

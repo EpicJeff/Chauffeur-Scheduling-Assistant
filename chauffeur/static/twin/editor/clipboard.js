@@ -14,6 +14,7 @@ import { planes } from '../twin_roof.js';
 import { openingFloor } from '../twin_floors.js';
 import { pointAnchor } from './point_snap.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
+import { toLot as world, toLocal as local, hostedAt } from './lot_frame.js';
 
 const clone = value => structuredClone(value);
 const key = r => JSON.stringify([r.buildingId ?? null, r.pieceId]);
@@ -22,12 +23,6 @@ const bidOf = r => r?.buildingId ?? (typeof r?.building === 'string' ? r.buildin
 const refOf = r => ({ kind: r.kind, pieceId: idOf(r), ...(bidOf(r) ? { buildingId: bidOf(r) } : {}) });
 const shapes = ['terraces', 'hardscape', 'beds', 'edges', 'fence', 'fire_pit'];
 const free = ['planting', 'furniture', ...shapes];
-const rotate = (p, degrees) => {
-  const a = degrees * Math.PI / 180;
-  return [p[0] * Math.cos(a) - p[1] * Math.sin(a), p[0] * Math.sin(a) + p[1] * Math.cos(a), ...p.slice(2)];
-};
-const world = (b, p) => rotate(p, b?.rotation || 0).map((v, i) => v + (b?.position?.[i] || 0));
-const local = (b, p) => rotate(p.map((v, i) => v - (b?.position?.[i] || 0)), -(b?.rotation || 0));
 const centre = points => [0, 1].map(i => (Math.min(...points.map(p => p[i])) + Math.max(...points.map(p => p[i]))) / 2);
 const fields = (p, names) => Object.fromEntries(names.filter(k => p[k] !== undefined).map(k => [k, clone(p[k])]));
 const without = (p, names) => Object.fromEntries(Object.entries(p).filter(([k]) => !names.includes(k)));
@@ -104,21 +99,6 @@ function translated(p, by) {
   for (const k of ['at', 'aim']) if (Array.isArray(next[k])) next[k] = next[k].map((v, i) => v + (by[i] || 0));
   for (const k of ['polygon', 'points', 'polyline', 'path']) if (next[k]) next[k] = next[k].map(p => p.map((v, i) => v + (by[i] || 0)));
   return next;
-}
-
-function hostedAt(b, host, at) {
-  if (host.ground) return { ...host, at: at.slice(0, 2) };
-  if (host.wall || host.roof) {
-    const w = b.walls.find(w => w.id === host.wall), roof = b.roofs?.find(r => r.id === host.roof);
-    const a = w?.from || roof?.area?.[host.edge], z = w?.to || roof?.area?.[(host.edge + 1) % roof.area.length];
-    if (!a || !z) throw new Error('The original host is gone. Choose a surface first.');
-    const d = z.map((v, i) => v - a[i]), n = Math.hypot(...d);
-    return { ...host, at: d.reduce((sum, v, i) => sum + v * (at[i] - a[i]) / n, 0) };
-  }
-  const room = b.rooms.find(r => r.id === (host.floor || host.ceiling));
-  if (!room || !contains(room.polygon, at)) throw new Error('The copied piece does not fit on that floor.');
-  const lo = [0, 1].map(i => Math.min(...room.polygon.map(p => p[i]))), hi = [0, 1].map(i => Math.max(...room.polygon.map(p => p[i])));
-  return { ...host, u: (at[0] - lo[0]) / (hi[0] - lo[0]), v: (at[1] - lo[1]) / (hi[1] - lo[1]) };
 }
 
 // No persistence: one instance belongs to the mounted editor, across its floors

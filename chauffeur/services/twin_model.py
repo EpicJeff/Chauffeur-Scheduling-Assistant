@@ -427,15 +427,28 @@ def _host_error(host, building):
 
 
 def _pieces(building, notes):
+    from services.twin_model_supports import normalize_support, normalize_host
     roofs = _list(building, 'roofs', notes, 'roof')
     for roof in roofs:
+        normalize_support(roof, notes)
         edges = roof.get('edges')
         if (not twin_plan._polygon(roof.get('area')) or not isinstance(edges, list)
                 or len(edges) != len(roof['area'])
                 or not all(isinstance(e, dict) and e.get('setting') in ('sloped', 'gable', 'clip')
-                           and twin_plan._numeric_fields(e, ('pitch', 'clip')) for e in edges)
+                           and twin_plan._numeric_fields(e, ('pitch', 'clip'))
+                           and ('gutter' not in e or type(e['gutter']) is bool)
+                           and (not e.get('gutter') or e['setting'] == 'sloped')
+                           and ('downspouts' not in e or twin_plan._downspout_fractions(e['downspouts']))
+                           and ('gutter_ack' not in e or twin_plan._gutter_ack(e['gutter_ack']))
+                           for e in edges)
                 or not all(twin_plan._number(roof.get(k)) for k in ('plate', 'overhang'))):
             _note(roof, 'Roof', 'invalid area, edges or dimensions', notes)
+        else:
+            normalize_host(roof, building, notes)
+    for piece in [*building.get('porches_detail', []),
+                  *(e for e in building.get('extensions', []) if e.get('kind') == 'awning')]:
+        if isinstance(piece, dict):
+            twin_plan._gutter_flag(piece, notes)
     walls = {w['id']: w for w in building['walls']}
     roof_ids = {r['id']: r for r in roofs}
     for opening in _list(building, 'openings', notes, 'opening'):
@@ -643,6 +656,11 @@ def normalize(model: dict, *, persist_t_splits=True, preserve_room_polygons=Fals
                 notes.append(f"Room {room['id']}: defaulted invalid floor_offset_ft to 0.")
                 value = 0
             room['floor_offset_ft'] = value
+        if any(e.get('kind') in ('awning', 'shed_continuation') for e in building.get('extensions', [])):
+            from services.twin_awning_migration import migrate_awnings
+            migrated, migration_notes = migrate_awnings({'schema': SCHEMA, 'materials': model.get('materials', {}), 'buildings': [building]})
+            building = migrated['buildings'][0]
+            notes.extend(migration_notes)
         _pieces(building, notes)
         twin_plan._item_slots(building, notes)
         twin_plan._surface_slots(building, notes)

@@ -8,6 +8,7 @@ from collections import Counter
 import math
 
 from services import twin_plan
+from services.twin_model_supports import is_supported
 
 
 _EPS = 1e-9
@@ -219,7 +220,8 @@ def _meeting(a, b):
 
 
 def _roof(building, counts, pinned):
-    sections = [s for s in building.get('roof', {}).get('sections', []) if s.get('state') != 'ghost']
+    sections = [s for s in building.get('roof', {}).get('sections', [])
+                if s.get('state') != 'ghost' and not is_supported(s)]
     for section in sections:
         if _person(section, pinned):
             continue
@@ -430,7 +432,8 @@ def _bounds(building):
     if not points:
         points = [p for level in building.get('levels', []) for p in level.get('outline') or []]
     if not points:
-        points = [s['rect'][i:i + 2] for s in building.get('roof', {}).get('sections', []) for i in (0, 2)]
+        points = [s['rect'][i:i + 2] for s in building.get('roof', {}).get('sections', [])
+                  if not is_supported(s) for i in (0, 2)]
     return [min((p[i] for p in points), default=0) for i in (0, 1)] + [
         max((p[i] for p in points), default=0) for i in (0, 1)]
 
@@ -526,7 +529,8 @@ def report(building: dict) -> list[str]:
             name = level.get('name') or 'floor'
             add(f'1 outside corner on the {name} does not meet.',
                 f'{{count}} outside corners on the {name} do not meet.', corners)
-    sections = [s for s in building.get('roof', {}).get('sections', []) if s.get('state') != 'ghost']
+    sections = [s for s in building.get('roof', {}).get('sections', [])
+                if s.get('state') != 'ghost' and not is_supported(s)]
 
     def internal(section, edge):
         axis, line, start, end = edge

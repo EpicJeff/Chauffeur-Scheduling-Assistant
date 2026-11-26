@@ -277,8 +277,17 @@ def _check_whole_house(house, label):
     check(len(house.get('porches') or []) == 1 and len(house['porches'][0].get('columns') or []) == 4,
           (label, house.get('porches')))
     check(len(house.get('stairs') or []) == 1, (label, house.get('stairs')))
-    extensions = house['roof'].get('extensions') or []
-    check(len(extensions) == 1 and extensions[0].get('wall'), (label, 'snap attached the awning', extensions))
+    awnings = [s for s in sections if s.get('support')]
+    check(not house['roof'].get('extensions') and len(awnings) == 1 and awnings[0].get('host'),
+          (label, 'the ordinary awning remains attached', awnings))
+    shade = awnings[0]
+    source = spike()['building']['roof']['extensions'][0]
+    check((shade['kind'], shade['support']['kind'], shade['support']['count'],
+           shade.get('thickness_ft'), shade.get('fascia')) == ('shed', 'bracket', source['brackets'], .3, False),
+          (label, 'the awning keeps its ordinary slab and bracket record', shade))
+    host = next((w for w in house['walls'] if w['id'] == awnings[0]['host']['wall']), None)
+    check(host is not None and host['level'] == awnings[0]['level'],
+          (label, 'the awning keeps an existing host on its own floor', awnings[0], host))
     for piece in [*_wall_runs(house['walls']), *house['openings'], *sections]:
         if piece.get('src', {}).get('step') != 'draft_rooms':
             allowed = ('draft', 'roof_blocks') if piece in sections else ('draft',)

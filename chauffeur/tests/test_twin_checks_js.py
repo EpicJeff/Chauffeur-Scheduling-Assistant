@@ -121,6 +121,11 @@ await test('queue_merges_pause_flags_and_proposals', async () => {
   assert.deepEqual(queue.filter(i => i.kind === 'proposal').map(i => [i.building, i.id]), [[B, proposal.id]], 'the proposal');
   assert.deepEqual(queue.map(i => i.kind), ['pause', ...flagRows.map(() => 'flag'), 'proposal'], 'pause, then flags, then proposals');
   assert.equal(key(checks.current()), 'pause:fit', 'the pause shows first');
+  const card = document.getElementById('check-card');
+  assert.equal(card.querySelector('header'), null, 'the existing pause layout stays unchanged');
+  assert.equal(card.children[0].tagName, 'H3');
+  assert.equal(card.children[1].getAttribute('aria-label'), 'Close check');
+  assert.equal(card.children[2].textContent, build.pause.why, 'the pause still shows its reason once');
 
   // One check at a time, with its actions.
   button('Looks right'); button('Fix it'); button('Skip for now');

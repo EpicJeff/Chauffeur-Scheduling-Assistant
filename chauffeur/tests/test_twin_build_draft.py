@@ -317,7 +317,7 @@ def test_draft_settles_all_at_once():
     problems, block_ids = _block_roofs_cover(house)
     check(not problems, ('one settled block roof over every block', problems))
     read_roofs = [s for s in house['roof']['sections'] if s['id'] not in block_ids
-                  and (s.get('src') or {}).get('step') != 'roof_blocks']
+                  and (s.get('src') or {}).get('step') != 'roof_blocks' and not s.get('support')]
     check(len(read_roofs) == 3 and {tuple(s.get('read_geometry', {}).get('rect', s['rect'])) for s in read_roofs}
           == {tuple(s['rect']) for s in spike()['building']['roof']['sections'] if s['id'] not in main_roofs},
           ('the three porch roofs are in the plan as read', [s['rect'] for s in read_roofs]))
@@ -337,8 +337,17 @@ def test_draft_settles_all_at_once():
              for w in _wall_runs(house['walls'])}
     check((0, 14, 23, 14) in walls and (70, 22, 70, 42) in walls, ('walls keep their feet', sorted(walls)[:6]))
     # The snap pass ran on the settle: the awning hangs from its wall.
-    extensions = house['roof'].get('extensions') or []
-    check(len(extensions) == 1 and extensions[0].get('wall'), ('snap attached the awning', extensions))
+    awnings = [s for s in house['roof']['sections'] if s.get('support')]
+    check(not house['roof'].get('extensions') and len(awnings) == 1 and awnings[0].get('host'),
+          ('the migrated awning remains attached as an ordinary roof', awnings))
+    shade = awnings[0]
+    source = spike()['building']['roof']['extensions'][0]
+    check((shade['kind'], shade['support']['kind'], shade['support']['count'],
+           shade.get('thickness_ft'), shade.get('fascia')) == ('shed', 'bracket', source['brackets'], .3, False),
+          ('the awning keeps its ordinary slab and bracket record', shade))
+    host_wall = next((w for w in house['walls'] if w['id'] == awnings[0]['host']['wall']), None)
+    check(host_wall is not None and host_wall['level'] == awnings[0]['level'],
+          ('the awning follows an existing wall on its floor', awnings[0], host_wall))
 
 
 def test_draft_images_whole_pages_and_photos():

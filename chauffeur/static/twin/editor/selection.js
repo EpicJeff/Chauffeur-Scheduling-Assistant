@@ -1,7 +1,11 @@
+import { allPorches } from '../gutter_presence.js';
+
 // Selection store (Ruling 1): ordered list of piece references (last-added = primary()),
 // with strict no-op guards and a member-only onChange/subscribe payload.
 // Room-focus navigation lives in createRoomSelection (kept compatible with callers
 // passing `{ view, getModel }` to createSelection).
+import { porchPosts, postRef } from '../porch_posts.js';
+
 function refKey(ref) {
   if (!ref) return null;
   const pieceId = ref.pieceId ?? ref.id ?? null;
@@ -21,6 +25,7 @@ function normalizeRef(ref) {
   if (ref.slots !== undefined) out.slots = Array.isArray(ref.slots) ? [...new Set(ref.slots)] : ref.slots;
   if (ref.entity_id !== undefined) out.entity_id = ref.entity_id;
   if (ref.poolId !== undefined) out.poolId = ref.poolId;
+  if (ref.porchId !== undefined || ref.parentPieceId !== undefined) out.porchId = ref.porchId ?? ref.parentPieceId;
   return out;
 }
 
@@ -174,11 +179,12 @@ function toViewPick(ref) {
   };
   if (ref.entity_id !== undefined) out.entity_id = ref.entity_id;
   if (ref.poolId !== undefined) out.poolId = ref.poolId;
+  if (ref.porchId !== undefined || ref.parentPieceId !== undefined) out.porchId = ref.porchId ?? ref.parentPieceId;
   return out;
 }
 
 // Room-focus and hover controller for the 3D view.
-export function createRoomSelection({ view, getModel, onChange, onSync, getMembers } = {}) {
+export function createRoomSelection({ view, getModel, getPlan, onChange, onSync, getMembers } = {}) {
   let selected = null, room = null, hovered = null, ghosted = 0;
   let walls = [], allowed = [];
 
@@ -187,11 +193,24 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     id: pick.id ?? pick.pieceId ?? null,
     building: pick.building ?? pick.buildingId ?? null,
     level: pick.level ?? null,
+    ...(pick.porchId !== undefined || pick.parentPieceId !== undefined ? { porchId: pick.porchId ?? pick.parentPieceId } : {}),
   };
-  const building = id => getModel?.()?.buildings?.find(b => b.id === id);
+  const building = id => getModel?.()?.buildings?.find(b => b.id === id) || getPlan?.()?.buildings?.find(b => b.id === id);
 
   function roomContext(pick) {
-    const b = building(pick.building), r = b?.rooms?.find(r => r.id === pick.id);
+    const b = building(pick.building);
+    if (pick.kind === 'level' && b?.levels?.some(l => l.id === pick.id)) {
+      const ids = new Set([pick.id, ...(view?.levelFocusMembers?.(b.id, pick.id) || [])]);
+      for (const list of ['walls', 'rooms', 'joints', 'fixtures', 'lights', 'stairs', 'awnings', 'porches', 'solar_zones'])
+        for (const p of b[list] || []) if (p.level === pick.id) ids.add(p.id);
+      for (const post of porchPosts(b)) if ((b.rooms?.find(r=>r.id===post.porchId)?.level || post.porch.level || b.levels[0]?.id) === pick.id) ids.add(post.id);
+      for (const detail of b.porches_detail || []) if ((b.rooms?.find(r=>r.id===detail.id)?.level || detail.level || b.levels[0]?.id) === pick.id)
+        for (let i=0;i<(detail.columns || []).length;i++) ids.add(postRef(detail,i));
+      for (const list of ['openings', 'anchors', 'items']) for (const p of b[list] || [])
+        if (p.level === pick.id || ids.has(p.wall || p.host?.wall || p.host?.floor || p.host?.ceiling)) ids.add(p.id);
+      return { kind: 'level', id: pick.id, building: b.id, level: pick.id, walls: [], allowed: [...ids] };
+    }
+    const r = [...(b?.rooms || []), ...allPorches(b || {})].find(r => r.id === pick.id);
     if (!r) return null;
     const cycle = r.joints || [];
     const pairs = new Set(cycle.map((id, i) => [id, cycle[(i + 1) % cycle.length]].sort().join('\n')));
@@ -201,13 +220,20 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     for (const collection of ['openings', 'anchors', 'items']) for (const piece of b[collection] || []) {
       if (ids.has(piece.wall) || belongs(piece.host)) ids.add(piece.id);
     }
+    const sources = [getModel?.()?.buildings?.find(x => x.id === pick.building), getPlan?.()?.buildings?.find(x => x.id === pick.building)].filter(Boolean);
+    for (const src of sources) {
+      for (const post of porchPosts(src)) if (post.porchId === r.id) ids.add(post.id);
+      for (const detail of src.porches_detail || []) {
+        if (detail?.id === r.id) for (let i = 0; i < (detail.columns || []).length; i++) ids.add(postRef(detail, i));
+      }
+    }
     return {
-      kind: 'room', id: r.id, building: b.id, level: r.level,
+      kind: pick.kind === 'porch' || !b.rooms?.includes(r) ? 'porch' : 'room', id: r.id, building: b.id, level: r.level || b.levels?.[0]?.id,
       walls: boundary.map(w => w.id), allowed: [...ids],
     };
   }
 
-  const inside = pick => !room || (pick && (pick.buildingId ?? pick.building ?? null) === room.building && allowed.includes(pick.pieceId ?? pick.id));
+  const inside = pick => !room || (pick && (pick.buildingId ?? pick.building ?? null) === room.building && (allowed.includes(pick.pieceId ?? pick.id) || allowed.includes(pick.parentPieceId ?? pick.porchId)));
   const clearRoom = () => { room = null; walls = []; allowed = []; };
 
   function paint() {
@@ -229,6 +255,7 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
       buildingId: selected?.building ?? null,
       level: selected?.level ?? null,
       room: room?.id ?? null,
+      focusKind: room?.kind ?? null,
       ghosted,
       tinted: { floor: room?.id ?? null, walls: [...walls] },
       hover: hovered && { ...hovered },
@@ -252,11 +279,16 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     const pick = typeof id === 'object' ? normalize(id) : { id, building: buildingId };
     const context = pick && roomContext(pick);
     if (!context) { clear(); return; }
-    room = { kind: 'room', id: context.id, building: context.building, level: context.level };
+    room = { kind: context.kind, id: context.id, building: context.building, level: context.level };
     walls = context.walls; allowed = context.allowed;
     selected = { ...room };
     hovered = null;
     changed(true);
+  }
+
+  function leaveRoom() {
+    if (!room) return;
+    selected = { ...room }; clearRoom(); hovered = null; changed(true);
   }
 
   function back() {
@@ -267,9 +299,17 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
 
   function select(value) {
     const pick = normalize(value);
+    if (pick && room && pick.kind !== 'proposal' && !inside(pick) && pick.building === room.building) {
+      const context = roomContext(room);
+      if (context) { walls = context.walls; allowed = context.allowed; }
+    }
     if (!pick || pick.kind !== 'proposal' && !inside(pick)) { back(); return; }
-    if (pick.kind === 'room') { focusRoom(pick); return; }
     if (['building', 'level', 'proposal'].includes(pick.kind)) clearRoom();
+    if (['room', 'porch'].includes(pick.kind) && !pick.level) {
+      const b = building(pick.building);
+      pick.level = [...(b?.rooms || []), ...allPorches(b || {})].find(r => r.id === pick.id)?.level ?? b?.levels?.[0]?.id ?? null;
+    }
+    if (pick.kind === 'level') pick.level = pick.id;
     selected = pick;
     hovered = null;
     changed(true);
@@ -301,5 +341,5 @@ export function createRoomSelection({ view, getModel, onChange, onSync, getMembe
     changed(false);
   }
 
-  return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, back, refresh };
+  return { hover, select, clear, clearRoom, inside, sync, current, focusRoom, leaveRoom, back, refresh };
 }

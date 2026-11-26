@@ -521,7 +521,43 @@ weatherWorld=instanceMatrix*weatherWorld;
 vWeatherWorld=(modelMatrix*weatherWorld).xyz;`;
   THREE.ShaderChunk.lights_pars_begin=WEATHER_GLSL+THREE.ShaderChunk.lights_pars_begin;
   THREE.ShaderChunk.normal_fragment_maps+=APPLY;
-  THREE.ShaderChunk.lights_fragment_maps+='\n#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)\n#ifdef REFLECTION_PROBE_GROUND\nradiance*=mix(weatherHorizonDamp,1.0,probeActive);\n#else\nradiance*=weatherHorizonDamp;\n#endif\n#endif\n';
+  THREE.ShaderChunk.lights_fragment_maps+=`
+#if defined(WEATHER_SURFACE_ACTIVE)&&!defined(WEATHER_SURFACE_WATER)&&!defined(WEATHER_SURFACE_SUBMERGED)&&defined(USE_FOG)&&defined(STAGE_HAZE_RING)
+{
+  #if ( NUM_HEMI_LIGHTS > 0 )
+  float covUp=dot(geometryNormal,hemisphereLights[0].direction);
+  #else
+  float covUp=dot(geometryNormal,viewMatrix[1].xyz);
+  #endif
+  float cov=clamp(1.0-vWeatherOpen,0.0,1.0)*clamp(covUp*2.0-.4,0.0,1.0)*clamp(1.0-stageRing[5].w,0.0,1.0);
+  #if defined(RE_IndirectDiffuse)&&( NUM_HEMI_LIGHTS > 0 )
+  float covW=cov*(.5*covUp+.5);
+  irradiance.x+=stageRing[6].w*covW;
+  irradiance.y+=stageRing[7].w*covW;
+  irradiance.z+=stageRing[8].w*covW;
+  #endif
+  #ifdef USE_ENVMAP
+  float covIbl=1.0-.7*cov;
+  #ifdef RE_IndirectDiffuse
+  iblIrradiance*=covIbl;
+  #endif
+  #ifdef RE_IndirectSpecular
+  radiance*=covIbl;
+  #ifdef USE_CLEARCOAT
+  clearcoatRadiance*=covIbl;
+  #endif
+  #endif
+  #endif
+}
+#endif
+#if defined(RE_IndirectSpecular)&&defined(WEATHER_SURFACE_ACTIVE)
+#ifdef REFLECTION_PROBE_GROUND
+radiance*=mix(weatherHorizonDamp,1.0,probeActive);
+#else
+radiance*=weatherHorizonDamp;
+#endif
+#endif
+`;
 }
 
 function patchLit(mode,instanceExposure=false) {

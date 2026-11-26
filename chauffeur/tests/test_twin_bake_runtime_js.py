@@ -924,7 +924,7 @@ await check('lease_401_pauses_until_resume_and_progress_counts_whole_house', asy
     const count=server.calls.length;await sleep(150);assert.equal(server.calls.length,count,'poll does not retry a signed-out tab');
     hold=new Promise(resolve=>{release=resolve;});
     const resumed=desk.controller.resume();
-    await until(()=>desk.controller.state().baking&&outputOf(desk).textContent==='Baking lights 3 of 5','three completed, two left');
+    await until(()=>desk.controller.state().baking&&outputOf(desk).textContent==='Baking lights 3 of 5 · Grid 18356 points','three completed, two left');
     assert.equal(desk.controller.state().done,3);assert.equal(desk.controller.state().total,5);
     release();await resumed;
     assert.deepEqual(desk.controller.state().baked,['k1','k2','k3','h1','c1']);

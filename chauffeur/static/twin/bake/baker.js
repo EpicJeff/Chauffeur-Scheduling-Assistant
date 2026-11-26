@@ -1,17 +1,33 @@
-import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint } from './atlas.js';
+import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint, atlasMesh } from './atlas.js';
 import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } from './bake_pass.js';
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
-import { reachLights } from './reach.js';
+import { reachLights, lightSource } from './reach.js';
+import { placedCopies, occluderHash } from './model_occluders.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 import { matchesEntry, cheapSignatures } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
+import { gridLayout, gridPoints, pointsInRange, maskGridIndices, GRID_INVALID, GRID_MASK_RULE } from './grid_layout.js';
+import { createGridAccumulator } from './grid_pass.js';
+import { encodeGridChunk, decodeGridChunk, MAX_CHUNK_BYTES } from './grid_chunk.js';
+import * as THREE from '../../vendor/three-r187/three.module.js';
+import { collectStaticOccluders, buildOccluderBVH } from '../live/cone_occluder.js';
+import { emitterTable, chooseEmitters } from './model_bricks.js';
 
 export { encodePage, decodePage } from './codec.js';
 
 export function lightKey(atlas, light, slot, bank) {
+  return lampKey(atlas, light, slot, true);
+}
+
+export function gridKey(atlas, light, slot, bank) {
+  return lampKey(atlas, light, slot, false);
+}
+
+function lampKey(atlas, light, slot, models) {
   const hash=fingerprint();
-  // Fixture pages use the new layout; unsigned legacy shadowmasks keep main's keys.
+  // The grid sees receiving geometry only; pages also see placed occluders.
   hash.add(JSON.stringify([light.signature ? 'light-slots-9' : 'light-slots-8',light.reach || atlas.key,light.device,light.at,
+    ...(models ? [light.occluders || ''] : ['grid-mask-2', GRID_MASK_RULE]),
     ...(light.signature ? ['fixtures-2', light.signature, ...(light.kind === 3 ? [] : [null])] : [])]));
   if (slot.assignments) {
     const ranking=[...slot.assignments].sort((a,b)=>a.chartKey<b.chartKey?-1:a.chartKey>b.chartKey?1:0), rank=new Uint8Array(2);
@@ -34,9 +50,11 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     // a rebuild of every light; none of its published channels can be trusted.
     prior = new Map(); ownershipReset = true; published = {};
   }
-  lights = reachLights(atlas.room, lights).map(l => l.kind === 3 ? {...l,
-    scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
-      ? published[l.device].scale : undefined} : l);
+  const copies = placedCopies(atlas.room.plan);
+  lights = reachLights(atlas.room, lights).map(l => ({...l,
+    occluders: occluderHash(copies, lightSource(atlas.room.plan, l).source, l.range),
+    ...(l.kind === 3 ? {scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
+      ? published[l.device].scale : undefined} : {})}));
   const slots = assignChannels(atlas.room.rooms, lights, prior), banks = atlas.room.packBanks(lights, slots);
   let offset = 0;
   // Geometry reserves a fixed address stride, even when its trailing pages are
@@ -65,6 +83,8 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     entries[light.device] = { page: pages[0], pages, channel: s.channel,
       ...(light.kind === 3 ? {scale: light.scale} : {}),
       location: location.key(),
+      grid: gridKey(atlas, light, s, banks[s.bank]),
+      gridRule: GRID_MASK_RULE,
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
   return { lights, slots, banks, offsets, entries, pages: offset,
@@ -90,7 +110,8 @@ async function exists(api, url) {
 }
 
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
-  round = view.round ?? null, lighting = view.lighting ?? null, owner = null, damaged = [], inspectLegacy = false }) {
+  round = view.round ?? null, lighting = view.lighting ?? null, owner = null, damaged = [], inspectLegacy = false,
+  onGrid = () => {}, damagedGrids = [] }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
   const inputLights = lights; // reachLights adds derived, metre-valued ranges.
   const inputs = keyInputs(view);
@@ -100,6 +121,28 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
   const who = owner || [...globalThis.crypto.getRandomValues(new Uint32Array(4))].map(x => x.toString(16)).join('');
   let cancelled = false, manifest = null, busy = false;
   let checkpoint = async () => {};
+  let runGridLayout = null, grid = {points: 0, bytes: 0, ms: 0, maskMs: 0, foldedOrDropped: 0};
+  const gridCache = new Map();
+  const gridReceipts = new Map();
+  const missingGrids = new Set(damagedGrids);
+  const runChunks = new Map();
+  const runGrids = new Map();
+  let statsWarned = false;
+  // Geometry alone defines the layout; validity is cached lazily per light.
+  function gridData() {
+    runGridLayout ||= gridLayout(plan);
+    const cached = gridCache.get(runGridLayout.hash);
+    if (cached) return cached;
+    const start = performance.now(), points = gridPoints(runGridLayout);
+    const root = view.bake?.occlusionRoot?.() || view.scene;
+    const meshes = collectStaticOccluders(root, bakeView).filter(o =>
+      atlasMesh(o) && o.material.name !== 'glass' && !o.geometry?.userData.bakeHeightfield);
+    const bvh = buildOccluderBVH(meshes, null, {facing:true});
+    const bvhMs = performance.now() - start;
+    const data = {layout: runGridLayout, points, bvh, mask: new Uint8Array(runGridLayout.count), bvhMs};
+    gridCache.set(runGridLayout.hash, data);
+    return data;
+  }
   const api = async (url, init) => {
     await checkpoint();
     const writing = ['POST', 'PUT'].includes(init?.method);
@@ -151,11 +194,20 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     const response = await api(path);
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Could not read the bake manifest (HTTP ${response.status}).`);
-    return response.json();
+    const stored = await response.json();
+    // Another stale light's page entry can be pruned while this run advances;
+    // its previously published grid still exists and remains reusable.
+    for (const e of Object.values(stored.lights || {})) if (e.grid && e.gridLayout && e.gridRule === GRID_MASK_RULE && !missingGrids.has(e.grid)) gridReceipts.set(e.grid, e.gridLayout);
+    return stored;
   };
-  const isStale = device => packed.entries[device] && (
+  const pagesStale = device => packed.entries[device] && (
     lights.find(l => l.device === device)?.kind === 3 && !(packed.entries[device].scale > 0) ||
     (activeForce && manifest.lights[device]?.forceRound !== activeForce) || !matchesEntry(packed.entries[device], manifest.lights[device]));
+  const isStale = device => pagesStale(device) || packed.entries[device] && (
+    missingGrids.has(packed.entries[device].grid) ||
+    manifest.lights[device]?.gridRule !== GRID_MASK_RULE ||
+    manifest.lights[device]?.grid !== packed.entries[device].grid ||
+    manifest.lights[device]?.gridLayout !== (runGridLayout ||= gridLayout(plan)).hash);
   const ready = enabled ? readManifest().then(async m => {
     await view.bake?.idle?.();
     if (!valid()) return;
@@ -240,6 +292,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     const stale = lights.filter(l => isStale(l.device)).map(l => l.device), id = stale[0];
     if (!id) return null;
     const light = lights.find(l => l.device === id), s = packed.slots[id];
+    const gridOnly = !pagesStale(id);
     const size = layout.room.page;
     const owned=new Map(s.assignments?.map(a=>[a.chart,a]));
     const charts = packed.banks.flatMap(bank=>bank.charts.flatMap(c=>{
@@ -249,19 +302,65 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     }));
     const pages = [...new Set(charts.map(c => c.page))];
     const uploads = [], rendered = [];
-    for (const p of pages) {
-      const page = p;
-      const mine = charts.filter(c => c.page === p);
-      // A live/manifest read can span the start of an editor gesture. Check
-      // again before even clearing a render target, as well as between samples.
-      await view.bake?.idle?.();
-      if (!valid()) return null;
-      const pixels = await renderPage(bakeView, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true, checkpoint});
-      await checkpoint();
-      if (!valid()) return null;
-      rendered.push({page, charts:mine, ...(light.kind === 3 ? pixels : {bytes:pixels})});
-    }
-    if (light.kind === 3) {
+    const entry = packed.entries[id];
+    runGridLayout ||= gridLayout(plan);
+    const existingGrid = !activeForce && gridReceipts.get(entry.grid) === runGridLayout.hash;
+    let gridUpload = null, accumulator = null, data = null, indices = null;
+    let lightGrid = {points: 0, bytes: 0, ms: 0, maskMs: 0, foldedOrDropped: 0};
+    try {
+      if (entry.grid && !existingGrid) {
+        await view.bake?.idle?.();
+        if (!valid()) return null;
+        data = gridData();
+        const {source, range} = lightSource(plan, light);
+        indices = pointsInRange(data.layout, data.points, source, range);
+        const measured = await maskGridIndices(data.points, data.bvh, data.layout, indices, data.mask, async () => {
+          await checkpoint();
+          if (view.bake?.state?.().paused || view.ready === false || view.yardSettling) await view.bake?.idle?.();
+          if (!valid()) throw new Error('The bake round changed.');
+        });
+        lightGrid = {points: indices.length, bytes: 0, ms: 0, foldedOrDropped: 0, ...measured, bvhMs: data.bvhMs};
+        data.bvhMs = 0;
+        const start = performance.now();
+        accumulator = createGridAccumulator(renderer, data.points, indices, light.emitters?.length || 1);
+        lightGrid.ms += performance.now() - start;
+      }
+      if (lightGrid.points) grid = {...lightGrid};
+      onGrid({...grid});
+      for (const [pageIndex, p] of pages.entries()) {
+        if (gridOnly && !accumulator) break;
+        if (gridOnly && pageIndex > 0) break;
+        const page = p;
+        const mine = charts.filter(c => c.page === p);
+        // A live/manifest read can span the start of an editor gesture. Check
+        // again before even clearing a render target, as well as between samples.
+        await view.bake?.idle?.();
+        if (!valid()) return null;
+        const onSample = accumulator && pageIndex === 0 ? (texture, sample, far) => {
+          const start = performance.now();
+          accumulator.sample(texture, sample.source, far, sample.emitter ?? 0, sample.visibilityWeight ?? sample.weight);
+          lightGrid.ms += performance.now() - start;
+        } : null;
+        const pixels = await renderPage(bakeView, renderer, mine, size, light, layout, atlas, {deferBounce:true, deferSumEncoding:true, checkpoint, onSample});
+        await checkpoint();
+        if (!valid()) return null;
+        if (!gridOnly) rendered.push({page, charts:mine, ...(light.kind === 3 ? pixels : {bytes:pixels})});
+      }
+      if (accumulator) {
+        const start = performance.now(), values = accumulator.read(), emitters = light.emitters?.length || 1;
+        for (let i = 0; i < indices.length; i++) if (data.mask[indices[i]] === 2) values.fill(GRID_INVALID, i * emitters, (i + 1) * emitters);
+        lightGrid.ms += performance.now() - start;
+        gridUpload = await encodeGridChunk({layoutHash: data.layout.hash, device: id, emitters, indices, values});
+        if (gridUpload.length > MAX_CHUNK_BYTES) throw new Error('Grid chunk exceeds 8 MiB.');
+        if (gridUpload[0] !== 0x1f || gridUpload[1] !== 0x8b) throw new Error('Grid compression is unavailable.');
+        lightGrid.bytes = gridUpload.length;
+        runChunks.set(id, {indices, values, emitters});
+        entry.gridLayout = data.layout.hash;
+      } else if (existingGrid) entry.gridLayout = runGridLayout.hash;
+      if (lightGrid.points) grid = {...lightGrid};
+      onGrid({...grid});
+    } finally { accumulator?.dispose(); }
+    if (light.kind === 3 && !gridOnly) {
       const scale = await encodeSumPages(rendered, size);
       if (!valid()) return null;
       light.scale = scale;
@@ -269,7 +368,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       packed.entries[id].scale = light.scale;
     }
     // The room fill travels in the manifest entry; the pages hold visibility only.
-    const fill = roomFills(rendered, size, light);
+    const fill = gridOnly ? manifest.lights[id].fill : roomFills(rendered, size, light);
     for (const r of rendered) dilateCharts(r.bytes, r.charts, size);
     for (const {page, charts:mine, bytes:pixels} of rendered) {
       const channels = await pageData(page, size, 2);
@@ -303,7 +402,10 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         if (!r.ok) throw new Error('Could not preserve the later light bank.');
         moves.set(page, new Uint8Array(await r.arrayBuffer()));
       }
-      next.lights[device] = { ...expected, ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
+      // Untouched grids keep their published layout and rule until repaired.
+      next.lights[device] = { ...expected,
+        ...(expected.grid && expected.grid === entry.grid && entry.gridLayout ? {gridLayout: entry.gridLayout, gridRule: entry.gridRule} : {}),
+        ...(entry.forceRound ? { forceRound: entry.forceRound } : {}), ...(entry.fill ? { fill: entry.fill } : {}) };
     }
     for (const [page, bytes] of moves) uploads.push({ page, bytes });
     // Bank zero reserves unlit rooms too. Publish any missing reserved pages
@@ -335,10 +437,17 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         ...(saved.version ? { version: saved.version } : {}) };
     }
     if (!valid()) return null;
+    if (gridUpload) {
+      const r = await api(`${path}/grid/${entry.grid}.bin`, {method: 'POST', headers: {'Content-Type': 'application/octet-stream'}, body: gridUpload});
+      if (!r.ok) throw new Error('Could not save the light-visibility grid.');
+    }
+    if (!valid()) return null;
     const published = signed(next);
     const r = await api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(published) });
     if (!r.ok) throw new Error('Could not save the bake manifest.');
     manifest = published; assignmentHistory=packed.ownership; packed.ownershipReset=false; legacyPages.clear();
+    if (gridUpload) missingGrids.delete(entry.grid);
+    if (gridUpload) runGrids.set(id, {...lightGrid});
     unavailable.delete(id);
     return id;
   }
@@ -355,7 +464,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     } finally { busy = false; }
   }
   // Record that this round's bake is whole when nothing was left to bake (B15).
-  async function settle() {
+  async function settleManifest() {
     await ready;
     if (!enabled || !valid() || lights.some(l => isStale(l.device))) return false;
     if (manifest.round === round && manifest.complete === true && !unsigned(manifest) && !legacyPages.size) return false;
@@ -387,8 +496,54 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
       return true;
     });
   }
-  return { staleLights, bakeNext, settle, forcePending: () => forcePending, cancel() { cancelled = true; }, progress: () => ({
+  async function settle() {
+    try {
+      const result = await settleManifest();
+      if (enabled && manifest && packed && valid()) {
+        try {
+          const copies = placedCopies(plan);
+          if (runGrids.size || copies.length) {
+            runGridLayout ||= gridLayout(plan);
+            const totals = {points:0, bytes:0, ms:0, maskMs:0, foldedOrDropped:0};
+            for (const g of runGrids.values()) for (const k of ['points', 'bytes', 'ms', 'maskMs']) totals[k] += g[k] || 0;
+            // Stats use plan placement centres (metres); loaded viewer mesh bounds
+            // are unavailable in the editor's display:false bake.
+            // A partial rebake can still fold against lamps reused from storage.
+            for (const l of copies.length ? lights : []) {
+              const e = manifest.lights[l.device];
+              if (runChunks.has(l.device) || !e?.grid || isStale(l.device)) continue;
+              const r = await api(`${path}/grid/${e.grid}.bin`);
+              if (!r.ok) throw new Error('Could not read the light-visibility grid for model stats.');
+              const bytes = new Uint8Array(await r.arrayBuffer());
+              const chunk = await decodeGridChunk(bytes);
+              if (!valid()) return result;
+              if (chunk.device !== l.device || chunk.layoutHash !== runGridLayout.hash) throw new Error('Grid stats layout mismatch.');
+              runChunks.set(l.device, chunk);
+              if (!runGrids.size) { totals.points += chunk.indices.length; totals.bytes += bytes.length; }
+            }
+            const table = emitterTable(lights, new Set(runChunks.keys()), manifest, {plan});
+            for (const copy of copies) {
+              const centre = new THREE.Vector3(...copy.at);
+              const half = new THREE.Vector3(...copy.scale.map(v => Math.max(.01, Math.abs(v) * .1524)));
+              centre.y += half.y;
+              const box = new THREE.Box3(centre.clone().sub(half), centre.clone().add(half));
+              const chosen = chooseEmitters(box, table, {layout:runGridLayout, chunks:runChunks});
+              if (chosen.folded || chosen.dropped) totals.foldedOrDropped++;
+            }
+            grid = {...grid, ...totals};
+            onGrid({...grid});
+          }
+        } catch (error) {
+          if (!statsWarned) { statsWarned = true; console.warn('Model lighting stats unavailable:', error); }
+          if (valid()) { grid = {...grid, foldedOrDropped:0}; onGrid({...grid}); }
+        }
+      }
+      return result;
+    } finally { gridCache.clear(); gridReceipts.clear(); runChunks.clear(); runGrids.clear(); runGridLayout = null; }
+  }
+  return { staleLights, bakeNext, settle, forcePending: () => forcePending, cancel() { cancelled = true; gridCache.clear(); gridReceipts.clear(); runChunks.clear(); runGrids.clear(); runGridLayout = null; }, progress: () => ({
     done: packed && manifest ? lights.length - lights.filter(l => isStale(l.device)).length : 0,
     total: enabled ? lights.length : 0,
+    grid: {...grid},
   }) };
 }

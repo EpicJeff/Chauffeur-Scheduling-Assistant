@@ -24,7 +24,7 @@ PREFIX = PREFIX.replace("return url.startsWith('file:')", """
     let source=String(loaded.source);
     source=source.replace(/(function generateTwin\\([^\\n]+\\{)\\r?\\n/, '$1\\n globalThis.generations++;\\n');
     source=source.replace('function startBake() {', 'function startBake() { globalThis.bakeStarts++;');
-    source=source.replace('next.editableLevel = editableLevel;', 'next.editableLevel = editableLevel; globalThis.lastTwin = next;');
+    source=source.replace('next.editableLevel = null;', 'next.editableLevel = null; globalThis.lastTwin = next;');
     return {...loaded,format:'module',source};
   }
   return url.startsWith('file:')""")

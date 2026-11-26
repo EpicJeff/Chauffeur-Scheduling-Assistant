@@ -273,8 +273,23 @@ def test_gable_windows_settle():
 
 
 def test_awning_settles():
-    exts = build(1)['house']['roof'].get('extensions') or []
-    check(len(exts) == 1 and exts[0].get('state') != 'ghost', ('the one roof extension settles', exts))
+    house = build(1)['house']
+    awnings = [s for s in house['roof']['sections'] if s.get('support')]
+    check(not house['roof'].get('extensions') and len(awnings) == 1 and awnings[0].get('state') != 'ghost',
+          ('the one awning settles as an ordinary supported roof', awnings))
+    shade = awnings[0]
+    source = recorded('draft-main-house.json')['building']['roof']['extensions'][0]
+    check((shade['kind'], shade['support']['kind'], shade['support']['count'],
+           shade.get('thickness_ft'), shade.get('fascia')) == ('shed', 'bracket', source['brackets'], .3, False),
+          ('the recorded awning keeps its slab and bracket settings', shade))
+    rect = _read_rect(shade)
+    check(abs(rect[0]-source['x0']) < .01 and abs(rect[2]-source['x1']) < .01
+          and abs(rect[3]-rect[1]-source['depth']) < .01
+          and abs(shade['plate']-source['eave']) < .01 and abs(shade['pitch']-source['pitch']) < .01,
+          ('the recorded awning keeps its read span, depth, eave and slope', shade, source))
+    host = next((w for w in house['walls'] if w['id'] == shade.get('host', {}).get('wall')), None)
+    check(host is not None and host['level'] == shade['level'],
+          ('the recorded awning retains a host on its own floor', shade, host))
 
 
 def test_porch_roofs_kept():

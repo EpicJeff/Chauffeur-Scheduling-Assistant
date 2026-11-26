@@ -5,6 +5,7 @@ import { paverSettings, PAVER_DEFAULTS } from '../paver_layout.js';
 import { firePitOptions, roundPit } from '../fire_pits.js';
 import { EFFECT_TYPES } from '../effects/driver.js';
 import { porchFoundation } from '../twin_porch_foundation.js';
+import { POST_SIZE } from '../porch_posts.js';
 import { facingOptions } from './line_fixture_tool.js';
 import { facingNormal } from '../live/fixture_geometry.js';
 
@@ -218,6 +219,16 @@ export function selectionFields(plan, refs, { getModel = () => null, getFieldLab
         add(field, label, value, next => ({ op: 'update_stair', building: building.id, id: piece.id, [field]: next }),
           { type: choices ? 'select' : 'number', choices, parse: choices ? String : value => bounded(value, 2, 8) });
       }
+    }
+    if (kind === 'porch_post') {
+      add('size', 'Size (ft)', piece.size ?? POST_SIZE.fallback,
+        size => ({ op: 'update_porch_post', building: building.id, porch: record.porchId, post: piece.id, size }),
+        { type: 'text', format: v => String(Number(Number(v).toFixed(4))), parse: input => {
+          const value = parseLength(input);
+          if (!Number.isFinite(value) || value < POST_SIZE.min || value > POST_SIZE.max)
+            throw new Error(`Choose a post size from ${POST_SIZE.min} to ${POST_SIZE.max} feet.`);
+          return value;
+        } });
     }
     if (siteShapeKinds.includes(kind) || ['ledge', 'steps', 'spa', 'terraces'].includes(kind)) shapeFields(record, add);
     if (['light_fixture', 'effect_fixture'].includes(kind)) fixtureFields(record, add);

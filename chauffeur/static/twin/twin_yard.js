@@ -64,7 +64,7 @@ import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } f
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
-import { registerBakeSource } from './bake/source.js';
+import { bakeAuthoredMaterial, captureBakeMaterials, registerBakeSource } from './bake/source.js';
 import { groundAt, poolDatum, POOL_SEAT, buildingBase, buildingFootprint } from './twin_ground.js';
 import { span as editSpan } from './edit_timing.js';
 import { terrainGeometry, terrainSlabGeometry, drapeGeometry, tintGrade } from './twin_terrain_mesh.js';
@@ -366,7 +366,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
 // The whole-yard fast path is precisely the union of the part keys.
 export const yardKey = (plan, kit, tier, options) => JSON.stringify(yardPartKeys(plan, kit, tier, options));
 
-export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan), bakeSource = false } = {}) {
+export async function buildYard(plan, kit, tier, { viewing = false, materials = null, timing = null, previous = null, stage = defaultStage(plan), skyCover = createSkyCover(plan), bakeSource = false, modelSource = false, modelTier = tier } = {}) {
   const root = new THREE.Group(); root.name = 'yard';
   Object.defineProperty(root.userData, 'waterSurfaces', { value: [], writable: true });
   const keys = yardPartKeys(plan, kit, tier, { viewing, stage }), reused = new Map();
@@ -525,6 +525,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         mesh.geometry.userData.bakeExcluded = true;
         // Yard lights bake onto the ground (user, 2026-11-13): the atlas charts it top-down.
         mesh.geometry.userData.bakeHeightfield = true;
+        mesh.geometry.userData.bakeTerrainStep = tier === 'low' ? 2 : 1;
         tintGrade(mesh.geometry, false);
       }
       stopTerrain();
@@ -830,7 +831,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
           models.set(assetId, loadModel(assetId, kit, source => {
             if (root.userData.disposed) { disposeObject(source); return; }
             for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
-          }, { tier, editor: !viewing }));
+          }, { tier: modelTier, editor: !viewing }));
         }
         latePlacements.get(assetId).push(place);
         const source = await models.get(assetId);
@@ -879,6 +880,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   // carries userData.yardPart, and root.userData.yardPartKeys records each part's key.
   const previousKeys = previous?.userData.yardPartKeys || {};
   for (const name of YARD_PARTS) {
+    if (modelSource && name !== 'furniture') continue;
     if (bakeSource && ['plants', 'grass', 'furniture'].includes(name)) continue;
     if (previous && previousKeys[name] === keys[name]) {
       reused.set(name, previous.children.filter(o => o.userData.yardPart === name));
@@ -899,7 +901,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
       // Library map loads mutate their material. Clone only after all pool
       // finishes have resolved, so a first build keeps every late-loaded map.
       await Promise.all([...mats.values()].map(material => material.userData.ready));
-      for (const body of receiving.values()) if (tier === 'high' || tier === 'max') {
+      // Only receiving-material partitioning is canonical. Keep the caller's
+      // terrain grid, texture budget and nonreceiving content at its own tier.
+      for (const body of receiving.values()) if (bakeSource || tier === 'high' || tier === 'max') {
         const holes = body.id === poolBody?.id ? bodies.filter(b => b !== poolBody).map(b => b.polygon) : [];
         simulations.set(body.id, createWaterSimulation({...body, holes}));
       }
@@ -948,7 +952,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const moving = peers.filter(b => sourced.has(b.id));
         const regions = moving.length && peers.length > 1 ? peers.map(b => ({polygon:b.polygon,
           motion:sourced.get(b.id)?.uniforms.waterMotion || {value:new THREE.Vector3()}})) : [];
-        const key = 'underwater:' + source.uuid + ':' + tier + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height)
+        const key = 'underwater:' + source.uuid + ':' + (bakeSource ? 'bake' : tier) + ':' + (simulation ? body.id + ':' + sourced.get(body.id).material.uuid : body.height)
           + (moving.length ? ':chop:' + moving.map(b => sourced.get(b.id).material.uuid).join(':') : '');
         let material = mats.get(key);
         if (!material) {
@@ -1033,7 +1037,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     // keeping only the tree and plant-card caches that later builds reuse by key; the
     // previous yard's release then frees the dropped ones.
     const used = new Set();
-    root.traverse(o => { for (const m of o.material ? [].concat(o.material) : []) used.add(m); });
+    root.traverse(o => { for (const m of o.material ? [].concat(bakeAuthoredMaterial(root, o) || o.material) : []) used.add(m); });
     for (const [key, material] of [...mats]) if (!used.has(material) && !key.startsWith('tree:') && !key.startsWith('plant_card:')) mats.delete(key);
     writeWeatherOpen(root, skyCover, root.parent ? 1 : FT);
   };
@@ -1057,7 +1061,8 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
   root.userData.yardKey = yardKey(plan, kit, tier, { viewing, stage });
   root.userData.yardMaterialKey = yardMaterialKey(plan, kit, tier);
   writeWeatherOpen(root, skyCover, FT);
-  if (!bakeSource) {
+  if (!bakeSource) captureBakeMaterials(root);
+  if (!bakeSource && !modelSource) {
     const neutral = await buildYard(withoutSurfaceMaterials(plan), {...kit,manifest:{}}, tier, {viewing, stage, skyCover, bakeSource: true});
     // Keep the neutral bake copy clipped to the same roof drip line whenever
     // a roof edit reuses the drawn yard and re-runs writeWeatherOpen.

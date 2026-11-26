@@ -11,19 +11,26 @@ import { registerEnergy } from './energy.js';
 import { registerSecurity } from './security.js';
 import { svgIcon } from './glance_icons.js';
 import { garageEntity, garagePose } from '../garage_door.js';
+import { modeShows, modeName, readModes, saveModes } from './mode_state.js';
+import { mountModeKey } from './mode_key.js';
+export { modeShows } from './mode_state.js';
 
 const registry = new Map();
 export function registerMode(mode) { registry.set(mode.id, mode); return mode; }
 export function modes() { return [...registry.values()]; }
-export const modeForeground = (id, row, state) => registry.get(id)?.foreground?.(row, state) ?? true;
-// A visualization shows in its own mode and in All.
-export const modeShows = (mode, id) => mode === id || mode === 'all';
+export const modeForeground = (selection, row, state) => {
+  let owned = false;
+  for (const mode of registry.values()) if (mode.foreground?.(row, state)) {
+    owned = true;
+    if (modeShows(selection, mode.id)) return true;
+  }
+  return !owned;
+};
 const MODE_ICONS = {all: 'layers', lights: 'lightbulb', climate: 'thermometer', energy: 'zap', security: 'shield'};
 
 // All is every visualization at once: lit rooms, active HVAC, energy ribbons, security
 // emphasis and camera cones (user, 2026-11-12). It is registered first so its icon leads.
-registerMode({id: 'all', label: 'All', icon: 'layers',
-  enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
+registerMode({id: 'all', label: 'All', icon: 'layers'});
 registerMode({id: 'lights', label: 'Lights', icon: 'lightbulb',
   foreground: row => row.kind === 'light',
   enter: ({lighting}) => lighting(true), update() {}, leave: ({lighting}) => lighting(false)});
@@ -42,36 +49,56 @@ export function roomStates(rooms, states) {
 
 export function mountModes(view, live) {
   // Mode icons, centred at the top: the viewer's only controls besides the path chip (spec).
-  // Each keeps its mode's name as its accessible name and tooltip; a long press shows the
-  // name on touch screens, where there is no hover.
+  const ids = modes().map(mode => mode.id).filter(id => id !== 'all');
+  let enabled = readModes(ids);
+  const timers = new Set();
   const strip = document.createElement('fieldset'); strip.id = 'twin-modes';
   const legend = document.createElement('legend'); legend.textContent = 'Show'; strip.append(legend);
   const buttons = new Map();
   for (const mode of modes()) {
     const button = document.createElement('button'); button.type = 'button';
     button.setAttribute('aria-label', mode.label); button.dataset.mode = mode.id;
+    const description = mode.id === 'all' ? 'Toggle all modes on or off.'
+      : 'Tap to toggle. Hold, right-click, Shift+click or Shift+Enter to show only this mode.';
+    button.title = `${mode.label}: ${description}`;
+    button.setAttribute('aria-description', description);
     const shape = mode.icon || MODE_ICONS[mode.id];
     if (shape && typeof document.createElementNS === 'function') {
       button.append(svgIcon(shape, 'currentColor', 'mode-' + mode.id));
-      // The name as a tooltip: hover on desk, a long press on touch.
-      const tip = document.createElement('span'); tip.className = 'twin-mode-tip'; tip.textContent = mode.label; tip.hidden = true;
+      const tip = document.createElement('span'); tip.className = 'twin-mode-tip'; tip.textContent = button.title; tip.hidden = true;
       button.append(tip);
-      let hold = null;
-      button.addEventListener('pointerdown', event => {
-        if (event.pointerType !== 'touch') return;
-        hold = setTimeout(() => { tip.hidden = false; setTimeout(() => { tip.hidden = true; }, 1500); }, 500);
-      });
-      for (const name of ['pointerup', 'pointerleave', 'pointercancel']) button.addEventListener(name, () => clearTimeout(hold));
     } else button.textContent = mode.label;
-    button.addEventListener('click', () => live.setMode(mode.id)); strip.append(button); buttons.set(mode.id, button);
+    let hold = null, suppressClick = false;
+    const cancel = () => { clearTimeout(hold); timers.delete(hold); hold = null; };
+    if (mode.id !== 'all') {
+      button.addEventListener('pointerdown', event => {
+        cancel(); suppressClick = false;
+        if (event.button !== 0 || event.isPrimary === false) return;
+        hold = setTimeout(() => {
+          timers.delete(hold); hold = null; suppressClick = true; live.setMode(mode.id);
+        }, 500);
+        timers.add(hold);
+      });
+      for (const name of ['pointerup', 'pointerleave', 'pointercancel', 'lostpointercapture', 'blur']) button.addEventListener(name, cancel);
+      button.addEventListener('contextmenu', event => { event.preventDefault(); cancel(); suppressClick = true; live.setMode(mode.id); });
+      button.addEventListener('keydown', event => {
+        suppressClick = false;
+        if (event.shiftKey && event.key === 'Enter') {
+          event.preventDefault(); cancel(); live.setMode(mode.id);
+        }
+      });
+    }
+    button.addEventListener('click', event => {
+      if (suppressClick) { suppressClick = false; event.preventDefault(); return; }
+      if (event.shiftKey && mode.id !== 'all') live.setMode(mode.id);
+      else live.toggleMode(mode.id);
+    });
+    strip.append(button); buttons.set(mode.id, button);
   }
   (document.getElementById('twin-mode-bar') || document.getElementById('twin-controls')).append(strip);
   const climateLabels = document.createElement('div'); climateLabels.className = 'twin-mode-labels twin-climate-labels';
-  const modeLegend = document.createElement('output'); modeLegend.id = 'twin-mode-legend'; modeLegend.hidden = true;
-  const legendText = document.createElement('span'), legendContent = document.createElement('div'); modeLegend.append(legendText, legendContent);
-  document.getElementById('twin-controls').append(modeLegend);
   document.body.append(climateLabels);
-  let mode = 'all', lastKey = '', revision = 0, effectLampKey = '';
+  let lastKey = '', revision = 0, effectLampKey = '';
   const floors = [], lamps = [];
   // Older embeds do not expose a render tier. Keep their room overview until
   // they mount the current view, whose tier supplies the real-light budget.
@@ -84,7 +111,13 @@ export function mountModes(view, live) {
   const overlays = new THREE.Group(); overlays.userData.twinMode = 'modes'; view.scene.add(overlays);
   const context = {view, live, warm, overlays, lighting(on) { view.setLiveLamps?.(on); rig.show(on); }};
   for (const definition of modes()) if (definition.mount) effects.set(definition.id, definition.mount(context));
-  registry.get(mode).enter(context);
+  const modeKey = mountModeKey(strip, {getSections: () => modes().filter(mode => enabled.has(mode.id)).map(mode => ({
+    id: mode.id, icon: mode.icon || MODE_ICONS[mode.id], name: mode.label,
+    key: mode.id === 'lights' ? {items: [], note: rig.overflow() ? 'Some lights are shown as glow only on this tier' : ''}
+      : effects.get(mode.id)?.key?.() || mode.key?.(),
+  }))});
+  for (const id of enabled) registry.get(id)?.enter?.(context);
+  context.lighting(enabled.has('lights'));
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   const lowTier = view.tier?.id === 'low' || view.tier === 'low';
   const washOpacity = () => lowTier || reducedMotion?.matches
@@ -197,23 +230,30 @@ export function mountModes(view, live) {
   // The time look (Day/Night) changes the light set every program is keyed on,
   // so the warm-up runs again for the new look (view.onTimeLook), restoring
   // exactly what was shown, whether Lights mode is on or not.
-  function warm() {
+  function warm(compile = null) {
     if (!realLighting || typeof view.renderer3?.compileAsync !== 'function' || !view.camera) return;
+    const pending = [];
+    if (!compile) { const models = view.bake?.models?.warm?.(); if (models) pending.push(models); }
+    const enqueue = () => {
+      const ready = compile ? compile() : view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
+      if (ready) pending.push(ready);
+    };
     const extras = [...flames, ...lamps.map(lamp => lamp.bulb), ...floors.map(floor => floor.group),
       ...[...effects.values()].flatMap(effect => effect.warmObjects?.() || [])];
     const shown = extras.map(object => object.visible), poolShown = rig.shown?.();
     rig.show(true); for (const object of extras) object.visible = true;
     try {
-      rig.warm(() => view.renderer3.compileAsync(view.scene, view.camera).catch(() => {}));
+      rig.warm(enqueue);
       // Programs are keyed on the light set too. All shows the pool and the effects at
       // once (slice 2c-2), so compile the overlays a second time with the pool hidden,
       // the light set Climate, Energy and Security draw them under.
       rig.show(false);
-      view.renderer3.compileAsync(view.scene, view.camera).catch(() => {});
-      for (const effect of effects.values()) effect.warm?.();
+      enqueue();
+      if (!compile) for (const effect of effects.values()) effect.warm?.();
     }
-    catch { /* a failed warm-up only leaves the first entry its compile */ }
+    catch (error) { if (compile) pending.push(Promise.reject(error)); }
     finally { rig.show(!!poolShown); extras.forEach((object, i) => { object.visible = shown[i]; }); }
+    return Promise.all(pending);
   }
   warm();
   view.onTimeLook = warm;
@@ -248,13 +288,9 @@ export function mountModes(view, live) {
     revision++;
     const zones = resolveClimateZones(layout, states, stale);
     for (const floor of floors) floor.climate = zones.get(climateRoomKey(floor.room));
-    for (const effect of effects.values()) effect.update?.(mode);
-    legendText.textContent = effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '';
-    const content = effects.get(mode)?.legendContent?.();
-    if (legendContent.firstChild !== (content || null)) legendContent.replaceChildren(...(content ? [content] : []));
-    modeLegend.hidden = !modeLegend.textContent;
-    for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === mode));
-    registry.get(mode)?.update?.(context);
+    for (const effect of effects.values()) effect.update?.(enabled);
+    for (const [value, button] of buttons) button.setAttribute('aria-pressed', String(value === 'all' ? enabled.size === ids.length : enabled.has(value)));
+    for (const id of enabled) registry.get(id)?.update?.(context);
     draw();
   }
   function draw() {
@@ -271,15 +307,15 @@ export function mountModes(view, live) {
       }
     }
     for (const flame of flames) flame.material.uniforms.time.value = performance.now() / 1000;
-    climateLabels.hidden = !modeShows(mode, 'climate');
-    for (const effect of effects.values()) effect.draw?.(mode);
+    climateLabels.hidden = !enabled.has('climate');
+    for (const effect of effects.values()) effect.draw?.(enabled);
     const target = view.controls?.target;
-    const key = [revision, mode, target?.x, target?.y, target?.z,
+    const key = [revision, target?.x, target?.y, target?.z,
       ...floors.map(floor => floor.parent.visible),
       ...lamps.map(lamp => view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)].join('|');
     // Labels follow the camera, including the idle orbit; their floors are reused.
     for (const floor of floors) {
-      const show = modeShows(mode, 'climate') && floor.parent.visible && !!floor.climate?.label;
+      const show = enabled.has('climate') && floor.parent.visible && !!floor.climate?.label;
       floor.label.hidden = !show;
       if (show) {
         floor.group.updateMatrixWorld(true); view.camera.updateMatrixWorld(true);
@@ -298,15 +334,13 @@ export function mountModes(view, live) {
     }
     if (key === lastKey) return;
     lastKey = key;
-    const candidates = lamps.filter(lamp => modeShows(mode, 'lights') && lamp.intensity > 0 &&
+    const candidates = lamps.filter(lamp => enabled.has('lights') && lamp.intensity > 0 &&
       view.groups.levels[`${lamp.marker.building}:${lamp.marker.level}`]?.visible !== false)
       .map(lamp => ({ device: lamp.key, at: lamp.marker.at, ...lamp }));
     const fresh = new Set(view.bake?.fresh() || []);
     for (const id of paletteLineEntities(lamps)) fresh.delete(id);
     const selected = rig.update(realLighting ? candidates : [], target ? [target.x / FT, -target.z / FT, target.y / FT] : [0, 0, 0], fresh);
-    const overflowText = modeShows(mode, 'lights') && rig.overflow() ? 'Some lights are shown as glow only on this tier' : '';
-    legendText.textContent = [effects.get(mode)?.legend?.() || registry.get(mode)?.legend || '', overflowText].filter(Boolean).join(' · ');
-    modeLegend.hidden = !modeLegend.textContent;
+    modeKey.update();
     const bakeTints = new Map();
     for (const lamp of lamps) {
       const bakeId = lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id;
@@ -339,8 +373,8 @@ export function mountModes(view, live) {
       const legacy = legacyRooms.find(row => row.building === room.building && row.room === room.room);
       const glow = realLighting ? (overflow.length ? overflow.reduce((sum, lamp) => sum + lamp.intensity, 0) / overflow.length : 0) : legacy?.glow || 0;
       const active = ['heat', 'cool'].includes(floor.climate?.action);
-      const tint = modeShows(mode, 'climate') && (active || mode === 'climate' && floor.climate?.action === 'idle');
-      group.visible = parent.visible && (tint || modeShows(mode, 'lights') && glow > 0);
+      const tint = enabled.has('climate') && (active || enabled.size === 1 && floor.climate?.action === 'idle');
+      group.visible = parent.visible && (tint || enabled.has('lights') && glow > 0);
       mesh.material.opacity = tint ? active ? washOpacity() : .35 : glow * .85;
       if (tint && active && group.visible) breathing.push(floor);
       const rgb = tint ? climateColors[floor.climate.action] : (realLighting ? overflow[0]?.rgb : legacy?.rgb) || [255, 241, 201];
@@ -348,25 +382,37 @@ export function mountModes(view, live) {
     }
   }
   const unsubscribe = live.subscribe(update); update();
+  function setModes(values) {
+    const next = new Set(ids.filter(id => values.includes(id)));
+    for (const id of enabled) if (!next.has(id)) registry.get(id)?.leave?.(context);
+    for (const id of next) if (!enabled.has(id)) registry.get(id)?.enter?.(context);
+    enabled = next; saveModes(enabled); update();
+    return [...enabled];
+  }
   return {
     setMode(value) {
-      value = registry.has(value) ? value : 'all';
-      if (mode !== value) {
-        registry.get(mode)?.leave?.(context); mode = value; registry.get(mode)?.enter?.(context);
-      }
-      update();
-      return mode;
+      setModes(ids.includes(value) ? [value] : ids);
+      return modeName(enabled, ids);
     },
-    draw, update,
+    setModes,
+    toggleMode(id) {
+      return setModes(id === 'all' ? enabled.size === ids.length ? [] : ids
+        : enabled.has(id) ? [...enabled].filter(value => value !== id) : [...enabled, id]);
+    },
+    modes: () => [...enabled],
+    get mode() { return modeName(enabled, ids); },
+    draw, update, warm,
+    paletteLines: () => [...paletteLineEntities(lamps)],
     energy: () => effects.get('energy')?.snapshot(),
     lights: () => lamps.map(lamp => ({ device: lamp.marker.device_id, fixture_id: lamp.emitter?.fixture_id, at: [...lamp.marker.at],
       rgb: [...lamp.rgb], intensity: lamp.intensity, real: lamp.real, baked: !!lamp.baked })),
     stop() {
+      for (const timer of timers) clearTimeout(timer);
       for (const door of garageDoors) garagePose(door.group, false);
       for (const flame of flames) flame.visible = false;
       for (const lamp of lamps) if (lamp.baked) view.bake?.light(lamp.emitter && !lamp.emitter.legacy ? lamp.emitter.entity_id : lamp.marker.device_id, lamp.rgb, 0);
-      unsubscribe(); strip.remove(); climateLabels.remove(); modeLegend.remove();
-      registry.get(mode)?.leave?.(context);
+      unsubscribe(); modeKey.stop(); strip.remove(); climateLabels.remove();
+      for (const id of enabled) registry.get(id)?.leave?.(context);
       rig.stop();
       for (const effect of effects.values()) effect.stop?.();
       overlays.removeFromParent();

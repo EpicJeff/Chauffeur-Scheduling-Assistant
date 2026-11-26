@@ -3,7 +3,12 @@
 // never join the drawn scene or add a draw call/material program.
 import * as THREE from '../../vendor/three-r187/three.module.js';
 import { filterAlphaSource } from './alpha_source.js';
+// The building's neutral material build uses the desk's existing defaults.
+// Yard terrain keeps its viewer tier; only pool receiving batches are canonical.
+export const BAKE_SOURCE_TIER = 'high';
 const providers = new WeakMap(), sources = new WeakMap(), madeRoots = new WeakSet();
+// Meshes can move intact between provider roots during building reuse.
+const authoredByMesh = new WeakMap();
 // A drawn provider root and the neutral root it made are the same place. Receiver
 // matching names meshes relative to it (bindings.js domain), never by the drawn
 // parents above it: the yard is drawn under the twin's 'site' group, while its
@@ -18,6 +23,10 @@ export function bakeReceiverRoots(root) {
   for (const node of roots) { if (node !== root) madeRoots.add(node); node.updateMatrixWorld(true); }
   return roots;
 }
+// The neutral receiving topology deliberately has no kit models. The editor
+// supplies its separate physical build, only after its imports have settled.
+export const bakeModelRoot = root => providers.get(root)?.modelRoot?.() || null;
+export const prepareBakeModels = async root => { await providers.get(root)?.modelReady?.(); };
 // Default kit finishes already have the neutral topology. Reuse their buffers
 // through detached clones instead of generating a second house on a cold bake.
 export function defaultBuildingFinishes(plan,kit) {
@@ -43,20 +52,49 @@ export function cloneBakeGeometry(root,children=root.children) {
   for(const child of new Set(children))if(child.parent===root && !providers.has(child))group.add(cloneWithoutProviders(child));
   return group;
 }
-export function bakeAuthoredMaterial(root, mesh) { return providers.get(root)?.authoredMaterials.get(mesh); }
-export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,dispose=null}={}) {
-  // Capture model-created materials before editor presentation swaps any mesh.
-  // In particular, yard receivers must not inherit a focused-room fade.
-  const authoredMaterials = new WeakMap(), alphaClasses = new WeakMap();
+export function captureBakeMaterials(root) {
   root.traverse(mesh => {
-    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
-    authoredMaterials.set(mesh, mesh.material);
-    const m = mesh.material, mode = m.userData.alphaMode;
+    if (mesh.isMesh && mesh.material && !authoredByMesh.has(mesh)) authoredByMesh.set(mesh, mesh.material);
+  });
+}
+export function bakeAuthoredMaterial(root, mesh) { return authoredByMesh.get(mesh); }
+export function registerBakeSource(root, make, {extras=true,children=root.children,receiverRoots=null,alphaRoots=null,modelRoot=null,modelReady=null,dispose=null}={}) {
+  // Classify only captured model materials. Re-registering a provider after a
+  // deform must never adopt selection, focus, faint or Unlit presentation.
+  const alphaClasses = new WeakMap();
+  root.traverse(mesh => {
+    const m = authoredByMesh.get(mesh);
+    if (!mesh.isMesh || !m || Array.isArray(m)) return;
+    const mode = m.userData.alphaMode;
     alphaClasses.set(mesh, mode ? mode !== 'opaque' : !!(m.name === 'glass' || m.alphaTest > 0 || m.transparent && !m.userData.viewingOpaque));
   });
-  providers.set(root, {make,extras,receiverRoots,alphaRoots,dispose,authoredMaterials,alphaClasses,children:new Set(children)});
+  providers.set(root, {make,extras,receiverRoots,alphaRoots,modelRoot,modelReady,dispose,alphaClasses,children:new Set(children)});
 }
+// Editor presentation may partition a batch into several material groups.
+// Baking always sees the captured authored material and original group layout.
+// This is synchronous: the displayed presentation is restored before returning.
+export function withAuthoredMaterials(root, run) {
+  const saved = new Map();
+  root.traverse(mesh => {
+    const material = authoredByMesh.get(mesh);
+    if (!material || material === mesh.material) return;
+    saved.set(mesh, mesh.material);
+    mesh.dispatchEvent({ type: 'bakepresentationstart' });
+    mesh.material = material;
+  });
+  try { return run(); }
+  finally {
+    for (const [mesh, material] of saved) {
+      mesh.material = material;
+      mesh.dispatchEvent({ type: 'bakepresentationend' });
+    }
+  }
+}
+
 export function bakeSource(root) {
+  return withAuthoredMaterials(root, () => makeBakeSource(root));
+}
+function makeBakeSource(root) {
   const entries = [];
   root.updateMatrixWorld(true);
   root.traverse(node => { if (providers.has(node)) entries.push(node); });

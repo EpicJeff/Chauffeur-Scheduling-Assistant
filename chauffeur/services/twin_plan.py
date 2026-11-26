@@ -74,6 +74,81 @@ def _numeric_fields(item, names):
     return all(name not in item or _number(item[name]) for name in names)
 
 
+def _downspout_fractions(value):
+    """Numbers snap to corners; an exact {at: fraction} stays authored."""
+    return (isinstance(value, list) and len(value) <= 8
+            and all(_downspout_entry(v) for v in value))
+
+
+def _downspout_entry(value):
+    if isinstance(value, dict):
+        if set(value) != {'at'}:
+            return False
+        value = value['at']
+    return _number(value) and 0 <= value <= 1
+
+
+GUTTER_FLAGS = frozenset(('no-outside-corner', 'hang', 'stub', 'inner-end', 'clipped-end',
+                          'no-safe-landing', 'no-outlet', 'outlet-blocked', 'merged-override',
+                          'placed-off-corner', 'over-opening', 'no-support'))
+
+
+def _gutter_ack(value):
+    return (isinstance(value, list) and len(value) <= len(GUTTER_FLAGS)
+            and all(isinstance(flag, str) and flag in GUTTER_FLAGS for flag in value)
+            and len(set(value)) == len(value))
+
+
+def _gutter_flag(piece, notes):
+    if 'gutter' in piece and type(piece['gutter']) is not bool:
+        piece.pop('gutter')
+        notes.append(f'Dropped invalid gutter flag on {piece.get("id", "attachment")}; expected a boolean.')
+    if 'gutter_ack' in piece and not _gutter_ack(piece['gutter_ack']):
+        piece.pop('gutter_ack')
+        notes.append(f'Dropped invalid gutter acknowledgement on {piece.get("id", "attachment")}.')
+
+
+def _section_gutters(section, notes):
+    """Keep side-keyed authored drainage; never add defaults to old plans."""
+    sides = ('x0', 'x1', 'y0', 'y1')
+    for field in ('gutters', 'downspouts'):
+        if field not in section:
+            continue
+        values = section.pop(field)
+        kept = {}
+        if isinstance(values, dict):
+            for side, value in values.items():
+                boundary = ('plane_edges' not in section
+                            or isinstance(section['plane_edges'], dict)
+                            and type(section['plane_edges'].get(side)) is int
+                            and section['plane_edges'][side] >= 0)
+                eave = side in sides and (section['kind'] == 'flat'
+                        or section['kind'] == 'shed' and side == section['low_side']
+                        or section['kind'] in ('hip', 'gable')
+                        and (side[0:1] != section['ridge']
+                             or section.get('ends', {}).get(side, section['kind']) == 'hip'))
+                if (field == 'downspouts' and side in sides and boundary
+                        and isinstance(value, list) and len(value) <= 8):
+                    cleaned = []
+                    for index, entry in enumerate(value):
+                        if _downspout_entry(entry):
+                            cleaned.append(deepcopy(entry))
+                        else:
+                            notes.append(f'Roof section {section["id"]}: dropped invalid downspouts on {side}[{index}].')
+                    kept[side] = cleaned
+                    continue
+                valid = (value is True and eave if field == 'gutters'
+                         else _downspout_fractions(value))
+                if side in sides and boundary and valid:
+                    kept[side] = deepcopy(value)
+                elif field != 'gutters' or value is not False:
+                    notes.append(f'Roof section {section["id"]}: dropped invalid {field} on {side}.')
+        else:
+            notes.append(f'Roof section {section["id"]}: dropped invalid {field}; expected an object.')
+        if kept:
+            section[field] = kept
+
+
 def _items(owner, name, notes, cap_name=None):
     items = owner.get(name, [])
     if not isinstance(items, list):
@@ -225,9 +300,9 @@ def _roof(building, notes):
                 if isinstance(opening, dict) and 'gable' in opening:
                     opening['section'] = 'roof-main'
 
-    def pitch_value(value, name):
-        if not _number(value) or not 1 <= value <= 24:
-            value = max(1, min(24, value)) if _number(value) else 1
+    def pitch_value(value, name, minimum=1):
+        if not _number(value) or not minimum <= value <= 24:
+            value = max(minimum, min(24, value)) if _number(value) else minimum
             notes.append(f'Roof section {name}: pitch clamped to {value}.')
         return value
 
@@ -248,25 +323,30 @@ def _roof(building, notes):
                 or (section['kind'] == 'shed' and section.get('low_side') not in sides)):
             notes.append(f'Dropped roof section {name}: invalid bounds, kind, direction or plate.')
             continue
-        section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name)
+        from services.twin_model_supports import is_supported
+        minimum_pitch = 0 if is_supported(section) else 1
+        section['pitch'] = 0 if section['kind'] == 'flat' else pitch_value(section.get('pitch'), name, minimum_pitch)
         if 'ends' in section:
             ends = section.pop('ends')
+            closed = {k:v for k,v in ends.items() if isinstance(k, str) and k.isdigit()} if isinstance(ends, dict) and is_supported(section) else {}
             if isinstance(ends, dict) and section['kind'] in ('gable', 'hip'):
                 allowed = (f"{section['ridge']}0", f"{section['ridge']}1")
                 section['ends'] = {end: style for end, style in ends.items()
                                    if end in allowed and style in ('gable', 'hip', 'clip')}
                 for end, style in ends.items():
+                    if end in closed: continue
                     if end not in section['ends']:
                         words = {'x0': 'the left end', 'x1': 'the right end',
                                  'y0': 'the front end', 'y1': 'the back end'}.get(end, 'an unknown end')
                         notes.append(f'Roof section {name}: dropped invalid end style on {words}.')
             else:
-                notes.append(f'Roof section {name}: dropped invalid ends.')
+                if not closed: notes.append(f'Roof section {name}: dropped invalid ends.')
+            if closed: section['ends'] = {**section.get('ends', {}), **closed}
         if 'pitches' in section:
             pitches = section.pop('pitches')
             if isinstance(pitches, dict):
                 section['pitches'] = {side: (0 if section['kind'] == 'flat'
-                                           else pitch_value(value, f'{name}.{side}'))
+                                           else pitch_value(value, f'{name}.{side}', minimum_pitch))
                                       for side, value in pitches.items() if side in sides}
                 if any(side not in sides for side in pitches):
                     notes.append(f'Roof section {name}: dropped unknown pitch sides.')
@@ -282,11 +362,22 @@ def _roof(building, notes):
             section['pitch_source'] = 'default'
         section.setdefault('pitch_source', 'default')
         section['rect'] = list(rect)
+        from services.twin_model_supports import normalize_support, normalize_host
+        normalize_support(section, notes)
+        normalize_host(section, building, notes)
+        _section_gutters(section, notes)
         sections[section['id']] = section
     extensions = []
     for index, extension in enumerate(_items(roof, 'extensions', notes)):
+        if isinstance(extension, dict) and extension.get('kind') == 'awning':
+            _gutter_flag(extension, notes)
         if migrating and isinstance(extension, dict):
             extension['section'] = 'roof-main'
+        if isinstance(extension, dict) and extension.get('kind') == 'awning':
+            # Migration turns even an incomplete old attachment into a located,
+            # editable roof ghost. Do not discard it before that conversion.
+            extensions.append(extension)
+            continue
         section = _lookup(sections, extension.get('section')) if isinstance(extension, dict) else None
         if (isinstance(extension, dict) and section is None and extension.get('state') == 'ghost'
                 and extension.get('why') and _point(extension.get('position'))
@@ -475,6 +566,7 @@ def _details(building, levels, notes):
             return None
         else:
             porch.setdefault('floor', 0)
+            _gutter_flag(porch, notes)
             from services import twin_porches
             # Legacy flat porches keep their exact shape; absence means posts.
             if 'foundation' in porch:
@@ -483,6 +575,10 @@ def _details(building, levels, notes):
             for index, column in enumerate(_items(porch, 'columns', notes)):
                 if (isinstance(column, dict) and _point(column.get('at'))
                         and _number(column.get('size')) and column['size'] > 0):
+                    if 'id' in column and (not isinstance(column['id'], str)
+                            or not column['id'].startswith('post:') or len(column['id']) > 120):
+                        column.pop('id')
+                        notes.append(f'Stripped invalid id from porch column {index}.')
                     columns.append(column)
                 else:
                     notes.append(f'Dropped porch column {index}: invalid at or size.')
@@ -567,6 +663,10 @@ def _surface_slots(building, notes):
     for roof in [*building.get('roofs', []), *building.get('dormers', []),
                  *building.get('roof', {}).get('sections', [])]:
         ref(roof, 'material')
+        if 'materials' in roof:
+            roof['materials'] = clean_slots(roof['materials'], None, notes, roof.get('id', 'Roof'))
+            if not roof['materials']:
+                roof.pop('materials')
         if 'plane_materials' not in roof:
             continue
         values = roof['plane_materials']
@@ -778,6 +878,12 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
                                                 building.get('name') or 'House')
         walls = _walls(building, levels, notes)
         sections = _roof(building, notes)
+        if any(e.get('kind') in ('awning', 'shed_continuation') for e in building['roof']['extensions']):
+            from services.twin_awning_migration import migrate_awnings
+            migrated, migration_notes = migrate_awnings({'materials': raw.get('materials', {}), 'buildings': [building]})
+            building = migrated['buildings'][0]
+            notes.extend(migration_notes)
+            sections = _roof(building, notes)
         _rooms(building, levels, notes)
         _openings(building, walls, sections, notes)
         _details(building, levels, notes)
@@ -891,43 +997,154 @@ def record_compose_overrides(before: dict, after: dict, *, _inplace=False) -> di
     return result
 
 
+DIRECTOR_LISTS = ('planting', 'beds', 'edges', 'furniture')
+
+
+class DirectorUnsafe(ValueError):
+    """The exact storage candidate could alter existing work."""
+
+
+def director_piece_ids(plan):
+    ids = set()
+    def visit(value):
+        if isinstance(value, dict):
+            if isinstance(value.get('id'), str):
+                ids.add(value['id'])
+            for key, child in value.items():
+                if key not in ('materials', 'read_geometry', 'compose_overrides'):
+                    visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+    visit(plan)
+    return ids
+
+
+def _director_removal(piece):
+    for key, value in piece.items():
+        key = str(key).lower().lstrip('_')
+        if key in ('remove', 'delete', 'deleted', 'removed', 'removal') and value:
+            return True
+        if key in ('op', 'action', 'status', 'state') and isinstance(value, str):
+            if value.lower() in ('remove', 'delete', 'deleted', 'removed', 'ghost', 'proposal'):
+                return True
+    return False
+
+
 def overlay_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
-    """Overlay explicit edits; omissions preserve the household's current work."""
-    merged = deepcopy(plan)
-    notes = []
-    for name in ('site', 'materials'):
-        if name not in revised:
-            notes.append(f'Kept omitted {name} unchanged.')
-            continue
-        value = revised[name]
-        if value is None or value == []:
-            notes.append(f'Kept empty top-level {name} unchanged.')
-        elif isinstance(value, dict):
-            for key in plan.get(name, {}):
-                if key not in value:
-                    notes.append(f'Kept omitted {name}.{key} unchanged.')
-            for key, item in value.items():
-                if name == 'site' and key in ('lot', 'pool'):
-                    if item != plan.get('site', {}).get(key):
-                        notes.append(f'Kept site.{key} unchanged; the director cannot change plot-plan facts.')
+    """Only append candidates; every existing site value is immutable."""
+    merged, notes = deepcopy(plan), []
+    site = revised.get('site')
+    if not isinstance(site, dict):
+        notes.append('Kept the site unchanged; no site additions were supplied.')
+    else:
+        if any(key not in site for key in plan['site']):
+            notes.append('Kept omitted site values unchanged.')
+        reserved = director_piece_ids(plan)
+        for key, value in site.items():
+            old = plan['site'].get(key)
+            if key not in DIRECTOR_LISTS:
+                if value != old:
+                    label = {'yard_rooms': 'yard rooms', 'devices': 'yard devices',
+                             'compose_overrides': 'saved yard edits'}.get(key, str(key).replace('_', ' '))
+                    if isinstance(old, list) and (value is None or value == []
+                            or isinstance(value, dict) and _director_removal(value)):
+                        notes.append(f'The art director suggested removing {len(old)} {label}; nothing was changed.')
+                    else:
+                        count = len(value) if isinstance(value, list) else 1
+                        notes.append(f'The art director suggested {count} changes to {label}; nothing was changed.')
+                continue
+            changed, removed = set(), set()
+            anonymous_removals = 0
+            if value is None or value == []:
+                removed.update(p.get('id') for p in old or [] if isinstance(p, dict))
+            elif not isinstance(value, list):
+                if isinstance(value, dict) and _director_removal(value):
+                    removed.update(p.get('id') for p in old or [] if isinstance(p, dict))
                 else:
-                    merged[name][key] = deepcopy(item)
-        else:
-            notes.append(f'Kept invalid {name} unchanged; expected an object or null.')
-    # Normalize explicit list deletions before recording compose removals.
-    for name in ('beds', 'planting', 'furniture', 'edges', 'hardscape'):
-        if merged['site'].get(name) is None:
-            merged['site'][name] = []
-    merged['materials'] = {role: value for role, value in merged['materials'].items()
-                           if value is not None and value != []}
+                    notes.append(f'Refused {key} additions: use a list of pieces.')
+            else:
+                for entry in value:
+                    if not isinstance(entry, dict):
+                        notes.append(f'Refused a {key} addition: use a piece object.')
+                        continue
+                    item_id = entry.get('id')
+                    if _director_removal(entry):
+                        if isinstance(item_id, str):
+                            removed.add(item_id)
+                        else:
+                            anonymous_removals += 1
+                    elif isinstance(item_id, str) and item_id in reserved:
+                        changed.add(item_id)
+                    else:
+                        merged['site'].setdefault(key, []).append(deepcopy(entry))
+            changed -= removed
+            if changed or removed or anonymous_removals:
+                singular, plural = {'planting': ('plant', 'plants'), 'beds': ('bed', 'beds'),
+                                    'edges': ('edge planting', 'edge plantings'),
+                                    'furniture': ('furnishing', 'furnishings')}[key]
+                parts = []
+                if changed:
+                    parts.append(f'changing {len(changed)} {singular if len(changed) == 1 else plural}')
+                if removed or anonymous_removals:
+                    count = len(removed) + anonymous_removals
+                    parts.append(f'removing {count}' + (f' {singular if count == 1 else plural}' if not changed else ''))
+                notes.append('The art director suggested ' + ' and '.join(parts) + '; nothing was changed.')
+    materials = revised.get('materials')
+    if isinstance(materials, dict):
+        for role, value in materials.items():
+            if value is None or value == []:
+                if isinstance(merged.get('materials'), dict):
+                    merged['materials'].pop(role, None)
+            else:
+                merged.setdefault('materials', {})[role] = deepcopy(value)
+    else:
+        notes.append('Kept materials unchanged; no material changes were supplied.')
     return merged, notes
 
 
+def assert_director_preserved(before: dict, after: dict, *, stored=True):
+    """Compare exact JSON values, including numeric types, order and metadata."""
+    import json
+    if not isinstance(after, dict) or set(after) - {'materials'} != set(before) - {'materials'}:
+        raise DirectorUnsafe('The art director could not keep every existing piece unchanged. Nothing was saved.')
+    def same(a, b):
+        return json.dumps(a, sort_keys=True, allow_nan=False) == json.dumps(b, sort_keys=True, allow_nan=False)
+    for key, value in before.items():
+        if key == 'materials' or not stored and key not in ('site', 'buildings'):
+            continue
+        if key != 'site':
+            valid = key in after and same(value, after[key])
+        else:
+            site = after.get('site', {})
+            valid = isinstance(site, dict) and all(name in site and (
+                isinstance(site[name], list) and same(old, site[name][:len(old)])
+                if name in DIRECTOR_LISTS else same(old, site[name])) for name, old in value.items())
+            if valid:
+                valid = all(name in value or name in DIRECTOR_LISTS for name in site)
+        if not valid:
+            raise DirectorUnsafe('The art director could not keep every existing piece unchanged. Nothing was saved.')
+
+
+def normalize_director(plan: dict, before: dict) -> tuple[dict, list[str]]:
+    """Legacy flat-plan helper; connected director publication bypasses this."""
+    import json
+    notes = []
+    for _ in range(8):
+        normalized, problems = normalize(plan)
+        notes.extend(problems)
+        # The connected store checks and grafts raw records in update_model.
+        if json.dumps(normalized, sort_keys=True, allow_nan=False) == json.dumps(plan, sort_keys=True, allow_nan=False):
+            return normalized, list(dict.fromkeys(notes))
+        plan = normalized
+    raise DirectorUnsafe('The art director could not produce a stable plan. Nothing was saved.')
+
+
 def merge_director(plan: dict, revised: dict) -> tuple[dict, list[str]]:
-    """Apply the director's site and materials only, then normalize a copy."""
     merged, notes = overlay_director(plan, revised)
-    normalized, normalized_notes = normalize(record_compose_overrides(plan, merged))
-    return normalized, notes + normalized_notes
+    normalized, problems = normalize_director(merged, plan)
+    assert_director_preserved(plan, normalized, stored=False)
+    return normalized, notes + problems
 
 
 def diff_paths(a: dict, b: dict) -> list[str]:
@@ -949,6 +1166,37 @@ def diff_paths(a: dict, b: dict) -> list[str]:
                 walk(left.get(key, missing), right.get(key, missing),
                      f'{path}.{key}' if path else key)
         elif isinstance(left, list) and isinstance(right, list):
+            if path.endswith('.columns'):
+                # Ids are optional metadata. Match surviving columns across
+                # the first mint and deletion without reporting shifted rows.
+                old, new = list(enumerate(left)), list(enumerate(right))
+                clean = lambda c: {k:v for k,v in c.items() if k != 'id'} if isinstance(c, dict) else c
+                def pair(i, item, match):
+                    old.remove((i,item)); new.remove(match)
+                    key = f"id={item['id']}" if isinstance(item, dict) and item.get('id') else str(i)
+                    walk(clean(item), clean(match[1]), f'{path}[{key}]')
+                # Reserve every identified survivor before content can consume it.
+                for i,item in list(old):
+                    match = next(((j,c) for j,c in new if isinstance(item,dict) and isinstance(c,dict)
+                                  and item.get('id') and item.get('id') == c.get('id')), None)
+                    if match is not None:
+                        pair(i,item,match)
+                for i,item in list(old):
+                    if isinstance(item,dict) and item.get('id'):
+                        continue
+                    match = next(((j,c) for j,c in new if clean(item) == clean(c)), None)
+                    if match is not None:
+                        pair(i,item,match)
+                # A changed survivor has the same index before the first mint.
+                if len(old) == len(new) and all(not isinstance(item,dict) or not item.get('id') for _,item in old):
+                    for (i,item), (_,other) in zip(old,new):
+                        walk(clean(item), clean(other), f'{path}[{i}]')
+                else:
+                    for rows, removed in ((old, True), (new, False)):
+                        for i,item in rows:
+                            key = f"id={item['id']}" if isinstance(item, dict) and item.get('id') else str(i)
+                            walk(item if removed else missing, missing if removed else item, f'{path}[{key}]')
+                return
             old, new = indexed(left), indexed(right)
             for key in old.keys() | new.keys():
                 walk(old.get(key, missing), new.get(key, missing), f'{path}[{key}]')

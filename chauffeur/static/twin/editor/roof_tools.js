@@ -3,10 +3,11 @@ import { report } from './api.js';
 import { heightAt } from '../twin_roof.js';
 import * as THREE from 'three';
 import { PICK_LAYER } from '../twin_generator.js';
+import { roofPoint } from '../roof_supports.js';
 
 // Edge directions are shared by placement, handles and the operation's outward by.
 export function roofEdge(roof, edge) {
-  const a = roof.area[edge], b = roof.area[(edge + 1) % roof.area.length];
+  const a = roofPoint(roof, roof.area[edge]), b = roofPoint(roof, roof.area[(edge + 1) % roof.area.length]);
   const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const axis = b.map((v, i) => (v - a[i]) / length);
   const signed = roof.area.reduce((n, p, i) => {
@@ -21,7 +22,7 @@ export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, sign
   let mode = null, points = [], press = null, busy = false;
   const listen = (node, type, fn, options = {}) => node.addEventListener(type, fn, { ...options, signal });
   const caster = new THREE.Raycaster();
-  function roofPoint(event, building, pieceId) {
+  function pointOnRoof(event, building, pieceId) {
     const rect = canvas.getBoundingClientRect(), position = building.position || [0, 0];
     view.camera.updateMatrixWorld(true); view.scene.updateMatrixWorld(true); caster.layers.set(PICK_LAYER);
     caster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1,
@@ -90,7 +91,7 @@ export function createRoofTools({ view, tools, getPlan, op, canEdit, panel, sign
     const roof = building?.roofs?.find(r => r.id === (section?.roof || pid));
     if (!roof || !section || picked.kind !== 'roof') return null;
     // Use the renderer's roof pick mesh, including oblique views and valleys.
-    const p = roofPoint(event, building, pid); if (!p) return null;
+    const p = pointOnRoof(event, building, pid); if (!p) return null;
     const edges = roof.edges.flatMap((edge, index) => {
       if (edge.setting !== 'sloped') return [];
       const frame = roofEdge(roof, index), at = Math.max(0, Math.min(frame.length,

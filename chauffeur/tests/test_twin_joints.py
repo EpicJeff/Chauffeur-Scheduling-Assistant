@@ -283,36 +283,52 @@ def test_awning_gets_wall():
     over = awning(roof, 10, 20)                     # over the front (y0) wall
     b = building(walls, [roof], [over])
     tj().snap(b)
-    ext = b['roof']['extensions'][0]
-    check(ext.get('wall') == walls[0]['id'], ('the awning hangs from the front wall', ext))
+    supported = next(s for s in b['roof']['sections'] if s.get('support'))
+    check(supported.get('host', {}).get('wall') == walls[0]['id'], ('the migrated awning hangs from the front wall', supported))
+    check(b['roof']['extensions'] == [], 'the awning is now an ordinary supported roof')
     check(tj().report(b) == [], tj().report(b))
 
     walls = rect_walls(0, 0, 30, 20)
     roof = section([0, 0, 30, 20])
     b = building(walls, [roof], [awning(roof, 100, 110)])   # over nothing
     tj().snap(b)
-    ext = b['roof']['extensions'][0]
-    check(not ext.get('wall'), ('an awning over nothing gets no wall', ext))
+    supported = next(s for s in b['roof']['sections'] if s.get('support'))
+    check(not supported.get('host'), ('an awning over nothing gets no host', supported))
     lines = tj().report(b)
-    check(has(lines, 'awning'), ('the report names the awning with no wall', lines))
+    check(lines == [], ('supported roofs do not participate in the joint report', lines))
+    check(supported['state'] == 'ghost' and 'place it again' in supported['why'],
+          'migration retains the orphan roof as a located, fixable ghost')
+    check(any(f.get('id') == supported['id'] and f.get('kind') == 'roof'
+              and f.get('text') == supported['why'] for f in b['flags']),
+          'migration retains the orphan roof with its matching building flag')
     no_raw_ids(b, lines)
 
 
 def test_awning_takes_the_wall_of_its_floor():
-    # An L2 wall on the same line as the L1 front wall, listed first. An
-    # awning at eave 8.6 hangs on L1 (0 <= 8.6 < 10); one at eave 12 on L2
-    # (10.9 <= 12 < 19.9).
+    # Existing attached awnings keep their explicit host and its stored level.
+    # Heights remain 8.6 on L1 (0 <= 8.6 < 10) and 12 on L2 (10.9 <= 12 < 19.9).
     upper = wall([0, 0], [30, 0], level='L2')
     lower = rect_walls(0, 0, 30, 20)
     roof = section([0, 0, 30, 20], plate=19.9)
     low, high = awning(roof, 10, 20, eave=8.6), awning(roof, 10, 20, eave=12)
+    low['wall'], high['wall'] = lower[0]['id'], upper['id']
     b = building([upper] + lower, [roof], [low, high])
     tj().snap(b)
-    low_ext, high_ext = b['roof']['extensions']
-    check(low_ext.get('wall') == lower[0]['id'],
+    low_ext, high_ext = [s for s in b['roof']['sections'] if s.get('support')]
+    check(low_ext['host']['wall'] == lower[0]['id'] and low_ext['level'] == 'L1' and low_ext['plate'] == 8.6,
           ('an awning at eave 8.6 hangs from the L1 wall, not the L2 wall on its line',
-           low_ext.get('wall'), upper['id'], lower[0]['id']))
-    check(high_ext.get('wall') == upper['id'], ('an awning at eave 12 hangs from the L2 wall', high_ext.get('wall')))
+            low_ext.get('host'), upper['id'], lower[0]['id']))
+    check(high_ext['host']['wall'] == upper['id'] and high_ext['level'] == 'L2' and high_ext['plate'] == 12,
+          ('an awning at eave 12 hangs from the L2 wall', high_ext.get('host')))
+    # An unbound legacy awning keeps the renderer's drawn plane while its eave
+    # resolves the stored floor and the equivalent wall on that floor.
+    raw = building([upper] + lower, [roof], [awning(roof, 10, 20, eave=8.6), awning(roof, 10, 20, eave=12)])
+    raw_low, raw_high = [s for s in raw['roof']['sections'] if s.get('support')]
+    check(raw_low['host']['wall'] == lower[0]['id'] and raw_low['level'] == 'L1' and raw_low['plate'] == 8.6,
+          'the low unbound awning keeps its eave floor without moving the drawn plane')
+    check(raw_high['host']['wall'] == upper['id'] and raw_high['level'] == 'L2' and raw_high['plate'] == 12,
+          'the high unbound awning keeps its upper floor without moving the drawn plane')
+    check(raw_low['rect'] == raw_high['rect'] == [10, -3, 20, 0], 'both old drawn spans and depths are retained')
 
 
 # --- snap: a person's pieces --------------------------------------------------
@@ -377,11 +393,15 @@ def test_awning_prefers_front_with_rear_wall_first():
     roof = section([0, 0, 30, 20])
     b = building([walls[2], walls[1], walls[0], walls[3]], [roof], [awning(roof, 10, 20)])
     tj().snap(b)
-    check(b['roof']['extensions'][0].get('wall') == walls[0]['id'],
-          ('the y0 wall wins a front/rear tie regardless of list order', b['roof']['extensions']))
-    b['roof']['extensions'][0]['wall'] = walls[2]['id']
+    supported = next(s for s in b['roof']['sections'] if s.get('support'))
+    check(supported['host']['wall'] == walls[0]['id'],
+          ('the y0 wall wins a front/rear tie regardless of list order', supported))
+    explicit = awning(roof, 10, 20); explicit['wall'] = walls[2]['id']
+    b = building([walls[2], walls[1], walls[0], walls[3]], [roof], [explicit])
     tj().snap(b)
-    check(b['roof']['extensions'][0]['wall'] == walls[2]['id'], 'an explicit valid rear wall is retained')
+    supported = next(s for s in b['roof']['sections'] if s.get('support'))
+    check(supported['host']['wall'] == walls[2]['id'], 'an explicit valid rear wall is retained')
+    check(supported['rect'] == [10, 20, 20, 23], 'the explicit rear awning keeps its outward placement')
 
 
 def test_report_counts_corners_instead_of_wall_ends():
@@ -413,23 +433,28 @@ def test_report_collapses_identical_roof_lines():
     check(rear == ['2 roof edges over the rear are 2 ft from any wall.'], lines)
 
 
-def test_report_locates_unsupported_awning_and_covered_opening():
+def test_report_ignores_supported_roof_and_preserves_covered_opening():
     walls = rect_walls(0, 0, 30, 20)
     roof = section([0, 0, 30, 20])
-    # Too high for L1: it cannot attach, but the front window still locates it.
+    # Supported roofs neither snap to the wall top nor produce joint issues,
+    # even when their eave is above the wall. Their opening remains untouched.
     b = building(walls, [roof], [awning(roof, 10, 20, eave=12)])
     b['openings'] = [{'id': _id('opening'), 'kind': 'window', 'wall': walls[0]['id'],
                       'at': 15, 'width': 3, 'sill': 3, 'head': 7, 'src': {'person': True}}]
     before = copy.deepcopy(b)
-    expected = 'The awning over the window on the front has no wall to hang from.'
-    check(tj().report(b) == [expected], tj().report(b))
+    check(tj().report(b) == [], tj().report(b))
     check(b == before, 'report is read-only')
-    b['roof']['extensions'].append(copy.deepcopy(b['roof']['extensions'][0]))
-    check(tj().report(b) == ['2 awnings over the window on the front have no wall to hang from.'],
-          tj().report(b))
+    supported = next(s for s in b['roof']['sections'] if s.get('support'))
+    check(supported['plate'] == 12 and supported['level'] == 'L2' and not supported.get('host'),
+          'migration retains the eave and drawing while the upper floor has no host wall')
+    check(supported.get('state') != 'ghost' and supported['rect'] == [10, -3, 20, 0],
+          'a missing wall on its stored floor keeps the old supported roof plane visible')
+    duplicate = copy.deepcopy(supported); duplicate['id'] += '-copy'
+    b['roof']['sections'].append(duplicate)
+    check(tj().report(b) == [], 'multiple supported roofs remain outside the joint report')
     b['openings'].clear()
     lines = tj().report(b)
-    check(lines == ['2 awnings on the front have no wall to hang from.'], lines)
+    check(lines == [], lines)
     no_raw_ids(b, lines)
 
 
@@ -523,7 +548,7 @@ SCENARIOS = (
     test_report_counts_corners_instead_of_wall_ends,
     test_report_names_rear_and_formats_feet,
     test_report_collapses_identical_roof_lines,
-    test_report_locates_unsupported_awning_and_covered_opening,
+    test_report_ignores_supported_roof_and_preserves_covered_opening,
     test_build_runs_snap,
     test_edit_runs_snap,
 )

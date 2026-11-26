@@ -59,7 +59,9 @@ def _fresh(photos=2):
     plan, _ = twin_compose.compose(plan, KIT, seed=1)
     for i in range(photos):
         ts.save_source('photo', f'p{i}.jpg', _jpeg())
-    return ts.push_round(plan, 'draft'), plan
+    rid = ts.push_round(plan, 'draft')
+    # The baseline is the raw connected model this draft stored.
+    return rid, ts.current()
 
 
 class Critic:
@@ -144,10 +146,10 @@ def scenario_director_rounds_do_not_rerun_compose():
     _run(Critic(revise))
     cur = ts.current()
     ids = {i.get('id') for i in cur['site']['planting']}
-    check(gone['id'] not in ids, 'the removed shrub stays removed')
-    check(gone['id'] in cur['site']['compose_overrides']['removed'], 'and is remembered for any later recompose')
+    check(gone['id'] in ids, 'an omitted shrub is kept')
+    check(gone['id'] not in cur['site']['compose_overrides']['removed'], 'no removal is recorded')
     _run(Critic())
-    check(gone['id'] not in {i.get('id') for i in ts.current()['site']['planting']}, 'a second round does not bring it back')
+    check(gone['id'] in {i.get('id') for i in ts.current()['site']['planting']}, 'a second round keeps it too')
 
 
 def scenario_assets_outside_the_kit_are_refused():
@@ -181,7 +183,7 @@ def scenario_unchanged_hand_items_are_never_refused():
     check(not any('rocker' in n or 'Pine Small' in n for n in result.get('notes', [])), result.get('notes'))
 
 
-def scenario_omitted_keys_mean_unchanged_and_empty_means_delete():
+def scenario_omitted_keys_and_empty_lists_keep_existing_pieces():
     rid, plan = _fresh()
 
     def partial(site, mats):
@@ -199,7 +201,7 @@ def scenario_omitted_keys_mean_unchanged_and_empty_means_delete():
         site['edges'] = []
         return site, mats
     _run(Critic(clear_edges), run='run-2')
-    check(ts.current()['site']['edges'] == [], 'an explicit empty list deletes')
+    check(ts.current()['site']['edges'] == plan['site']['edges'], 'an explicit empty list keeps edges')
 
 
 def scenario_director_colours_are_validated():
@@ -296,7 +298,10 @@ def scenario_director_requests_over_the_size_budget_are_refused():
 
 def scenario_round_cap_is_five_per_run():
     _fresh()
-    critic = Critic()
+    def material_each_round(site, mats):
+        mats['roof']['color'] = f'#{len(critic.calls):06x}'
+        return site, mats
+    critic = Critic(material_each_round)
     for i in range(tc.ROUND_CAP):
         result, err = _run(critic, run='cap-run')
         check(err is None, f'round {i + 1}: {err}')
@@ -326,7 +331,8 @@ def scenario_a_revert_during_a_critique_wins():
     p2 = copy.deepcopy(ts.current())
     p2['materials']['trim']['color'] = '#eeeeee'
     second = ts.push_round(p2, 'hand', base=first)
-    critic = Critic(on_call=lambda: ts.revert(first))           # a parent reverts while the model thinks
+    critic = Critic(lambda site, mats: (site, {**mats, 'roof': {**mats['roof'], 'color': '#123456'}}),
+                    on_call=lambda: ts.revert(first))           # a parent reverts while the model thinks
     result, err = _run(critic, base=second)
     check(err is None and result['stale'] is True, result)
     check(ts.rounds()[-1]['stale'] is True and ts.rounds()[-2]['kind'] == 'revert', ts.rounds()[-2:])
@@ -363,13 +369,131 @@ def scenario_critique_route():
         model_pools.call_pool_json = orig
 
 
+def _finished_yard():
+    """Invented owner-shaped yard; no household data in fixtures or logs."""
+    _fresh(photos=0)
+    plan = ts.current()
+    site = plan['site']
+    site['planting'] = [dict(id=f'plant-{i}', kind='shrub', preset=KIT['shrubs'][0],
+                             at=[60 + i, -60], height=4, seed=i,
+                             **({'by': 'compose', 'read_geometry': {'at': [60 + i, -60]}}
+                                if i % 2 else {'src': {'person': True}})) for i in range(12)]
+    site['beds'] = [dict(id=f'bed-{i}', polygon=[[60, -50], [70, -50], [70, -45], [60, -45]],
+                         by='compose') for i in range(2)]
+    site['edges'] = [dict(id='edge-1', points=[[60, -50], [70, -50]], src={'person': True})]
+    site['furniture'] = [dict(id='chair-1', asset='personal:chair', at=[50, -60], rotation=90)]
+    site['terraces'] = []  # populate a valid pad through the shared validator below
+    from services import twin_terrain
+    site['terraces'] = [dict(id='pad-1', polygon=[[60, -70], [70, -70], [70, -65], [60, -65]],
+                             height=0, edge='slope')]
+    check(twin_terrain.pad_error(site['terraces'][0]) is None, 'valid synthetic terrace')
+    site['fence'] = dict(id='fence-1', points=[[80, -70], [80, -40]], height=4)
+    site['fire_pit'] = dict(id='fire-1', at=[60, -80], radius=3)
+    plan, _ = twin_plan.normalize(plan)
+    check(plan['site']['fence'] and plan['site']['fire_pit'], 'valid synthetic fixtures')
+    ts.push_round(plan, 'hand', base=ts.current_id())
+    return ts.current()
+
+
+def scenario_finished_yard_sparse_patch_is_one_undoable_round():
+    before = _finished_yard()
+    base, rounds = ts.current_id(), len(ts.rounds())
+    patch = {'planting': [{'id': 'plant-0', 'height': 7},
+                          {'id': 'new-plant', 'kind': 'shrub', 'preset': KIT['shrubs'][0], 'at': [90, -60]},
+                          {'kind': 'tree', 'preset': KIT['backdrop_trees'][0], 'at': [90, -80]}]}
+    result, err = _run(Critic(lambda site, mats: (patch, {})))
+    check(err is None, err)
+    after = ts.current()
+    check(len(after['site']['planting']) == 14, 'omissions retained; unknown and absent ids add pieces')
+    changed = after['site']['planting'][0]
+    check(changed == before['site']['planting'][0], 'existing plant is only a suggestion')
+    check(after['site']['planting'][1:12] == before['site']['planting'][1:], 'all other plants retained')
+    check(any('changing 1 plant' in n for n in result['notes'])
+          and not any('removing' in n for n in result['notes']), result['notes'])
+    check(len(ts.rounds()) == rounds + 1, 'one history step per round')
+    ts.revert(base)
+    check(ts.current() == before, 'undo restores the entire yard')
+
+
+def scenario_finished_yard_removal_suggestions_never_apply():
+    for key in ('planting', 'beds', 'edges', 'furniture', 'hardscape', 'terraces'):
+        for suggestion in ([], None, {'remove': True}):
+            before = _finished_yard()
+            merged, notes = twin_plan.overlay_director(before, {'site': {key: suggestion}})
+            check(merged['site'][key] == before['site'][key], (key, suggestion))
+            if before['site'][key]:
+                check(any(f'removing {len(before["site"][key])} ' in n and 'nothing was changed' in n
+                          for n in notes), notes)
+    before = _finished_yard()
+    for marker in ({'remove': True}, {'delete': True}, {'deleted': True}, {'_delete': True},
+                   {'op': 'remove'}, {'action': 'delete'}, {'state': 'ghost'}, {'state': 'proposal'}):
+        merged, notes = twin_plan.overlay_director(before, {'site': {'planting': [{'id': 'plant-0', **marker}]}})
+        check(merged['site']['planting'] == before['site']['planting'], marker)
+        check(any('removing 1 plant; nothing was changed' in n for n in notes), notes)
+
+
+def scenario_non_list_site_values_are_kept_with_notes():
+    before = _finished_yard()
+    for key in ('fire_pit', 'fence', 'lot', 'pool', 'compose_overrides'):
+        for value in (None, [], {'radius': 99}, 'remove'):
+            merged, notes = twin_plan.overlay_director(before, {'site': {key: value}})
+            check(merged['site'][key] == before['site'][key], (key, value))
+            label = 'saved yard edits' if key == 'compose_overrides' else key.replace('_', ' ')
+            check(any(label in n and ('suggested' in n or 'Kept' in n) for n in notes), notes)
+
+
+def scenario_every_existing_piece_is_only_a_suggestion():
+    before = _finished_yard()
+    # Fire pits and fences also have legacy list forms; they follow the same rule.
+    for key in ('fire_pit', 'fence'):
+        before['site'][key] = [before['site'][key], {**before['site'][key], 'id': key + '-2'}]
+    for key in ('planting', 'beds', 'edges', 'furniture', 'hardscape', 'terraces', 'fire_pit', 'fence'):
+        original = before['site'][key]
+        check(original, ('fixture has pieces', key))
+        patch = {'id': original[0]['id'], 'name': 'Updated name'}
+        after, _ = twin_plan.overlay_director(before, {'site': {key: [patch]}})
+        check(after['site'][key] == original, key)
+        for suggestion in ([], None, [{'id': original[0]['id'], 'delete': True}]):
+            after, _ = twin_plan.overlay_director(before, {'site': {key: suggestion}})
+            check(after['site'][key] == original, (key, suggestion))
+    result, err = _run(Critic(lambda site, mats: ({'planting': [{'id': 'plant-0', 'at': None}]}, {})))
+    check(err is None, err)
+    check(ts.current()['site']['planting'] == before['site']['planting'], 'invalid edit cannot normalize a plant away')
+
+
+def scenario_off_kit_updates_keep_all_existing_fields():
+    before = _finished_yard()
+    patch = {'planting': [{'id': 'plant-0', 'preset': 'Palm Royal', 'height': 9}],
+             'furniture': [{'id': 'chair-1', 'asset': 'polyhaven:hot_tub_9000', 'rotation': 45}]}
+    result, err = _run(Critic(lambda site, mats: (patch, {})))
+    check(err is None, err)
+    after = ts.current()['site']
+    check(after == before['site'], 'all changes to existing pieces are suggestions')
+    check(any('changing 1 plant' in n for n in result['notes'])
+          and any('changing 1 furnishing' in n for n in result['notes']), result['notes'])
+    # An existing off-kit piece may still be moved without being refused.
+    result, err = _run(Critic(lambda site, mats: ({'furniture': [{'id': 'chair-1', 'rotation': 10}]}, {})), run='move')
+    check(err is None and ts.current()['site']['furniture'][0]['rotation'] == before['site']['furniture'][0]['rotation'], err)
+
+
+def scenario_new_piece_id_cannot_steal_another_lists_identity():
+    before = _finished_yard()
+    new_bed = {**before['site']['beds'][0], 'id': 'plant-0'}
+    result, err = _run(Critic(lambda site, mats: ({'beds': [new_bed]}, {})))
+    check(err is None, err)
+    after = ts.current()['site']
+    check(after['planting'] == before['site']['planting'], 'all existing plant identities and fields survive')
+    check(after['beds'] == before['site']['beds'], 'a colliding id is refused')
+    check(result['notes'], 'duplicate identity is explained')
+
+
 if __name__ == '__main__':
     for fn in (scenario_a_round_changes_only_site_and_materials,
                scenario_the_call_carries_brief_photos_and_renders,
                scenario_director_rounds_do_not_rerun_compose,
                scenario_assets_outside_the_kit_are_refused,
                scenario_unchanged_hand_items_are_never_refused,
-               scenario_omitted_keys_mean_unchanged_and_empty_means_delete,
+               scenario_omitted_keys_and_empty_lists_keep_existing_pieces,
                scenario_director_colours_are_validated,
                scenario_a_failed_model_call_is_still_costed,
                scenario_a_second_concurrent_critique_is_refused,
@@ -379,6 +503,12 @@ if __name__ == '__main__':
                scenario_round_cap_is_five_per_run,
                scenario_checkpoint_blocks_a_round,
                scenario_a_revert_during_a_critique_wins,
-               scenario_critique_route):
+               scenario_critique_route,
+               scenario_finished_yard_sparse_patch_is_one_undoable_round,
+               scenario_finished_yard_removal_suggestions_never_apply,
+               scenario_non_list_site_values_are_kept_with_notes,
+               scenario_every_existing_piece_is_only_a_suggestion,
+               scenario_off_kit_updates_keep_all_existing_fields,
+               scenario_new_piece_id_cannot_steal_another_lists_identity):
         fn()
         print('  ok ', fn.__name__)

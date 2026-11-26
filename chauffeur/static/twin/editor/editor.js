@@ -28,7 +28,7 @@ import { createDock } from './dock.js';
 import { mountDialogs } from './dialog.js';
 import { createContextMenu } from './context_menu.js';
 import { houseMaterialsShelf } from './house_materials.js';
-import { createVisibility } from './visibility.js';
+import { createVisibility, existingPostIds, postParentId } from './visibility.js';
 
 const el = id => document.getElementById(id);
 const notSaved = label => `${label} ${label === 'The selected pieces' ? 'were' : 'was'} not saved`;
@@ -57,7 +57,9 @@ export async function boot() {
       if (typeof value.id === 'string') ids.push(value.id);
       for (const child of Object.values(value)) if (typeof child === 'object') visit(child);
     }
-    visit(plan); return ids;
+    visit(plan);
+    ids.push(...existingPostIds(plan));
+    return ids;
   };
   function loadVisibility(houseId, plan) {
     visibilityHouse = houseId || 'current'; visibilityLoaded = true;
@@ -69,8 +71,10 @@ export async function boot() {
     const building = candidate?.building ?? candidate?.buildingId;
     const owner = shownPlan()?.buildings?.find(b => b.id === building);
     const piece = [...(owner?.anchors || []), ...(owner?.items || []), ...(shownPlan()?.site?.furniture || []), ...(shownPlan()?.site?.planting || [])].find(p => p.id === id);
-    return visibility.isPickable(piece?.device ? { ...candidate, visibilityKind: 'device' }
-      : piece?.object_kind === 'lamp' ? { ...candidate, visibilityKind: 'fixture' } : candidate);
+    const postParent = candidate?.kind === 'porch_post' && !candidate.parentPieceId && !candidate.porchId ? postParentId(owner, id) : null;
+    const enriched = postParent ? { ...candidate, parentPieceId: postParent } : candidate;
+    return visibility.isPickable(piece?.device ? { ...enriched, visibilityKind: 'device' }
+      : piece?.object_kind === 'lamp' ? { ...enriched, visibilityKind: 'fixture' } : enriched);
   };
   const unsubscribeVisibility = visibility.subscribe(({ hidden, hiddenKinds }) => {
     view?.setHiddenPieces?.(hidden, hiddenKinds);
@@ -197,14 +201,12 @@ export async function boot() {
     },
     onChange(change) {
       syncSaveState();
-      const rebuild = rollback || change.dropped.length > 0;
       rollback = false;
       if (!pushing && optimistic && change.plan && JSON.stringify(change.plan) !== lastScene) {
         sceneWork = sceneWork.catch(report).then(async () => {
           const plan = queue.shown(), signature = JSON.stringify(plan);
           if (signature === lastScene) return;
-          if (rebuild) await view?.rebuild(plan);
-          else await settleView(plan, {});
+          await settleView(plan, {});
           lastScene = signature;
           tools?.refresh(); library?.refresh();
         });
@@ -240,7 +242,7 @@ export async function boot() {
     const piece = ['walls', 'rooms', 'openings', 'joints', 'anchors', 'items']
       .flatMap(list => building?.[list] || []).find(p => p.id === id);
     const result = await view.settle(plan, { buildingId, levelId: info.levelId ?? piece?.level ?? null,
-      touched: info.touched ?? null, selection });
+      touched: info.touched ?? null, selection, timing: info.timing ?? null });
     if (result.selection !== selection) tools?.select(result.selection);
     return result;
   }
@@ -468,7 +470,7 @@ export async function boot() {
     const plan = timeline?.preview() || previewPlan(), signature = JSON.stringify(plan);
     const changed = signature !== lastScene;
     if (view && changed) {
-      await view.rebuild(plan, { timing });
+      await settleView(plan, { timing });
       view.scene.background?.set?.('#171e27');
       lastScene = signature;
       // The first view of the house: from the street, past the yard's plants (M3).

@@ -158,7 +158,7 @@ check('mounted mode, drawer and wall link show the same decisions on pushes and 
   settings=mountEnergySettings(t.view,{api:async()=>({ok:true,json:async()=>preferences})});await settings.reload();
   const s=t.live.energy();assert.equal(s.check.summary,'Ribbons showing: 3');
   assert.deepEqual(s.check.flows.filter(r=>r.shown).map(r=>r.id).sort(),s.ribbons.filter(r=>r.visible).map(r=>r.id).sort());
-  const legend=document.getElementById('twin-mode-legend'),link=legend.querySelector('a');
+  const legend=document.getElementById('twin-mode-key'),link=legend.querySelector('a');
   window.chfOpenSettings=(...args)=>{opened=args;};await press(link);assert.deepEqual(opened,['twin','twin-energy-check']);delete window.chfOpenSettings;
   assert.equal(document.querySelector('#twin-energy-check [data-energy-summary]').textContent,s.check.summary);
   t.states['sensor.solar_power'].state='0';t.states['sensor.grid_power'].state='1500';t.states['sensor.house_power'].state='500';await t.live.refresh();
@@ -176,7 +176,8 @@ check('mounted mode, drawer and wall link show the same decisions on pushes and 
   assert.deepEqual(t.live.energy().ribbons.filter(r=>r.visible).map(r=>[r.id,r.watts]),[['grid:house',1800]]);
   settings.stop();settings=null;await press(link);assert.equal(link.getAttribute('aria-expanded'),'true');
   assert.equal(legend.querySelector('[data-energy-summary]').textContent,t.live.energy().check.summary);
-  t.live.setMode('all');assert.equal(legend.querySelector('a'),null);t.live.setMode('energy');assert.ok(legend.querySelector('a'));
+  t.live.setMode('all');assert.ok(legend.querySelector('a'));t.live.toggleMode('energy');assert.equal(legend.querySelector('a'),null);
+  t.live.toggleMode('energy');assert.ok(legend.querySelector('a'));
  }finally{delete window.chfOpenSettings;settings?.stop();section.remove();t.cleanup();}
  assert.equal(document.querySelector('.twin-energy-check'),null);
 });

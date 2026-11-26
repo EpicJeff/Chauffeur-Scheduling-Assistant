@@ -25,7 +25,7 @@ What the page must give (the brief):
   sensors: their reading.
 - A mode strip with buttons `Lights` and `All`. In Lights mode each linked room's
   floor glows by the mean brightness / 255 of its lights that are on (dark when
-  every light is off), tinted by rgb_color when present; non-light markers dim.
+  every light is off), tinted by rgb_color when present; disabled mode markers hide.
   live.rooms() reports [{building, room, glow, rgb}].
 - Under ?panel=true&kiosk=true: the house, the mode strip and the room panel;
   never an editing link.
@@ -209,11 +209,11 @@ def scenario_lights_mode_lights_rooms():
 
         H = L.H
         # Slice 2c-2: All lights rooms too, so the unlit reference is a mode without lighting.
-        page.get_by_role('button', name='Security', exact=True).locator('visible=true').first.click()
+        page.get_by_role('button', name='Security', exact=True).locator('visible=true').first.click(modifiers=['Shift'])
         H.settle(page, 3)
         plain = samples()
 
-        lights.first.click()
+        lights.first.click(modifiers=['Shift'])
         H.settle(page, 4)
         rooms = {r['room']: r for r in page.evaluate('() => window.__twin.live.rooms()')}
         kitchen, changing, hall = rooms.get(L.KITCHEN), rooms.get(L.CHANGING), rooms.get(L.HALL)
@@ -224,9 +224,8 @@ def scenario_lights_mode_lights_rooms():
         check(hall['glow'] == 0, ('every light off: dark', hall))
         rows = L.markers(page)
         for m in rows:
-            want = m['kind'] != 'light'
-            check(m['dim'] is want, ('Lights mode dims what is not a light', m))
-        check(L.drawn_dim(L.sprite(page, 'dev-back-lock')), ('the lock is drawn dimmed', L.sprite(page, 'dev-back-lock')))
+            check(m['dim'] is False, ('fresh markers never dim by mode', m))
+        check(not L.sprite(page, 'dev-back-lock')['visible'], ('inactive security marker hides', L.sprite(page, 'dev-back-lock')))
         check(L.drawn_full(L.sprite(page, 'dev-k-lamp')), ('a light is drawn full', L.sprite(page, 'dev-k-lamp')))
         lit = samples()
         rise = (lum(lit['kitchen']) - lum(lit['hall'])) - (lum(plain['kitchen']) - lum(plain['hall']))

@@ -1,4 +1,8 @@
 import { visibilityKind } from '../twin_visibility.js';
+import { porchPosts, findPost } from '../porch_posts.js';
+
+export const existingPostIds = plan => (plan?.buildings || []).flatMap(b => porchPosts(b).map(p => p.id));
+export const postParentId = (building, id) => (building && findPost(building, id)?.porchId) || null;
 
 const fields = ['hidden', 'locked', 'hiddenKinds', 'lockedKinds'];
 export function createVisibility({ houseId = 'current', storage } = {}) {
@@ -47,7 +51,9 @@ export function createVisibility({ houseId = 'current', storage } = {}) {
     isPickable(candidate) {
       const id = candidate?.id ?? candidate?.pieceId, kind = candidate?.visibilityKind ?? candidate?.kind;
       const building = candidate?.building ?? candidate?.buildingId;
+      const parent = candidate?.parentPieceId ?? candidate?.porchId;
       return !!candidate && !isHidden(id, kind) && !isLocked(id, kind)
+        && (!parent || !isHidden(parent) && !isLocked(parent))
         && !isHidden(building) && !isLocked(building) && !isHidden(candidate.level) && !isLocked(candidate.level);
     },
     forHouse(nextHouse, existingIds) {

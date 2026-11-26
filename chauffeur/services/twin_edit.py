@@ -6,6 +6,7 @@ import re
 
 from services.twin_timing import timed as _edit_timed
 from services import twin_joints, twin_plan, twin_register
+from services.twin_model_supports import CHOICE_FIELDS, carry_fields, edge_pairs
 
 
 EDITABLE = {
@@ -228,8 +229,9 @@ def _set(kind, piece, building, field, value, ha_catalogue=None):
     old_roof = deepcopy(piece) if kind == 'roof' and field == 'kind' else None
     piece[field] = deepcopy(value)
     if kind == 'roof':
+        closed = {k:v for k,v in piece.get('ends', {}).items() if k.isdigit()}
         if field == 'ridge' and piece.get('ends'):
-            piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items()}
+            piece['ends'] = {f'{value}{end[-1]}': style for end, style in piece['ends'].items() if not end.isdigit()}
         if field == 'pitch':
             piece['pitch_source'] = 'person'
             piece.pop('pitches', None)
@@ -251,6 +253,7 @@ def _set(kind, piece, building, field, value, ha_catalogue=None):
                 if (old_roof.get('ends', {}).get(end, old_roof['kind']) in ('gable', 'clip')
                         and (value in ('shed', 'flat') or piece.get('ends', {}).get(end, value) == 'hip')):
                     raise ValueError('A window sits in that gable; move or delete it first.')
+        if closed: piece['ends'] = {**piece.get('ends', {}), **closed}
         _choose_roof(building, piece)
     if kind == 'opening':
         _opening_valid(building, piece)
@@ -435,7 +438,7 @@ def _choose_roof(building, piece):
         return False
     roof = building['roof']
     choice = {k: deepcopy(piece[k]) for k in
-              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side') if k in piece}
+              ('kind', 'ridge', 'ends', 'pitch', 'plate', 'overhang', 'low_side', *CHOICE_FIELDS) if k in piece}
     choice.update(rect=deepcopy(block), src={'person': True})
     def same_rect(rect):
         return bool(rect and len(rect) == 4
@@ -593,7 +596,7 @@ def _apply_legacy(plan, edit, ha_catalogue=None):
 
 
 @_edit_timed('apply')
-def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_inplace=False):
+def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=None, _batch_inplace=False, _column_changes=None):
     """Translate the old editor vocabulary at the connected-model boundary."""
     from services import twin_model_ops as ops, twin_model_bridge as bridge
     from services import twin_model_hosts as hosts, twin_model_roofs as roofs, twin_model, twin_objects
@@ -603,7 +606,7 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
     op = edit.get('op')
     if op == 'batch':
         return ops.apply_batch(model, edit, ha_catalogue=ha_catalogue,
-                               _normalized=_normalized, apply_member=apply_model)
+                               _normalized=_normalized, apply_member=apply_model, _column_changes=_column_changes)
     if (op == 'set' and edit.get('field') == 'ha_area' or op == 'place_device'
             or edit.get('list') == 'yard_rooms' and 'ha_area' in edit) and ha_catalogue is None:
         from services import twin_ha
@@ -709,12 +712,17 @@ def apply_model(model, edit, validated=None, ha_catalogue=None, *, _normalized=N
                 replacement = next((p for p in fresh[name] if p['id'] == piece['id']), None)
                 if replacement is not None:
                     if name == 'roofs':
-                        for edge, old_edge, (a, b), (c, d) in zip(replacement['edges'], piece['edges'],
-                                roofs._segments(replacement['area']), roofs._segments(piece['area'])):
+                        carry_fields(piece, replacement)
+                        for target_index, source_index in edge_pairs(piece, replacement):
+                            edge, old_edge = replacement['edges'][target_index], piece['edges'][source_index]
+                            a, b = roofs._segments(replacement['area'])[target_index]
+                            c, d = roofs._segments(piece['area'])[source_index]
                             axis = 0 if abs(a[0] - b[0]) < 1e-9 else 1
                             if 'wall' in old_edge:
                                 edge.update(wall=old_edge['wall'],
                                             wall_offset=old_edge.get('wall_offset', 0) + a[axis] - c[axis])
+                                if 'wall_along_offset' in old_edge:
+                                    edge['wall_along_offset'] = old_edge['wall_along_offset'] + a[1-axis] - c[1-axis]
                     piece.clear()
                     piece.update(deepcopy(replacement))
                     _mark(piece)
@@ -882,7 +890,7 @@ def _tombstone(kind, piece, building):
 
 # Caches the model derives from walls and joints (a person never edits them),
 # and provenance marks (who owns a piece is not a reader's error).
-_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|porches\[[^\]]+\]\.polygon|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
+_DERIVED_PATH = re.compile(r'(^|\.)(rooms\[[^\]]+\]\.(polygon|joints)|porches\[[^\]]+\]\.polygon|porches_detail|joints|walls\[[^\]]+\]\.footprint|src)(\[|\.|$)')
 
 
 def _derived_path(path):
@@ -932,7 +940,11 @@ def save(edit, actor_id, reason=''):
         preserve_polygons = twin_model_ops.preserves_room_geometry(edit)
         normalized = ((deepcopy(current), []) if twin_store.current_is_normalized()
                       else twin_model.normalize(current, preserve_room_polygons=preserve_polygons))
-        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized)
+        column_changes = []
+        model, summary = apply_model(current, edit, ha_catalogue=ha_catalogue, _normalized=normalized, _column_changes=column_changes)
+        if model == current and (edit.get('op') == 'set_roof_support' or twin_model_ops.roof_support_noop(current, edit)):
+            round_id = twin_store._state()['current']
+            return {'round': round_id, 'lighting': twin_store.round_lighting(round_id), 'summary': summary, 'model': current}
         after = twin_model_bridge.flatten(model)
         # The fix log compares against the house as every op sees it (normalized),
         # so a pass's own re-derive is never logged as the person's fix.
@@ -981,6 +993,32 @@ def save(edit, actor_id, reason=''):
                     'reason': reason.strip() or summary, 'actor_id': actor_id}
                    for path in twin_plan.diff_paths(logged_before, after)
                    if twin_store._fix_kind(path) is not None and not _derived_path(path)]
+        # Following is derived. Batch column edits were observed inside the
+        # successful compose; never replay an edit just to describe its log.
+        if any(m.get('op') in twin_model_ops.twin_porch_posts.FOLLOW_OPS for m in members) or column_changes:
+            changes = [c for c in changes if '.columns[' not in c['path']]
+            for prior, current_flat in column_changes:
+                for path in twin_plan.diff_paths(prior,current_flat):
+                    if '.columns[' not in path or _derived_path(path):
+                        continue
+                    old_value, new_value = twin_store._leaf(prior,path), twin_store._leaf(current_flat,path)
+                    if isinstance(old_value,dict) and isinstance(old_value.get('id'),str):
+                        # Minted metadata did not exist on the person's old
+                        # column. Keep the before value faithful to that round.
+                        raw = twin_store._leaf(logged_before,path)
+                        if raw is None:
+                            old_value = {k:v for k,v in old_value.items() if k != 'id'}
+                    changes.append({'path':path,'kind':twin_store._fix_kind(path),
+                                    'before':old_value,'after':new_value,
+                                    'reason':reason.strip() or summary,'actor_id':actor_id})
+        # An id-less first deletion uses its old index. Its replacement at that
+        # index is not an after value for the removed row.
+        post_deletes = [m for m in members if isinstance(m,dict) and m.get('op') == 'delete_porch_post']
+        if not column_changes:
+            for change in changes:
+                if change['before'] is not None and re.search(r'\.columns\[[^\]]+\]$',change['path']) and any(
+                        f"buildings[id={m['building']}].porches[id={m['porch']}].columns[" in change['path'] for m in post_deletes):
+                    change['after'] = None
         def metadata(row):
             if place_row is not None:
                 row['place'], row['page_roles'] = place_row['place'], place_row['page_roles']
