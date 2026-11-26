@@ -1,7 +1,12 @@
 # Library Models mode: design
 
-Status: draft for owner approval, 2026-11-23. First of four projects the owner ordered: (1) Models mode,
+Status: drafted 2026-11-23, paused for models in the bake (v2.499.995), revised against v2.499.1006 and
+approved by the owner 2026-11-26. First of four projects the owner ordered: (1) Models mode,
 (2) multi-model imports, (3) anchors and lights, (4) doors that open. Only (1) is designed here.
+
+The owner's night verdict on baked model lighting (needs-you "Judge model lighting on device") is still
+open. It does not block this project: model lighting reads the material live, and this project changes
+only what feeds the bake's shadow key (see Constraints, Bake).
 
 ## Intent
 
@@ -149,11 +154,27 @@ material library the single source of every look.
   - No new sampler on any lit program.
   - Report programs before/after on the owner's house with overrides applied.
   - Report LOD rebuild time for a 300k and a 1M triangle model.
-- **Bake.** Placed models are render-only today (`loadModel` marks them `bakeExcluded`), so they are
-  neither lit surfaces nor shadow casters in the lightmap. Overrides and size/turn fixes therefore must
-  NOT touch the bake fingerprint. A new per-copy key must be stripped from the geometry key like
-  `materials` (`bake/geometry_key.js`), or it would invalidate the atlas for nothing. *(Corrected after
-  the builder check.)*
+- **Bake** (revised 2026-11-26; models joined the bake in v2.499.995).
+  - Placed models are not lit surfaces in the lightmap (their geometry stays `bakeExcluded`) and are
+    left out of the atlas key (`bake/geometry_key.js`). They ARE shadow casters: each lamp's bake draws
+    every nearby copy's **mid** detail level as an occluder (`bake/model_occluder_meshes.js`, the
+    `node.levels[1]` walk), skipping parts whose material is transparent, alpha-tested, `glass` or
+    `fixture`. A model's own lighting comes from the per-lamp visibility grid plus live falloff and N.L
+    (`bake/model_bricks.js`, `model_lighting.js`), so it reads the material live.
+  - Today the per-lamp occluder hash (`occluderHash` in `bake/model_occluders.js`) covers only each
+    copy's id, asset, position, rotation, scale and `castsShadow`. This project adds three things that
+    change a shadow without changing those fields, so each must enter that hash for the copies of the
+    model concerned:
+    1. the model's size/turn fix (`fix`), or equivalently the copy's effective transform after the fix;
+    2. the mid detail level's identity: its percentage plus a revision of the generated mid file, so a
+       rebuild at the same percentage from a new original still counts;
+    3. per part, whether the resolved material casts a shadow (the same opacity test the occluder walk
+       uses), after per-copy and model overrides resolve.
+  - Only lamps whose reach includes an affected copy go stale, as today. Material colour, texture,
+    texture mode (real size or model's own) and the full and far percentages stay OUT of every bake key.
+  - New per-copy override fields stay out of the atlas key, as placement fields already are.
+  - The editor bake and the viewer status must agree on staleness; the editor's grid check gains the same
+    inputs.
 - **Part identity must be stable across the original and the generated levels.** GLTFExporter keeps
   material names but may reorder.
   - The part key is the original material's name.
@@ -177,6 +198,38 @@ material library the single source of every look.
   material library. Unknown keys are refused, not dropped silently. Deleting a library material that a
   model or placement uses follows the material library's existing in-use rule.
 
+## Settled after the second builder check (2026-11-26, Claude's calls)
+
+- **Opening models (doors, windows) are in scope.** They get the turn fix, part overrides at both layers
+  and detail levels. The size fix does not apply to them (`fitOpening` stretches every opening model to
+  its opening), and the Library says so on a door or window model. Their per-copy field is
+  `model_materials`, because openings already carry a `materials` map of finish kinds (`pane`,
+  `window_frame`). For the bake, opening copies join the per-lamp occluder hash for the three new inputs
+  (fix, mid-level identity, part shadow casting), so a door-model change stales only nearby lamps and
+  never forces a full atlas rebake. Their geometry already in the atlas key stays there.
+- **Full below 100% is used everywhere the full level is drawn, the editor included.** The original file
+  is kept only as the source for regenerating levels. Triangle counts that drive the over-300k Low
+  stand-in and the import warnings read the effective full level.
+- **The fix and model-default overrides apply inside `loadModel`**, so every consumer gets them: placed
+  copies, openings, cars and Library thumbnails. On a car, a set turn fix replaces the longest-side
+  auto-turn; with no fix the auto-turn stays. Per-copy overrides apply per placement. Cars stay outside
+  the bake.
+- **A copy can return a part to the original material** while the model default overrides it: the
+  per-copy entry `{material: 'original'}` is valid and the server accepts it. The editor row then reads
+  "original (this copy)", and Clear returns it to "from the model".
+
+## Owner decision after the second builder check (2026-11-26)
+
+- **"Model's own" texture size is tiles per UV square.** Each part row in "Model's own" mode has a
+  `Tiles` number (default 1, positive): how many times the material repeats across the model's 0..1 UV
+  square, like tiling on a material instance. It is applied when the part's swapped `uv` attribute is
+  built (author UV times `tiles` times the material's `tile_ft`, so the shared `repeat = 1/tile_ft`
+  yields exactly `tiles` repeats). No per-part material or program. When the library material's tile
+  size changes, the attribute is rebuilt on the next load so the part keeps `tiles` repeats; colour,
+  texture and roughness edits show directly. Data: `materials: {partKey: {material, texture: 'real' |
+  'model', tiles?}}`, `tiles` valid only with `texture: 'model'`; the server refuses it otherwise.
+  `tiles` is outside every bake key.
+
 ## Left to the builder
 
 - Exact UI layout within the page's existing three-column structure, following `docs/ui_design_guide.md`.
@@ -196,4 +249,8 @@ material library the single source of every look.
   - a per-copy override in the editor through the drop menu;
   - a library material edit propagating to a model part;
   - real-size texture on a part with 0..1 UVs and on a part with no UVs;
-  - the bake fingerprint NOT changing.
+  - a colour-only override (opaque to opaque) leaving every bake key unchanged;
+  - a size fix, a mid-percentage change and an opaque-to-glass override each marking only the lamps
+    near that model's copies stale, and a rebake clearing them.
+- Node: `occluderHash` changes for each of the three new inputs and for nothing else (full/far
+  percentages, colour, texture mode).
