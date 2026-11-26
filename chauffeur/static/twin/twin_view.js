@@ -1,10 +1,12 @@
+import { gutterPlacement } from './gutters.js';
+import { porchPosts, postRef } from './porch_posts.js';
 import { createSelectionFocus } from './selection_focus.js';
 import { roomFloor, openingFloor } from './twin_floors.js';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mountEditorCamera } from './editor/camera_controls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles, allPorches } from './twin_generator.js';
+import { buildTwin, FT, PICK_LAYER, polygon, mergeStatic, contains, stairHoles, allPorches, boxGeometry } from './twin_generator.js';
 import { span as editSpan } from './edit_timing.js';
 import { heightAt } from './twin_roof.js';
 import { groundAt, buildingGround } from './twin_ground.js';
@@ -161,6 +163,15 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
   syncStage(plan);
   scene.add(sky.object);
   let twin = null, disposed = false, revision = 0, bakeSignature = null;
+  let generatedPorches = new Map(), generatedColumns = new Map();
+  const pendingPostCover = new Set();
+  const porchGeometry = building => {
+    const porches=allPorches(building),ids=new Set(porches.map(p=>p.id));
+    return JSON.stringify([
+      (building.rooms || []).filter(r=>r.kind==='porch' && ids.has(r.id)).map(r=>[r.id,r.polygon]),
+      porches.map(p=>[p.id,p.polygon]),
+    ]);
+  };
   let rebuildWork = null;
   const materialBindings = new Map();
   scene.environment = environment;
@@ -260,40 +271,13 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     const accent = new THREE.Color(style.getPropertyValue('--editor-accent').trim() || '#52ccff');
     const wallTint = new THREE.Color(style.getPropertyValue('--editor-room-wall').trim() || '#9b7cdb');
     selectionPiecesRevision = twin.pieces.revision;
+    const tints = members.filter(m => (m.building ?? m.buildingId) != null && !['room','porch','level'].includes(m.kind)).flatMap(m => {
+      const id=m.id ?? m.pieceId, building=m.building ?? m.buildingId ?? null;
+      const ids=m.kind === 'roof' ? [id,...(plan.buildings?.find(b=>b.id===building)?.roof?.sections || []).filter(s=>s.roof===id).map(s=>s.id)] : [id];
+      return ids.map(pieceId=>({kind:m.kind,building,pieceId}));
+    });
     view.selectionReady = focusStyle.apply(twin.root, room, accent.getHex(), wallTint.getHex(),
-      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision });
-    if (!room) {
-      const matchesMember = (data, objects, m) => {
-        const mid = m.id ?? m.pieceId, mb = m.building ?? m.buildingId ?? null;
-        if (data.buildingId !== mb) return false;
-        if (data.pieceId === mid || m.kind === 'building') return true;
-        if (m.kind === 'roof') {
-          const section = plan.buildings?.find(b => b.id === mb)?.roof?.sections?.find(s => s.id === data.pieceId);
-          if (section?.roof === mid) return true;
-        }
-        if (m.kind === 'level') {
-          return objects.some(o => {
-            for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${mb}:${mid}`;
-            return false;
-          });
-        }
-        return false;
-      };
-      const styled = new Set();
-      for (const [key, objects] of twin.pieces) {
-        const data = twin.pieceBounds.get(key)?.data;
-        if (!data || !members.some(m => !['room', 'porch', 'level'].includes(m.kind) && matchesMember(data, objects, m))) continue;
-        for (const object of objects) {
-          if (styled.has(object) || !object.material) continue;
-          styled.add(object); selectedMaterials.set(object, object.material);
-          const clone = material => {
-            const next = material.clone(); selectionMaterials.add(next);
-            next.color?.lerp(accent, .32); next.userData.selectionTint = accent.getHex(); return next;
-          };
-          object.material = Array.isArray(object.material) ? object.material.map(clone) : clone(object.material);
-        }
-      }
-    }
+      { pieces: twin.pieces, site: twin.groups.site, yard: yardGroup, piecesRevision: selectionPiecesRevision, members:room ? tints.filter(m=>m.kind==='porch_post') : tints });
     const single = members.length <= 1;
     for (const member of members) outline(member, false, { single });
     outline(hover, true, { single: true });
@@ -379,14 +363,16 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       line.userData.isHover = isHover; line.renderOrder = 10; twin.root.add(line); selectionLines.push(line); return;
     }
     const bldg = buildingId ? plan.buildings.find(b => b.id === buildingId) : null;
-    const keys = [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === buildingId
-      && (data.pieceId === id || pick.kind === 'building'
+    const broad = ['building','roof','level'].includes(pick.kind);
+    const ownKey = `${buildingId}:${id}`, own = !broad && buildingId != null ? twin.pieceBounds.get(ownKey) : null;
+    const keys = own ? [[ownKey,own]] : !broad && buildingId != null ? [] : [...twin.pieceBounds].filter(([, { data }]) => data.buildingId === buildingId
+      && (data.pieceId === id || pick.kind === 'building' && data.kind !== 'porch_post'
         || (pick.kind === 'roof' && bldg?.roof?.sections?.find(s => s.id === data.pieceId)?.roof === id)
         || pick.kind === 'level'
           && bldg?.levels.some(l => l.id === id)
           && twin.pickObjects.get(`${data.buildingId}:${data.pieceId}`)?.parent?.userData.levelKey === `${buildingId}:${id}`));
     for (const [key] of keys) {
-      const proxy = twin.pickObjects.get(key); if (!proxy) continue;
+      const proxy = twin.pickObjects.get(key); if (!proxy?.geometry.attributes.position?.count) continue;
       const material = new THREE.LineBasicMaterial({ fog: false, color: accent, transparent: true, opacity: isHover ? .65 : 1, depthTest: false });
       let geometry;
       const b = bldg, r = b?.rooms?.find(r => r.id === id);
@@ -501,7 +487,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // must; perspective views can select the roof itself.
     const candidates = [...twin.pickObjects.values()].filter(o => {
       const room = selectionStyle?.room, data = o.userData;
-      if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId))) return false;
+      if (room && (data.buildingId !== room.building || !room.allowed.includes(data.pieceId) && !room.allowed.includes(data.parentPieceId))) return false;
       if (!visible(o) || viewing?.faded(o) || (state.camera === 'top' && o.userData.kind === 'roof')) return false;
       if (camera.isOrthographicCamera && state.view !== 'ext') {
         for (let p = o; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === state.view;
@@ -510,7 +496,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     });
     const hits = raycaster.intersectObjects(candidates, false).filter(hit => {
       const { kind, buildingId, pieceId } = hit.object.userData;
-      if (skip.includes(kind)) return false;
+      if (skip.includes(kind) || kind === 'porch_post' && skip.includes('room')) return false;
       if (viewing && hit.point.y > viewing.cutAt(hit.object) + .02) return false;
       if (kind !== 'room') return true;
       const room = plan.buildings.find(b => b.id === buildingId)?.rooms?.find(r => r.id === pieceId);
@@ -520,6 +506,29 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const point = hit.object.parent.worldToLocal(hit.point.clone()), x = point.x, y = -point.z;
       return contains(room.polygon, [x, y]);
     });
+    // Rank actual column and screen surfaces by distance. The slab proxy can
+    // surround empty air, so keep its owner directly behind the nearest post.
+    const parents = new Map();
+    for (const hit of hits) if (hit.object.userData.kind === 'porch_post') {
+      const d = hit.object.userData, key = `${d.buildingId}:${d.parentPieceId}`;
+      if (!parents.has(key)) parents.set(key, hit);
+    }
+    for (const [key, post] of parents) {
+      const ownerHits = hits.filter(h => `${h.object.userData.buildingId}:${h.object.userData.pieceId}` === key);
+      const owner = twin.pickObjects.get(key);
+      const parent = ownerHits[0] || (owner && candidates.includes(owner) && {...post,object:owner}); if (!parent) continue;
+      const exactHits = [];
+      for (const {object,group} of parent.object.userData.partObjects || []) {
+        if (!visible(group) || viewing?.faded(group)) continue;
+        object.matrixWorld.multiplyMatrices(group.matrixWorld, object.matrix); object.raycast(raycaster, exactHits);
+      }
+      const screen = exactHits.filter(h => h.object.userData.part === 'screen' && (!viewing || h.point.y <= viewing.cutAt(h.object)+.02))
+        .sort((a,b)=>a.distance-b.distance)[0];
+      for (const hit of ownerHits) hits.splice(hits.indexOf(hit),1);
+      if (screen && screen.distance < post.distance) {
+        parent.distance = screen.distance; parent.point = screen.point; hits.push(parent); hits.sort((a,b)=>a.distance-b.distance);
+      } else hits.splice(hits.indexOf(post)+1,0,parent);
+    }
     // Water uses the existing drawn geometry, retained through yard batching.
     // It has no structural proxy and adds no selection mesh or draw call. Only a
     // caller that asks gets a water hit, so every other tool still sees open ground.
@@ -906,17 +915,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     levelFocusMembers(building, level) {
       const ids = new Set([level]);
       twin?.groups.levels[`${building}:${level}`]?.traverse(object => {
-        if (object.userData.pieceId) ids.add(object.userData.pieceId);
+        if (object.userData.pieceId && object.userData.kind !== 'porch_post') ids.add(object.userData.pieceId);
         for (const range of object.userData.snapRanges || object.geometry?.userData.snapRanges || [])
-          if (range.buildingId === building) ids.add(range.pieceId);
+          if (range.buildingId === building && range.kind !== 'porch_post') ids.add(range.pieceId);
       });
+      const b=plan.buildings.find(b=>b.id===building);
+      for (const post of porchPosts(b || {})) if ((b.rooms?.find(r=>r.id===post.porchId)?.level || post.porch.level || b.levels?.[0]?.id) === level) ids.add(post.id);
       return [...ids];
     },
     selectionFloor() { const room = selectedFrame(); return room ? `${room.building}:${room.level}` : editableLevel || state.view; },
     interactionFloor() { const room = selectionStyle?.room; return room ? `${room.building}:${room.level}` : state.view; },
     isInSelectionFocus(candidate) {
       const room = selectionStyle?.room;
-      return !room || (candidate.buildingId ?? candidate.building) === room.building && room.allowed.includes(candidate.pieceId ?? candidate.id);
+      return !room || (candidate.buildingId ?? candidate.building) === room.building && (room.allowed.includes(candidate.pieceId ?? candidate.id) || room.allowed.includes(candidate.parentPieceId ?? candidate.porchId));
     },
     selectionBounds() { return projectSelectionBoxes(currentSelectionBoxes({ fresh: true }).list, camera, renderer3.domElement.getBoundingClientRect()); },
     selectionWorldBounds() { return currentSelectionBoxes().list.map(row => ({ ...row, box: row.box.clone() })); },
@@ -981,7 +992,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       if (sameMaterials) paintHover();
       else paintSelection();
       return value.room ? [...(twin?.pieceBounds.values() || [])].filter(({ data }) =>
-        data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId)).length : 0;
+        data.buildingId !== value.room.building || !value.room.allowed.includes(data.pieceId) && !value.room.allowed.includes(data.parentPieceId)).length : 0;
     },
     async setEditableLevel(key) {
       if (key === editableLevel) return;
@@ -1026,18 +1037,22 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     // through a porch's or a room's pick box for the wall behind it).
     pickAll(clientX, clientY, options = {}) {
       const { hits, waterHits } = pickIntersections(clientX, clientY, options), seen = new Set();
-      return [...hits, ...waterHits].sort((a, b) => a.distance - b.distance).flatMap(hit => {
-        const { kind, pieceId, buildingId = null, part } = hit.object.userData;
+      const ordered = [...hits];
+      for (const hit of waterHits) { const i=ordered.findIndex(h=>h.distance>hit.distance); ordered.splice(i<0?ordered.length:i,0,hit); }
+      return ordered.flatMap(hit => {
+        const { kind, pieceId, parentPieceId, buildingId = null, part } = hit.object.userData;
         const key = JSON.stringify([buildingId, pieceId]); if (seen.has(key)) return [];
         seen.add(key);
         let level = null;
         for (let p = hit.object; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-        return [{ kind, id: pieceId, building: buildingId, pieceId, buildingId, level, distance: hit.distance, part, point: hit.point.toArray() }];
+        return [{ kind, id: pieceId, building: buildingId, pieceId, buildingId, level, distance: hit.distance, part, ...(parentPieceId ? {parentPieceId} : {}), point: hit.point.toArray() }];
       });
     },
     pick(clientX, clientY, { skip = [], water = false } = {}) {
       const { hits, waterHits } = pickIntersections(clientX, clientY, { skip, water });
-      let hit = state.camera === 'top' ? hits.find(h => h.object.userData.kind === 'wall') || hits[0] : hits[0];
+      const wall = state.camera === 'top' && hits.find(h => h.object.userData.kind === 'wall');
+      const post = hits.find(h => h.object.userData.kind === 'porch_post');
+      let hit = wall && (!post || wall.distance <= hits[0].distance) ? wall : hits[0];
       if (waterHits[0] && (!hit || waterHits[0].distance < hit.distance)) {
         const water = waterHits[0], { kind, pieceId, part } = water.object.userData;
         return { kind, id: pieceId, pieceId, part, point: water.point.toArray() };
@@ -1069,10 +1084,10 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       const exact = partHits.find(h => !viewing || h.point.y <= viewing.cutAt(h.object) + .02);
       const proxy = hit.object;
       if (exact) hit = exact;
-      const { pieceId, kind, buildingId, part } = hit.object.userData;
+      const { pieceId, parentPieceId, kind, buildingId, part } = hit.object.userData;
       let level = null;
       for (let p = proxy; p; p = p.parent) if (p.userData.levelKey) { level = p.userData.levelKey.slice(buildingId.length + 1); break; }
-      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, part, point: hit.point.toArray() };
+      return { kind, id: pieceId, building: buildingId, level, pieceId, buildingId, part, ...(parentPieceId ? {parentPieceId} : {}), point: hit.point.toArray() };
     },
     worldBox(id, buildingId) {
       const box = pieceBox(id, buildingId); if (!box) return null;
@@ -1331,7 +1346,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
     },
-    rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false } = {}) {
+    rebuildLevel(buildingId, levelId, flat, touched = null, { keep = false, postPreview = false } = {}) {
       const key = `${buildingId}:${levelId}`, group = twin?.groups.levels[key];
       const before = plan.buildings.find(b => b.id === buildingId), after = flat.buildings.find(b => b.id === buildingId);
       if (!group || !before || !after) return;
@@ -1495,6 +1510,82 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         if (!old || same(old.polygon, room.polygon)) continue;
         update(room.id, (x, y, z) => [x, y, z], room);
       }
+      let postTopology=false;
+      const restorePostStyle=()=>{if(!postTopology){restoreSelection();postTopology=true;}};
+      const oldPorches=new Map(allPorches(before).map(p=>[p.id,p]));
+      for (const porch of allPorches(after)) {
+        const old=oldPorches.get(porch.id), owner=after.rooms.find(r=>r.id===porch.id);
+        if(!old || (owner?.level || porch.level || after.levels[0].id)!==levelId || same(old.columns,porch.columns))continue;
+        const generate=twin.buildings.get(buildingId)?.model.postGeometry.get(porch.id);
+        if(!generate)continue;
+        // Explicit UV transforms share the porch's UV centre. Regenerate that
+        // small set together, copying only its owned ranges into retained batches.
+        for(const [id,fresh] of generate.columns(porch)) {
+          const key=`${buildingId}:${id}`, model=twin.buildings.get(buildingId).model;
+          let record=twin.pieceBounds.get(key),proxy=twin.pickObjects.get(key);
+          if(!proxy && fresh){
+            restorePostStyle();
+            const data={kind:'porch_post',pieceId:id,parentPieceId:porch.id,buildingId,part:'column',bakePart:'column'};
+            const finish=generate.material();let batch=null;
+            generate.group.traverse(o=>{if(!batch && o.isMesh && !o.layers.isEnabled(PICK_LAYER) && o.material===finish && o.userData.snapRanges)batch=o;});
+            if(!batch){const geometry=new THREE.BufferGeometry();for(const [name,size] of [['position',3],['normal',3],['uv',2]])geometry.setAttribute(name,new THREE.BufferAttribute(new Float32Array(0),size));
+              batch=new THREE.Mesh(geometry,finish);Object.assign(batch.userData,data,{merged:true,snapRanges:[]});generate.group.add(batch);}
+            batch.userData.snapRanges.push({...data,start:batch.geometry.attributes.position.count,count:0});
+            model.pieces.set(key,[batch]);record={data,group:generate.group,box:new THREE.Box3()};model.pieceBounds.set(key,record);
+            proxy=new THREE.Mesh(new THREE.BufferGeometry(),model.materials.get('pick'));Object.assign(proxy.userData,data);proxy.layers.set(PICK_LAYER);generate.group.add(proxy);model.pickObjects.set(key,proxy);twin.pieces.touch();
+          }
+          if(!record || !proxy){fresh?.dispose();continue;}
+          const expanded=fresh?.index?fresh.toNonIndexed():fresh;
+          const visited=new Set();
+          for(const object of twin.pieces.get(key) || []) {
+            const geometry=object.geometry;if(!geometry || visited.has(geometry))continue;visited.add(geometry);
+            const owned=(object.userData.snapRanges || geometry.userData.snapRanges || []).filter(r=>r.pieceId===id && r.buildingId===buildingId);
+            if(!owned.length)continue;
+            for(const range of owned){
+              const count=expanded?.attributes.position.count || 0;
+              if(range.count!==count){
+                restorePostStyle();
+                const start=range.start,oldCount=range.count,shift=count-oldCount,groups=geometry.groups.map(g=>({...g}));
+                for(const [name,target] of Object.entries(geometry.attributes)){
+                  const size=target.itemSize,source=expanded?.attributes[name],next=new target.array.constructor(target.array.length+shift*size);
+                  next.set(target.array.subarray(0,start*size));
+                  if(source)next.set(source.array,start*size);
+                  next.set(target.array.subarray((start+oldCount)*size),(start+count)*size);
+                  geometry.setAttribute(name,new THREE.BufferAttribute(next,size,target.normalized).setUsage(target.usage));
+                }
+                const ranges=object.userData.snapRanges || geometry.userData.snapRanges;
+                let passed=false;for(const row of ranges){if(row===range){row.count=count;passed=true;}else if(passed)row.start+=shift;}
+                geometry.clearGroups();
+                for(const g of groups){
+                  const end=g.start+g.count;
+                  if(g.start<start)geometry.addGroup(g.start,Math.min(end,start)-g.start,g.materialIndex);
+                  if(end>start+oldCount)geometry.addGroup(Math.max(g.start,start+oldCount)+shift,end-Math.max(g.start,start+oldCount),g.materialIndex);
+                }
+                if(count && groups.length)geometry.addGroup(start,count,(groups.find(g=>g.start<=start && g.start+g.count>start) || groups.at(-1)).materialIndex);
+                geometry.groups.sort((a,b)=>a.start-b.start);
+                geometry.computeBoundingBox();
+              }else for(const name of ['position','normal','uv']) {
+                const source=expanded?.attributes[name],target=geometry.attributes[name];if(!source || !target)continue;
+                target.array.set(source.array,range.start*target.itemSize);target.addUpdateRange(range.start*target.itemSize,range.count*target.itemSize);target.needsUpdate=true;
+              }
+            }
+            if(!geometry.boundingBox)geometry.computeBoundingBox();
+            if(fresh){fresh.computeBoundingBox();geometry.boundingBox.union(fresh.boundingBox);}
+            geometry.boundingBox.getBoundingSphere(geometry.boundingSphere ||= new THREE.Sphere());
+          }
+          if(fresh){
+            fresh.computeBoundingBox();record.box.copy(fresh.boundingBox);
+            const size=record.box.getSize(new THREE.Vector3()),centre=record.box.getCenter(new THREE.Vector3());
+            const pick=boxGeometry(Math.max(.01,size.x),Math.max(.01,size.y),Math.max(.01,size.z)).translate(...centre.toArray());
+            if(proxy.geometry.attributes.position?.count===pick.attributes.position.count)for(const name of ['position','normal','uv'])proxy.geometry.attributes[name].copyArray(pick.attributes[name].array).needsUpdate=true;
+            else proxy.geometry.copy(pick);
+            proxy.geometry.computeBoundingBox();proxy.geometry.computeBoundingSphere();pick.dispose();proxy.visible=true;
+          }else{record.box.makeEmpty();proxy.geometry.copy(new THREE.BufferGeometry());proxy.visible=false;}
+          for(const {object} of proxy.userData.partObjects || [])object.geometry.copy(fresh || new THREE.BufferGeometry());
+          changedPieces.add(key);if(expanded!==fresh)expanded.dispose();fresh?.dispose();
+        }
+        generate.refreshCover(porch);
+      }
       for (const list of ['openings', 'anchors', 'items']) {
         const piecesBefore = new Map((before[list] || []).map(p => [p.id, p]));
         for (const piece of affected(list, after[list] || [])) {
@@ -1531,12 +1622,19 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         }
       }
       plan = flat; view.plan = flat;
-      refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId);
-      twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
-      writeWeatherOpen(twin.root, twin.skyCover);
+      const postsChanged = [...changedPieces].some(key => twin.pieceBounds.get(key)?.data.kind === 'porch_post');
+      const postsOnly = postsChanged && [...changedPieces].every(key => twin.pieceBounds.get(key)?.data.kind === 'porch_post');
+      if (postPreview && postsOnly) pendingPostCover.add(buildingId);
+      else if (changedPieces.size || pendingPostCover.has(buildingId)) {
+        refreshSlabCover(twin.root, flat, twin.roofSurfaces, buildingId,
+          {postsOnly: postsOnly || !changedPieces.size && pendingPostCover.has(buildingId)});
+        twin.skyCover = createSkyCover(flat, twin.roofSurfaces);
+        writeWeatherOpen(twin.root, twin.skyCover);
+        pendingPostCover.delete(buildingId);
+      }
       // A gesture deforms retained buffers in place; the next full rebuild
       // must regenerate this building from its final authoritative record.
-      if (!keep && twin.buildings?.has(buildingId)) twin.buildings.get(buildingId).model.stale = true;
+      if (twin.buildings?.has(buildingId) && (!keep || postsChanged)) twin.buildings.get(buildingId).model.stale = true;
       for (const line of selectionLines) {
         const key = line.userData.selectionKey;
         if (!changedPieces.has(key)) continue;
@@ -1549,13 +1647,14 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           .map(p => new THREE.Vector3(p[0], z, -p[1]))) : new THREE.EdgesGeometry(proxy.geometry);
       }
       pieceVisibility?.apply(scene);
-      focusStyle.refreshRanges(changedPieces);
+      if(postTopology)paintSelection();else focusStyle.refreshRanges(changedPieces);
       invalidateSelectionBounds();
       sun.shadow.needsUpdate = true; reflections.request(); render();
       el.dispatchEvent(new CustomEvent('twinlevelrebuilt', { detail: { buildingId, levelId } }));
     },
-    async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null } = {}) {
+    async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null, timing = null } = {}) {
       const beforePlan = plan, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const columnKey = rows => JSON.stringify(rows.map(p => [p.id,(p.columns || []).map((c,i) => [postRef(p,i),c.at,c.size])]));
       const previous = new Map((beforePlan.buildings || []).map(b => [b.id, b]));
       const onLevel = (b, list, id) => (b[list] || []).filter(p =>
         (p.level || b.walls?.find(w => w.id === (p.wall || p.host?.wall))?.level
@@ -1564,13 +1663,40 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
           || b.levels?.[0]?.id) === id);
       const ids = list => list.map(p => p.id).sort();
       const changed = [];
+      let nextGutters=null;
       let rebuild = previous.size !== (nextPlan.buildings || []).length || !same(beforePlan.materials, nextPlan.materials);
       for (const after of nextPlan.buildings || []) {
+        if (generatedPorches.get(after.id) !== porchGeometry(after)) {
+          rebuild = true;
+          // Preview deforms do not regenerate screens, foundations or gutter
+          // mounts. Invalidate only this building's retained generation.
+          if (twin?.buildings?.has(after.id)) twin.buildings.get(after.id).model.stale = true;
+        }
+        const priorColumns=generatedColumns.get(after.id) || [], posts=allPorches(after);
+        if(columnKey(priorColumns)!==columnKey(posts)) {
+          const oldIds=priorColumns.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
+          const newIds=posts.flatMap(p=>(p.columns || []).map((c,i)=>postRef(p,i))).sort();
+          let regenerate=!same(oldIds,newIds);
+          for(const porch of posts) {
+            const old=priorColumns.find(p=>p.id===porch.id), model=twin?.buildings.get(after.id)?.model.postGeometry.get(porch.id);
+            if(old && model && model.screenKey(old)!==model.screenKey(porch))regenerate=true;
+            const level=after.rooms.find(r=>r.id===porch.id)?.level || porch.level || after.levels[0]?.id;
+            const shown=allPorches(previous.get(after.id) || {}).find(p=>p.id===porch.id);
+            if(level && (!same(shown?.columns,porch.columns) || pendingPostCover.has(after.id)) && !changed.some(c=>c.buildingId===after.id && c.levelId===level))changed.push({buildingId:after.id,levelId:level});
+          }
+          nextGutters ||= gutterPlacement(nextPlan);
+          if(!same(nextGutters,twin.gutters))regenerate=true;
+          if(regenerate) {
+            rebuild=true;
+            if(twin?.buildings.has(after.id))twin.buildings.get(after.id).model.stale=true;
+          }
+        }
         const before = previous.get(after.id);
         if (!before || !same(ids(before.levels || []), ids(after.levels || []))) { rebuild = true; continue; }
         // Changes outside the deformable level records still need the complete
         // generator (roofs, placement, materials, fixtures, and so on).
-        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)));
+        const withoutPosts = ({columns,src,...porch}) => porch;
+        const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)).map(([k,v])=>[k,['porches','porches_detail'].includes(k) ? v.map(withoutPosts) : k==='porch' && v ? withoutPosts(v) : v]));
         if (!same(fixed(before), fixed(after))) rebuild = true;
         for (const level of after.levels || []) {
           for (const list of ['walls', 'rooms', 'openings'])
@@ -1597,7 +1723,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       }
       if (rebuild) {
         // rebuild owns the single bake restart on this path.
-        await view.rebuild(nextPlan, { yardLater: true });
+        await view.rebuild(nextPlan, { yardLater: true, timing });
         return { path: 'rebuild', selection };
       }
       const version = ++revision;
@@ -1615,6 +1741,7 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         view.rebuildLevel(change.buildingId, change.levelId, nextPlan, hint, { keep: true });
       }
       plan = nextPlan; view.plan = nextPlan; syncStage(plan);
+      generatedColumns=new Map(nextPlan.buildings.map(b=>[b.id,structuredClone(allPorches(b))]));
       pieceVisibility?.apply(scene);
       invalidateSelectionBounds();
       view.ready = !disposed && !!twin;
@@ -1730,6 +1857,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
       stopDispose();
       yardGroup = next.yardGroup;
       twin = next; plan = nextPlan; scene.add(twin.root);
+      generatedPorches = new Map(nextPlan.buildings.map(b => [b.id,porchGeometry(b)]));
+      generatedColumns = new Map(nextPlan.buildings.map(b => [b.id,structuredClone(allPorches(b))]));
+      pendingPostCover.clear();
       freezeViewerMatrices(twin, {editor});
       // A roof edit can reuse the entire yard. Its cover still follows the
       // accepted building geometry, including furniture and pool features.

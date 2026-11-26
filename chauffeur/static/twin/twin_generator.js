@@ -7,6 +7,7 @@ import { applyObject, bakeMatrix, fitOpening, objectShown, objectMaterialKey } f
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
+import { postRef } from './porch_posts.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { supportMaterialSurface } from './support_material.js';
 import { undersideMaterialSurface } from './underside_material.js';
@@ -90,7 +91,8 @@ export function mergeStatic(group, { perPiece = false } = {}) {
       bakeMatrix(g, new THREE.Matrix4().multiplyMatrices(inverse, o.matrixWorld));
       // Models can use stand-ins/LODs: never fold their render-only geometry
       // into the same receiver as a house surface with a shared material.
-      const key = `${o.material.uuid}:${!!o.geometry.userData.bakeExcluded}:${perPiece ? o.userData.pieceId || '' : ''}`;
+      const owner = o.userData.kind === 'porch_post' ? o.userData.parentPieceId : o.userData.pieceId;
+      const key = `${o.material.uuid}:${!!o.geometry.userData.bakeExcluded}:${perPiece ? owner || '' : ''}`;
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push({ geometry: g, mesh: o });
     } catch { g?.dispose(); } // An odd optional model stays independently drawn.
@@ -410,7 +412,12 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
     fixedParts.push(gutterSliceHash(slice));
   }
   return {
-    fixed: JSON.stringify(fixedParts),
+    fixed: JSON.stringify(fixedParts, function(key,value) {
+      return key === 'columns' && Array.isArray(value) ? value.map((c,i) => {
+        if (c.id !== `post:${this.id}:${i}`) return c;
+        const {id,...post} = c; return post;
+      }) : value;
+    }),
     finishes: JSON.stringify([finishes, tier]),
     models: JSON.stringify(modelTier === tier ? models : [...models, ['modelTier', modelTier]]),
   };
@@ -943,7 +950,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   };
   const root = new THREE.Group(); root.scale.setScalar(FT);
   const pieces = new BuildingRegistry(), pieceBounds = new BuildingRegistry(), pickObjects = new BuildingRegistry(), roofSurfaces = new BuildingRegistry(), mergeGroups = [], ghostBatches = [];
-  const ghostRoofCover = new Map();
+  const ghostRoofCover = new Map(), postGeometry = new Map();
   const groups = { site: new THREE.Group(), roof: new THREE.Group(), gableFull: new THREE.Group(), gableCut: new THREE.Group(), lights: new THREE.Group(), levels: {} };
   for (const [id, group] of Object.entries(groups)) if (group.isGroup) { group.name = id; root.add(group); }
   const materialKitFor = refs => materialKitWithRefs(kit, refs);
@@ -1210,7 +1217,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         positions: new Float32Array([...roofEnvelope(own).walled.positions, ...envelope.positions]) }];
     }));
     let activePiece = null, activeSurface = null;
-    const records = new Map(), wallProfiles = new Map();
+    const records = new Map(), wallProfiles = new Map(), porchColumnBounds = new Map();
     const use = (piece, kind, fallback) => { activeSurface = piece; activePiece = { pieceId: piece.id || fallback, kind, visibilityKind: piece.device ? 'device' : piece.object_kind === 'lamp' ? 'fixture' : undefined, buildingId: b.id, ghost: piece.state === 'ghost' }; };
     // seed: a random-offset origin shared by several pieces (one per level for floors).
     const mesh = (group, geometry, material, retained = null, seed = null, ref = null, part = '') => {
@@ -1220,7 +1227,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if ((!retained || ref?.uv) && !data.ghost && activePiece) {
         const uv = (ref || surfaceRef(material.name, levels[activeSurface?.level])).uv;
         if (uv) uvParts.push({geometry, material, seed: seed || key, offset: uv,
-          key: JSON.stringify([part.startsWith('roof-plane:') ? b.id : key, part || material.name, uv])});
+          key: JSON.stringify([part.startsWith('roof-plane:') ? b.id : data.kind === 'porch_post' ? seed : key, part || material.name, uv])});
         else offsetSurfaceUvs(geometry, material, seed || key);
       }
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
@@ -2213,47 +2220,92 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           : first.elevation + first.ceiling;
         return supportCap(x, y, floor, height);
       };
-      for (const c of po.columns || []) {
-        const top = topAt(...c.at);
-        if (solid && top <= floor) continue;
-        tagPart(mesh(local[first.id], boxRect(c.at[0] - c.size / 2, c.at[1] - c.size / 2, c.at[0] + c.size / 2, c.at[1] + c.size / 2, floor, top), kindMat('column', po), null, null, kindRef('column', po), 'column'), 'column');
+      const columnGeometry = c => {
+        const top=topAt(...c.at);
+        return solid && top<=floor ? null : boxRect(c.at[0]-c.size/2,c.at[1]-c.size/2,c.at[0]+c.size/2,c.at[1]+c.size/2,floor,top);
+      };
+      postGeometry.set(po.id, { group:local[first.id], material:()=>kindMat('column',po), columns(next) {
+        const result=new Map(), rows=[], finish=kindMat('column',po), ref=kindRef('column',po), seed=`${b.id}:${po.id}`;
+        for (const [i,c] of (next.columns || []).entries()) {
+          const geometry=columnGeometry(c);result.set(postRef(next,i),geometry);if(!geometry)continue;
+          if(ref?.uv)rows.push({geometry,material:finish,seed,offset:ref.uv,key:seed});
+          else offsetSurfaceUvs(geometry,finish,seed);
+        }
+        offsetSurfaceUvParts(rows);return result;
+      }, refreshCover(next) {
+        const slab=pieceBounds.get(`${b.id}:${po.id}`)?.box, proxy=pickObjects.get(`${b.id}:${po.id}`);
+        if (!slab || !proxy) return;
+        const cover=slab.clone();
+        for (const [i,c] of (next.columns || []).entries()) {
+          const bounds=pieceBounds.get(`${b.id}:${postRef(next,i)}`)?.box;
+          const outside=Math.hypot(Math.max(slab.min.x-c.at[0],0,c.at[0]-slab.max.x),Math.max(slab.min.z+c.at[1],0,-c.at[1]-slab.max.z));
+          if (bounds && outside<=4) cover.union(bounds);
+        }
+        if (cover.equals(slab)) { delete proxy.userData.coverPositions; return; }
+        const size=cover.getSize(new THREE.Vector3()),centre=cover.getCenter(new THREE.Vector3());
+        const geometry=boxGeometry(Math.max(.01,size.x),Math.max(.01,size.y),Math.max(.01,size.z)).translate(...centre.toArray());
+        const expanded=geometry.toNonIndexed();
+        Object.defineProperty(proxy.userData,'coverPositions',{value:expanded.attributes.position.array,writable:true,configurable:true});
+        geometry.dispose();expanded.dispose();
+      }, screenKey: next => JSON.stringify(screenSpans(next).map(({c,d,start,end})=>[c.at,d.at,start,end])) });
+      for (const [columnIndex, c] of (po.columns || []).entries()) {
+        const geometry=columnGeometry(c);
+        if (!geometry) continue;
+        const porchId = activePiece.pieceId;
+        activePiece = { ...activePiece, kind: 'porch_post', pieceId: postRef(po, columnIndex), parentPieceId: porchId, part: 'column' };
+        tagPart(mesh(local[first.id], geometry, kindMat('column', po), null, `${b.id}:${porchId}`, kindRef('column', po), 'column'), 'column');
+        if (!porchColumnBounds.has(porchId)) porchColumnBounds.set(porchId, new THREE.Box3());
+        const bounds = records.get(`${b.id}:${activePiece.pieceId}`).box;
+        const slab = records.get(`${b.id}:${porchId}`)?.box;
+        // Existing houses include posts a few feet beyond a porch outline.
+        // Keep their historical cover bytes, but a remote moved post cannot
+        // stretch that box across the yard (same 4 ft vicinity as following).
+        const outside = slab ? Math.hypot(Math.max(slab.min.x-c.at[0],0,c.at[0]-slab.max.x),
+          Math.max(slab.min.z+c.at[1],0,-c.at[1]-slab.max.z)) : 0;
+        if (outside <= 4) porchColumnBounds.get(porchId).union(bounds);
+        use(po, 'porch', porchId);
       }
       const porchWalls = b.walls.filter(w => w.exterior && (levels[w.level]?.elevation ?? 0) <= floor
         && (levels[w.level]?.elevation ?? 0) + w.height > floor);
-      if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
-        const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
-        const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
-        if (!length) continue;
-        const project = p => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length;
-        const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
-        const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
-          && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
-        // Polygon corners close the ends too: an attached side needs a panel
-        // from the house wall to its single outside post (R19).
-        posts.unshift({ at: a, size: 0 });
-        posts.push({ at: endPoint, size: 0 });
-        for (let j = 1; j < posts.length; j++) {
-          const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
-          if (span <= (c.size + d.size) / 2) continue;
-          const basis = wallBasis(c.at, d.at, floor);
-          // Subtract wall spans so an attached side never receives a screen.
-          let gaps = [[c.size / 2, span - d.size / 2]];
-          for (const w of porchWalls) {
-            if (distance(w.from) > w.thickness + 0.1 || distance(w.to) > w.thickness + 0.1) continue;
-            const lo = Math.min(project(w.from), project(w.to)) - project(c.at), hi = Math.max(project(w.from), project(w.to)) - project(c.at);
-            gaps = gaps.flatMap(([s, e]) => hi <= s || lo >= e ? [[s, e]] : [[s, Math.max(s, lo)], [Math.min(e, hi), e]].filter(([u, v]) => v > u));
-          }
-          for (const [start, end] of gaps) {
-            const shape = new THREE.Shape(); shape.moveTo(start, 0); shape.lineTo(end, 0);
-            const count = Math.max(1, Math.ceil((end - start) * 2));
-            for (let k = count; k >= 0; k--) {
-              const t = start + (end - start) * k / count;
-              shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
+      function screenSpans(po) {
+        const result=[];
+        if (po.screened === true) for (let i = 0; i < po.polygon.length; i++) {
+          const a = po.polygon[i], endPoint = po.polygon[(i + 1) % po.polygon.length];
+          const dx = endPoint[0] - a[0], dy = endPoint[1] - a[1], length = Math.hypot(dx, dy);
+          if (!length) continue;
+          const project = p => ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length;
+          const distance = p => Math.abs((p[0] - a[0]) * dy - (p[1] - a[1]) * dx) / length;
+          const posts = (po.columns || []).filter(c => distance(c.at) <= c.size / 2 + 0.1
+            && project(c.at) >= 0 && project(c.at) <= length).sort((c, d) => project(c.at) - project(d.at));
+          // Polygon corners close the ends too: an attached side needs a panel
+          // from the house wall to its single outside post (R19).
+          posts.unshift({ at: a, size: 0 });
+          posts.push({ at: endPoint, size: 0 });
+          for (let j = 1; j < posts.length; j++) {
+            const c = posts[j - 1], d = posts[j], span = Math.hypot(d.at[0] - c.at[0], d.at[1] - c.at[1]);
+            if (span <= (c.size + d.size) / 2) continue;
+            // Subtract wall spans so an attached side never receives a screen.
+            let gaps = [[c.size / 2, span - d.size / 2]];
+            for (const w of porchWalls) {
+              if (distance(w.from) > w.thickness + 0.1 || distance(w.to) > w.thickness + 0.1) continue;
+              const lo = Math.min(project(w.from), project(w.to)) - project(c.at), hi = Math.max(project(w.from), project(w.to)) - project(c.at);
+              gaps = gaps.flatMap(([s, e]) => hi <= s || lo >= e ? [[s, e]] : [[s, Math.max(s, lo)], [Math.min(e, hi), e]].filter(([u, v]) => v > u));
             }
-            shape.closePath();
-            tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po), null, null, kindRef('screen', po), 'screen'), 'screen');
+            for (const [start,end] of gaps) result.push({c,d,span,start,end});
           }
         }
+        return result;
+      }
+      for (const {c,d,span,start,end} of screenSpans(po)) {
+        const basis=wallBasis(c.at,d.at,floor);
+        const shape = new THREE.Shape(); shape.moveTo(start, 0); shape.lineTo(end, 0);
+        const count = Math.max(1, Math.ceil((end - start) * 2));
+        for (let k = count; k >= 0; k--) {
+          const t = start + (end - start) * k / count;
+          shape.lineTo(t, Math.max(0, topAt(c.at[0] + (d.at[0] - c.at[0]) * t / span, c.at[1] + (d.at[1] - c.at[1]) * t / span) - floor));
+        }
+        shape.closePath();
+        tagPart(mesh(local[first.id], new THREE.ShapeGeometry(shape).applyMatrix4(basis.matrix), kindMat('screen', po), null, null, kindRef('screen', po), 'screen'), 'screen');
       }
     }
     for (const [index, s] of (b.stairs || []).entries()) {
@@ -2434,6 +2486,19 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         } else geometry = boxGeometry(Math.max(0.01, size.x), Math.max(0.01, size.y), Math.max(0.01, size.z)).translate(...center.toArray());
         const proxy = new THREE.Mesh(geometry, pickMaterial);
         Object.assign(proxy.userData, data); proxy.layers.set(PICK_LAYER);
+        if (data.kind === 'room' && porchColumnBounds.has(data.pieceId)) {
+          const coverBox = box.clone().union(porchColumnBounds.get(data.pieceId));
+          if (!coverBox.equals(box)) {
+            // Sky cover historically consumed the room proxy, including its
+            // columns. Preserve that CPU-only input while picking/framing use
+            // the smaller porch slab. No extra drawn surface or retained mesh.
+            const extent = coverBox.getSize(new THREE.Vector3()), middle = coverBox.getCenter(new THREE.Vector3());
+            const legacy = boxGeometry(Math.max(.01, extent.x), Math.max(.01, extent.y), Math.max(.01, extent.z)).translate(...middle.toArray());
+            const expanded = legacy.toNonIndexed();
+            Object.defineProperty(proxy.userData, 'coverPositions', { value: expanded.attributes.position.array, writable: true, configurable: true });
+            legacy.dispose(); expanded.dispose();
+          }
+        }
         if (outlinePositions) Object.defineProperty(proxy.userData, 'outlinePositions', { value: outlinePositions });
         if (data.kind === 'roof' && (partObjects || []).some(p => (p.object.userData.part || '').startsWith('support:'))) proxy.userData.supportPick = true;
         if (partObjects) Object.defineProperty(proxy.userData, 'partObjects', { value: partObjects });
@@ -2555,10 +2620,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   for (const b of plan.buildings || []) {
     const domain = groups.roof.children.find(g => g.userData.buildingId === b.id);
     const supportedIds = new Set((b.roof?.sections || []).flatMap((s, i) => isSupported(s) ? [s.id || `roof:${i}`] : []));
-    const positions = [...(ghostRoofCover.get(b.id) || [])], slabs = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
+    const positions = [...(ghostRoofCover.get(b.id) || [])], slabs = [], slabProxies = [], attachments = new Map(), a = new THREE.Vector3(), c = new THREE.Vector3(), d = new THREE.Vector3(), n = new THREE.Vector3();
     const capture = (o, target, ceiling = false, space = domain) => {
       if (!o.isMesh || o.userData.ghost || o.userData.surfaceKind === 'gutter' || !o.geometry?.attributes.position) return;
-      const p = o.geometry.attributes.position, index = o.geometry.index;
+      const p = o.userData.coverPositions ? new THREE.BufferAttribute(o.userData.coverPositions, 3) : o.geometry.attributes.position;
+      const index = o.userData.coverPositions ? null : o.geometry.index;
       // Stay in building-local feet. Updating parent world matrices here
       // introduces the root's metre scale before mergeStatic runs, changing
       // its float roundoff (and the otherwise byte-identical UV golden).
@@ -2589,9 +2655,30 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (o.userData.kind === 'roof' && !o.layers.isEnabled(PICK_LAYER) && supportedIds.has(o.userData.pieceId)
             && !partName.startsWith('support:') && partName !== 'underside'
             && partName !== 'underside:front' && !partName.startsWith('end:')) capture(o, positions, false, space);
-        if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) capture(o, slabs, o.userData.part === 'ceiling', space);
+        if (o.userData.part === 'ceiling' || ['floor', 'room'].includes(o.userData.kind)) {
+          const start=slabs.length;
+          capture(o, slabs, o.userData.part === 'ceiling', space);
+          if (o.userData.kind === 'room' && o.layers.isEnabled(PICK_LAYER)) slabProxies.push({object:o,space,start,count:slabs.length-start});
+        }
       });
     if (roofSurfaces.has(b.id)) Object.assign(roofSurfaces.get(b.id), {coverPositions: positions, slabPositions: slabs,
+      refreshPostCover() {
+        const surface=roofSurfaces.get(b.id),previous=surface.slabPositions;
+        if (previous.length!==slabs.length) return false;
+        let next=null;
+        for (const {object,space,start,count} of slabProxies) {
+          const part=[];capture(object,part,false,space);
+          if (part.length!==count) return false;
+          // Rebuilding a Float32 post bound can differ by a few millionths of
+          // a foot from the authored bound. That is no cover change.
+          if (part.some((v,i)=>Math.abs(v-previous[start+i])>1e-5)) {
+            next ||= previous.slice();
+            for(let i=0;i<count;i++)next[start+i]=part[i];
+          }
+        }
+        if (next) surface.slabPositions=next;
+        return true;
+      },
       eaveAttachments:[...attachments].map(([section,positions])=>({section,positions}))});
   }
   for (const g of mergeGroups) batch(g, { perPiece: !!editableLevel && g.userData.levelKey === editableLevel });
@@ -2604,6 +2691,6 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
   // These two shared materials may have no objects in a settled-only plan.
   materials.set('ghostEdges', ghostEdges); materials.set('pick', pickMaterial);
   if (timing) detail.generate += Math.max(0, performance.now() - generationStart - (detail.materials - materialBefore) - (detail.batch - batchBefore));
-  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes,
+  return { root, groups, pieces, pieceBounds, pickObjects, roofSurfaces, roomLights, levelElevations, materials, ready, updateGhosts, notes, postGeometry,
     stale: false, get degraded() { return failedModel || [...materials.values()].some(m => m.userData.assetFailed); } };
 }

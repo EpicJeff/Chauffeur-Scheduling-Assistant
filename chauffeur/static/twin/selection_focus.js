@@ -50,18 +50,35 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
   function syncMaterials(sync) {
     for (const [source, cache] of variants) for (const material of cache.values()) sync(source, material);
   }
-  function apply(root, room, accent, wallTint, { pieces, site, yard = site, piecesRevision = pieces?.revision } = {}) {
+  function apply(root, room, accent, wallTint, { pieces, site, yard = site, piecesRevision = pieces?.revision, members = [] } = {}) {
     const sceneState = warmState();
-    const key = room && JSON.stringify([room, accent, wallTint, piecesRevision, sceneState]);
+    const key = JSON.stringify([room, members, accent, wallTint, piecesRevision, sceneState]);
     if (root === activeRoot && key === activeKey && yard === activeYard) return ready;
     restore();
-    if (!root || !room) return ready = Promise.resolve();
+    if (!root || !room && !members.length) return ready = Promise.resolve();
     activeRoot = root; activeKey = key; activeYard = yard;
     const stamp = revision, pending = [], warm = new THREE.Group(), warmKeys = new Set();
-    const allowed = new Set(room.allowed || []), walls = new Set(room.walls || []), eligible = new Set();
-    // Match the original focus scope: registered pieces and the site domain.
-    for (const objects of pieces?.values() || []) for (const object of objects) eligible.add(object);
-    site?.traverse(object => eligible.add(object));
+    const allowed = new Set(room?.allowed || []), walls = new Set(room?.walls || []), eligible = new Set();
+    const selectedIds = new Map(), buildings = new Set();
+    const selectsPost = members.some(m=>m.kind==='porch_post');
+    for (const member of members) {
+      if (member.kind === 'building') buildings.add(member.building);
+      else {
+        if (!selectedIds.has(member.building)) selectedIds.set(member.building,new Set());
+        selectedIds.get(member.building).add(member.pieceId);
+      }
+    }
+    // Plain selection visits only batches indexed by a selected owner. Focus
+    // still partitions the complete domain, since its outside pieces fade.
+    if (room || buildings.size) {
+      for (const [key,objects] of pieces || []) {
+        if (!room && ![...buildings].some(id=>key.startsWith(id+':'))) continue;
+        for (const object of objects) eligible.add(object);
+      }
+      if (room) site?.traverse(object => eligible.add(object));
+    }
+    for (const [building,ids] of selectedIds) for (const id of ids)
+      for (const object of pieces?.get(`${building}:${id}`) || []) eligible.add(object);
     const grouped = new Map();
     for (const object of eligible) {
       if (!object.material || !object.geometry || object.layers.isEnabled(PICK_LAYER)) continue;
@@ -84,14 +101,27 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
         for (let p = object; p; p = p.parent) if (p.userData.levelKey) return p.userData.levelKey === `${room.building}:${room.level}`;
         return false;
       };
-      const mode = data => room.kind === 'level' && inLevel() ? [null, null]
-        : data.buildingId === room.building && allowed.has(data.pieceId)
-          ? data.pieceId === room.id ? ['tint', accent] : walls.has(data.pieceId) ? ['tint', wallTint] : [null, null]
-          : ['ghost', null];
+      const mode = data => {
+        const selected=selectedIds.get(data.buildingId ?? null)?.has(data.pieceId)
+          || buildings.has(data.buildingId) && data.kind !== 'porch_post';
+        if (!room) return selected ? ['tint',accent] : [null,null];
+        const inside=data.buildingId===room.building && (allowed.has(data.pieceId) || allowed.has(data.parentPieceId));
+        if (inside || room.kind==='level' && data.kind!=='porch_post' && inLevel())
+          return selected || data.pieceId===room.id ? ['tint',accent] : walls.has(data.pieceId) ? ['tint',wallTint] : [null,null];
+        return ['ghost',null];
+      };
       const partition = () => {
         followGeometry();
         const sources = [].concat(source), baseGroups = geometryBase.groups;
-        const ranges = object.userData.snapRanges || geometry.userData.snapRanges || [];
+        const owned = object.userData.snapRanges || geometry.userData.snapRanges || [];
+        // Preserve main's batch tint for ordinary pieces. Partition ownership
+        // when selecting posts or excluding them from a building selection.
+        if (!room && !selectsPost && !buildings.size)
+          return {groups:baseGroups,materials:sources.map(material=>variant(material,'tint',accent))};
+        // Ordinary selection needs boundaries only at selected owners. The
+        // unselected ownership intervals all keep their authored draw groups.
+        const ranges = room ? owned : owned.filter(r=>selectedIds.get(r.buildingId ?? null)?.has(r.pieceId)
+          || buildings.has(r.buildingId) && r.kind !== 'porch_post');
         const count = geometry.index?.count ?? geometry.attributes.position?.count ?? 0;
         const groups = [], materials = [], indices = new Map();
         // Ownership and authored draw groups are ordered, disjoint intervals.
@@ -106,7 +136,7 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
           const end = Math.min(count, owner ? owner.start + owner.count : range?.start ?? count,
             group ? group.start + group.count : baseGroup?.start ?? count);
           const length = end - start;
-          const [style,color] = mode(ranges.length ? owner || {} : object.userData);
+          const [style,color] = mode(owned.length ? owner || {} : object.userData);
           const material = variant(sources[group?.materialIndex ?? 0] || sources[0],style,color);
           if (!indices.has(material)) { indices.set(material,materials.length); materials.push(material); }
           const materialIndex=indices.get(material), last=groups.at(-1);
@@ -135,6 +165,9 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
         rememberGeometry() { followGeometry(); geometries.set(geometry,geometryBase); }
       });
       for (const material of next.materials) {
+        // A colour-only clone uses the source's exact shader program; no
+        // asynchronous warm-up may hold up a plain selection's first tint.
+        if (!room) continue;
         const key=`${material.uuid}:${sceneState}:${object.type}:${!!object.isInstancedMesh}:${Object.keys(geometry.attributes)}`;
         if (warmed.has(key) || warmKeys.has(key)) continue;
         warmKeys.add(key);
@@ -154,7 +187,7 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
         warm.add(standin);
       }
     }
-    const adopt = () => {
+    const adopt = (draw = true) => {
       if (stamp !== revision) return;
       for (const key of warmKeys) warmed.add(key);
       const applied = new Set();
@@ -170,12 +203,12 @@ export function createSelectionFocus({ compile, render, failed, warmState = () =
         if (!applied.has(object.geometry)) {object.geometry.groups=next.groups;applied.add(object.geometry);}
         object.material=display(next.materials);
       }
-      render();
+      if (draw) render();
     };
     let compilation;
     try { compilation=warm.children.length ? compile?.(warm) : null; }
     catch (error) { activeKey=null; failed?.(error); return ready=Promise.resolve(); }
-    if (!compilation) {adopt();return ready=Promise.resolve();}
+    if (!compilation) {adopt(!!room);return ready=Promise.resolve();}
     return ready=Promise.resolve(compilation).then(adopt).catch(error=>{if(stamp===revision){activeKey=null;failed?.(error);}});
   }
   function refreshRanges(changed) {

@@ -1,3 +1,4 @@
+import { findPost } from '../porch_posts.js';
 import { contains } from '../twin_generator.js';
 import { allPorches } from '../gutter_presence.js';
 
@@ -7,7 +8,8 @@ export function roomInQuestion(plan, selected = {}, host = null, { host: include
   selected ||= {};
   const buildingId = selected.building ?? selected.buildingId;
   const building = plan?.buildings?.find(b => b.id === buildingId) || host?.building;
-  const id = ['room', 'porch'].includes(selected.kind) ? selected.id ?? selected.pieceId : null;
+  const post = selected.kind === 'porch_post' && building ? findPost(building,selected.id ?? selected.pieceId) : null;
+  const id = post?.porchId ?? (['room', 'porch'].includes(selected.kind) ? selected.id ?? selected.pieceId : null);
   const rooms = [...(building?.rooms || []), ...allPorches(building || {})];
   for (const candidate of [id, selected.focusKind !== 'level' ? selected.room : null]) {
     const room = rooms.find(r => candidate && r.id === candidate && r.state !== 'ghost');

@@ -3,7 +3,7 @@ import { Matrix4 } from 'three';
 // Keep the editor's existing selection vocabulary; layers use these domains.
 const KIND_ALIASES = { tree: 'planting', plants: 'planting', terraces: 'pad',
   retaining_wall: 'pad', beds: 'bed', edges: 'edge', light: 'fixture', light_fixture: 'fixture', effect_fixture: 'effect', floor: 'room',
-  porch: 'room', solar_zone: 'roof', dormer: 'roof', spa: 'pool', pool_step: 'pool',
+  porch: 'room', porch_post: 'room', solar_zone: 'roof', dormer: 'roof', spa: 'pool', pool_step: 'pool',
   pool_ledge: 'pool', ledge: 'pool', steps: 'pool', yard_rooms: 'yard_room' };
 export const visibilityKind = kind => KIND_ALIASES[kind] || kind;
 

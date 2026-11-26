@@ -2,6 +2,8 @@ import { icon } from './icons.js';
 import { visibilityKind } from '../twin_visibility.js';
 import { contains } from '../twin_generator.js';
 import { isSupported } from '../roof_supports.js';
+import { allPorches } from '../gutter_presence.js';
+import { porchPosts } from '../porch_posts.js';
 
 const label = (piece, kind) => piece.name || (kind === 'roof' && isSupported(piece) ? `Awning ${piece.id}` : `${kind[0].toUpperCase() + kind.slice(1).replaceAll('_', ' ')} ${piece.id}`);
 const list = value => Array.isArray(value) ? value : value ? [value] : [];
@@ -41,10 +43,20 @@ export function sceneRows(plan) {
         label(p, kind === 'anchor' && p.device ? 'device' : kind), { visibilityKind: p.device ? 'device' : p.object_kind === 'lamp' ? 'fixture' : visibilityKind(kind), piece: p }));
     const roofs = new Map([...(b.roofs || []), ...(b.roof?.sections || [])].map(p => [p.id, p]));
     const awnings = [...roofs.values()].filter(isSupported);
-    for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[b.porches,'porch']])
+    const porchRows = new Map();
+    for (const [collection, kind] of [[b.stairs,'stair'],[[...roofs.values()],'roof'],[b.dormers,'dormer'],[b.solar_zones,'solar_zone'],[allPorches(b),'porch']])
       // A porch is also a room of the same id (its floor, walls and openings hang there); list it once.
-      for (const p of collection || []) if (!(kind === 'porch' && rooms.has(p.id))) add(p, kind, levels.get(p.level) || building, b.id,
-        kind === 'roof' && isSupported(p) && !p.name ? `Awning ${awnings.indexOf(p)+1}` : label(p, kind));
+      for (const p of collection || []) if (!(kind === 'porch' && (!p.id || rooms.has(p.id)))) {
+        const row = add(p, kind, levels.get(p.level) || building, b.id,
+          kind === 'roof' && isSupported(p) && !p.name ? `Awning ${awnings.indexOf(p)+1}` : label(p, kind));
+        if (kind === 'porch') porchRows.set(p.id, row);
+      }
+    for (const post of porchPosts(b)) if (post.porchId) {
+      const parent = rooms.get(post.porchId) || porchRows.get(post.porchId) || levels.get(post.porch.level) || building;
+      add({ ...post.piece, id: post.id }, 'porch_post', parent, b.id, `Post ${post.index + 1}`, {
+        piece: post.piece, porchId: post.porchId, postIndex: post.index,
+      });
+    }
     for (const p of fixtures.filter(p => p.building === b.id)) {
       assignedFixtures.add(p.id); add(p, p.sceneKind, parentFor(p), b.id, label(p, p.sceneKind === 'effect_fixture' ? 'effect' : 'light'), { piece: p });
     }
@@ -106,16 +118,20 @@ export function createSceneTree({ host, getPlan, getSelection, selection = null,
   const locked = r => {
     if (r.kind === 'group') return rows.some(c => c.parent === r) && rows.filter(c => c.parent === r).every(c => visibility?.isLocked(c.id, c.visibilityKind || c.kind));
     if (visibility?.isLocked(r.id, r.visibilityKind || r.kind)) return true;
-    for (let p = r.parent; p; p = p.parent) if (['building', 'level', 'group'].includes(p.kind) && visibility?.isLocked(p.id)) return true;
+    for (let p = r.parent; p; p = p.parent) {
+      if (['building', 'level', 'group'].includes(p.kind) && visibility?.isLocked(p.id)) return true;
+      if (r.kind === 'porch_post' && p.id === r.porchId && visibility?.isLocked(p.id, p.visibilityKind || p.kind)) return true;
+    }
     return false;
   };
   const rowToRef = r => {
     const ref = { kind: r.kind, pieceId: r.id };
     if (r.building != null) ref.buildingId = r.building;
-    const level = r.kind === 'level' ? r.id : r.piece?.level;
+    const level = r.kind === 'level' ? r.id : r.piece?.level ?? (r.kind === 'porch_post' ? r.parent?.piece?.level ?? (r.parent?.kind === 'level' ? r.parent.id : null) : null);
     if (level != null) ref.level = level;
     if (r.piece?.entity_id !== undefined) ref.entity_id = r.piece.entity_id;
     if (r.poolId !== undefined) ref.poolId = r.poolId;
+    if (r.porchId !== undefined) ref.porchId = r.porchId;
     return ref;
   };
   const primarySelection = () => selection?.primary?.() || getSelection?.() || null;

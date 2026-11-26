@@ -57,6 +57,7 @@ export function createMarquee({ view, selection, visibility, getPlan, isEmpty = 
       if (item.level != null) ref.level = item.level;
       if (item.entity_id !== undefined) ref.entity_id = item.entity_id;
       if (item.poolId !== undefined) ref.poolId = item.poolId;
+      if (item.porchId !== undefined || item.parentPieceId !== undefined) ref.porchId = item.porchId ?? item.parentPieceId;
       matched.push(ref);
     }
     return matched;

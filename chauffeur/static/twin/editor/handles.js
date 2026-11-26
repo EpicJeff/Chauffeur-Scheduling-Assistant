@@ -16,6 +16,8 @@ import { HANDLE_HIT_PX } from './picking.js';
 import { snapValue } from './snap.js';
 import { createTypedValue } from './typed_value.js';
 import { gutterSnapshot, downspoutValues, downspoutIndex, edgeOperation, freeCandidates, snapOrExact, entryFraction, isExact, sameDownspoutEntry } from './gutter_controls.js';
+import { findPost } from '../porch_posts.js';
+import { buildPostSnapTargets, snapPostPoint } from './porch_post_shelf.js';
 
 const FT = .3048;
 const inch = value => Math.round(value * 12) / 12;
@@ -183,6 +185,16 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
         add('hosted', hosted.id, hosted.kind==='parking'?parkingPoint(building,hosted,plan(),hosted.offset || 0,groundAt):hostPoint(building, hosted.host, hosted.offset || 0), surface?.level || selected.level || building.levels[0]?.id);
       } catch { /* Lost hosts are represented by their existing flags. */ }
     }
+    if (selected.kind === 'porch_post') {
+      const post = findPost(building, selected.id);
+      if (post && post.porch.state !== 'ghost') {
+        const room = building.rooms?.find(r => r.id === post.porchId);
+        const levelId = post.porch.level || room?.level || building.levels?.[0]?.id;
+        const level = building.levels?.find(l => l.id === levelId);
+        const z = (post.porch.floor ?? level?.elevation ?? 0) + (room?.floor_offset_ft || 0);
+        add('porch_post', post.id, [...post.piece.at, z], levelId, { porchId: post.porchId, index: post.index, size: post.piece.size ?? 0.5 });
+      }
+    }
     return result;
   }
   function refresh() {
@@ -236,6 +248,16 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     if (!canEdit() || !handle) return false;
     lastFrameMs = null; drag.clearDragFrame?.();
     const source = getPlan(), building = coordinateBuilding(handle.building);
+    if (handle.kind === 'porch_post') {
+      const post = findPost(building, handle.id);
+      if (!post) return false;
+      const normal = [0, 0, 1], start = onPlane(event, building, handle.at, normal);
+      if (!start) return false;
+      const snapTargets = buildPostSnapTargets(post.porch, post.index, post.piece.size ?? 0.5);
+      gesture = { handle, source, building, piece: post.piece, post, normal, start, snapTargets, event, operation: null };
+      typed.show('length', 0, [event.clientX, event.clientY]);
+      return true;
+    }
     if (handle.kind === 'roof_support' || handle.kind === 'roof_height') {
       const piece = building.roofs.find(r => r.id === handle.id);
       // Height uses a vertical plane facing the camera, points use the roof plane.
@@ -363,6 +385,27 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
       showValue('length', drag.value()); return;
     }
     let point = onPlane(event, building, handle.at, g.normal); if (!point) return;
+    if (handle.kind === 'porch_post') {
+      let raw = point.slice(0, 2).map((v, i) => handle.at[i] + (v - g.start[i]));
+      if (Number.isFinite(exact)) {
+        const delta = raw.map((v, i) => v - handle.at[i]), length = Math.hypot(...delta);
+        raw = handle.at.slice(0, 2).map((v, i) => v + exact * (length ? delta[i] / length : i === 0 ? 1 : 0));
+      }
+      const at = Number.isFinite(exact) ? raw : snapPostPoint(raw, g.snapTargets, free).point;
+      showValue('length', Math.hypot(at[0] - handle.at[0], at[1] - handle.at[1]));
+      g.operation = sameValue(at, handle.at.slice(0, 2)) ? null : {
+        op: 'update_porch_post', building: building.id, porch: g.post.porchId, post: g.post.id, at,
+      };
+      g.postAt = at;
+      preview = structuredClone(g.source);
+      const nextPost = findPost(preview.buildings.find(b => b.id === building.id), g.post.id);
+      if (nextPost) nextPost.piece.at = [...at];
+      view.rebuildLevel(building.id, handle.level, preview, { columns: [g.post.id] }, {postPreview:true});
+      const half = (g.post.piece.size ?? 0.5) / 2;
+      const box = [[at[0] - half, at[1] - half], [at[0] + half, at[1] - half], [at[0] + half, at[1] + half], [at[0] - half, at[1] + half], [at[0] - half, at[1] - half]];
+      document.getElementById('editor-drag-outline')?.setAttribute('points', box.map(p => project(building, [...p, handle.at[2]])).filter(Boolean).map(p => p.join(',')).join(' '));
+      onPreview?.(preview, getSelection()); refresh(); lastFrameMs = Math.max(.001, performance.now() - started); return;
+    }
     if (handle.kind === 'roof_support' || handle.kind === 'roof_height') {
       if (handle.kind === 'roof_support') {
         const at = point.slice(0, 2).map((v, i) => handle.at[i]+move(v-g.start[i]));
@@ -547,6 +590,19 @@ export function createHandles({ view, getPlan, getSelection, getTool = () => 'mo
     const g = gesture, released = preview; gesture = null; preview = null;
     typed.hide();
     if (!g) return;
+    if (g.handle.kind === 'porch_post') {
+      document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+      const saving = !cancel && canEdit() && g.operation;
+      if (saving) preview = released;
+      let committed = false;
+      try { if (saving) { await onCommit(g.operation); committed = true; } }
+      finally {
+        if (saving && preview === released) preview = null;
+        if (!committed) view.rebuildLevel(g.building.id, g.handle.level, getPlan(), { columns: [g.post.id] });
+        onPreview?.(plan(), getSelection()); refresh();
+      }
+      return;
+    }
     if (g.handle.kind === 'downspout') {
       if (clicked) onClick?.(g.handle);
       try { if (!cancel && canEdit() && g.operation) await onCommit(g.operation); }

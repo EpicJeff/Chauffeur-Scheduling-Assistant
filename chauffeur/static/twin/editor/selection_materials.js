@@ -142,7 +142,8 @@ export function materialsInSelection(plan, refs, kit = {}, slotsByOwner = null) 
   const groups = new Map(), seen = new Set();
   for (const [index, owner] of (refs || []).entries()) {
     for (const slot of countedSlots(plan, owner, kit, slotsByOwner?.[index])) {
-      const key = JSON.stringify([ownerKey(canonicalOwner(plan, owner)), slot.key]);
+      const key = slot.target ? JSON.stringify([buildingId(owner) || null, slot.target])
+        : JSON.stringify([ownerKey(canonicalOwner(plan, owner)), slot.key]);
       if (seen.has(key)) continue;
       seen.add(key);
       const id = slot.current?.id || effectiveId(slot.resolved, kit);

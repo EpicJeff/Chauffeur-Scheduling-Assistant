@@ -11,6 +11,7 @@ import { createTypedValue } from './typed_value.js';
 import { applyLocal } from './local_ops.js';
 import { groupTransform, transformOperations, previewTransforms } from './group_transform.js';
 import { isSupported, roofPoint, supportPoints } from '../roof_supports.js';
+import { findPost } from '../porch_posts.js';
 
 const FT = .3048, clamp = v => Math.max(.05, Math.min(20, v));
 const wrap = v => (v % 360 + 360) % 360;
@@ -35,6 +36,14 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     }
     groupCache = null;
     const selected = getSelection(); if (!selected?.id || !plan) return null;
+    if (selected.kind === 'porch_post' && tool === 'move' && isPickable(selected)) {
+      const building = plan.buildings.find(b => b.id === selected.building);
+      const post = building && findPost(building, selected.id);
+      if (!post || post.porch.state === 'ghost') return null;
+      const room = building.rooms?.find(r => r.id === post.porchId);
+      const level = post.porch.level || room?.level || building.levels?.[0]?.id;
+      return { piece: { ...post.piece, id: post.id }, building, porch: post.porch, porchId: post.porchId, index: post.index, level, post: true };
+    }
     if (selected.kind === 'roof' && tool === 'move' && isPickable(selected)) {
       const building = plan.buildings.find(b => b.id === selected.building);
       const piece = building?.roofs?.find(r => r.id === selected.id);
@@ -84,13 +93,20 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
   function centre(r, plan = getPlan()) {
     if (r.group) return gesture?.previewCentre || r.group.centre;
     const p = r.piece;
+    if (r.post) {
+      const room = r.building.rooms?.find(rm => rm.id === r.porchId);
+      const level = r.building.levels?.find(l => l.id === r.level);
+      const z = (r.porch.floor ?? level?.elevation ?? 0) + (room?.floor_offset_ft || 0);
+      return [p.at[0], p.at[1], z];
+    }
     if (r.roof) return [...roofPoint(p, [0, 1].map(i => p.area.reduce((n, q) => n+q[i], 0)/p.area.length)), p.plate];
     if (r.fixture) return [p.at[0], p.at[1], p.at[2] + fixtureReference(plan, p, p.at) + (p.offset_ft || 0)];
     if (r.building) { const at = hostPoint(r.building, p.host, p.offset || 0); at[2] += p.elevation || 0; return at; }
     const at = r.shape ? shapeCentre(p) : p.at;
     return [...at, groundAt(plan, ...at) + (p.elevation || 0)];
   }
-  const pieceIn = (plan, r) => r.building ? plan.buildings.find(b => b.id === r.building.id)[r.list].find(p => p.id === r.piece.id)
+  const pieceIn = (plan, r) => r.post ? findPost(plan.buildings.find(b => b.id === r.building.id), r.piece.id)?.piece
+    : r.building ? plan.buildings.find(b => b.id === r.building.id)[r.list].find(p => p.id === r.piece.id)
     : r.fixture ? plan.light_fixtures[r.entity_id].find(f => f.id === r.piece.id) : sitePieces(plan.site[r.kind])[r.index];
   function clear() { root.replaceChildren(); rows = []; lines = []; ring = []; }
   function draw() {
@@ -234,7 +250,12 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
         by = by.map((v, i) => axis !== null ? (axis === i ? exact : 0) : exact * (length ? v / length : i === 0 ? 1 : 0));
       } else by = by.map(v => snapValue('move', v, free));
       live = axis === null ? Math.hypot(...by) : by[axis]; valueKind = 'length';
-      if (r.roof) {
+      if (r.post) {
+        const at = piece.at.map((v, i) => v + by[i]);
+        change = { at };
+        g.operation = { op: 'update_porch_post', building: r.building.id, porch: r.porchId, post: piece.id, at };
+      }
+      else if (r.roof) {
         change = { area: piece.area.map(p => p.map((v, i) => v+by[i])),
           ...(piece.roof_frame ? { roof_frame: { ...piece.roof_frame, origin: piece.roof_frame.origin.map((v, i) => v+by[i]) } } : {}) };
         g.operation = { op: 'move_roof', building: r.building.id, id: piece.id, by };
@@ -280,7 +301,14 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     const next = pieceIn(preview, r);
     Object.assign(next, change);
     g.changed = Object.entries(change).some(([k, v]) => !same(v, piece[k] ?? (k === 'rotation' || k === 'rotation_deg' ? 0 : k === 'scale' ? 1 : k === 'scale_axes' ? [1, 1, 1] : undefined)));
-    if (r.roof) {
+    if (r.post) {
+      const half = (piece.size ?? 0.5) / 2;
+      view.rebuildLevel(r.building.id, r.level, preview, { columns: [piece.id] }, {postPreview:true});
+      const box = [[next.at[0] - half, next.at[1] - half], [next.at[0] + half, next.at[1] - half], [next.at[0] + half, next.at[1] + half], [next.at[0] - half, next.at[1] + half], [next.at[0] - half, next.at[1] - half]];
+      const outline = box.map(p => project(r.building, [...p, c[2]])).filter(Boolean);
+      document.getElementById('editor-drag-outline')?.setAttribute('points', outline.map(p => p.join(',')).join(' '));
+    }
+    else if (r.roof) {
       const outline = next.area.map(p => project(r.building, [...roofPoint(next, p), c[2]])).filter(Boolean);
       if (outline.length) outline.push(outline[0]);
       document.getElementById('editor-drag-outline')?.setAttribute('points', outline.map(p => p.join(',')).join(' '));
@@ -299,11 +327,12 @@ export function createGizmo({ getPlan, getSelection, getMembers = () => [], isPi
     gesture = null; preview = null; typed.hide();
     view.previewSelectionBox?.(null);
     document.getElementById('editor-drag-outline')?.setAttribute('points', '');
+    let committed = false;
     try { if (!cancel && canEdit() && g.changed && g.operation?.op === 'batch') await applyBatch(g.operation.ops, { drag: true, local: applyLocal(getPlan(), g.operation)?.plan });
       else if (!cancel && canEdit() && g.changed) await op(g.operation, { drag: true,
-      ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); }
+      ...(g.operation.op === 'move_site_item' ? { local: applyLocal(getPlan(), g.operation)?.plan } : {}) }); committed = true; }
     finally {
-      if (g.record.building && !g.record.roof) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list]: [g.record.piece.id] });
+      if (g.record.building && !g.record.roof && (!g.record.post || cancel || !committed)) view.rebuildLevel(g.record.building.id, g.record.level, getPlan(), { [g.record.list || 'columns']: [g.record.piece.id] });
       onPreview?.(getPlan()); draw();
     }
   }

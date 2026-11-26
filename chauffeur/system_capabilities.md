@@ -1,6 +1,24 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1004 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1005 (2026-11-25).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1005 (2026-11-25, NOT device-verified): porch posts are pieces you can select, move, add, delete and size.**
+
+Owner: "I don't know that I can get rid of the posts. They don't show up in the Scene panel as far as I can tell."
+
+**Record.** `porches_detail[].columns = [{at, size, id?}]`. A post's ref is `post:<porchId>:<index>`; the first post edit on a porch writes exactly that text as `id` on its columns, so refs never change. New posts take the smallest free suffix. Nothing is minted on load; ids are left out of bake and lighting keys, so an untouched house keeps its bytes and keys.
+
+**Operations** (hand and Argyle, one validation, one undo step, batches): `add_porch_post {porch, at?, size?, id?}` (default: middle of the longest open gap on edges away from the house, size the porch's most common or .5), `update_porch_post {porch, post, at?, size?}`, `delete_porch_post`. Size .05 to 3 ft, 40 per porch, positions within 1e5 ft; refused, never defaulted. Argyle's `describe` lists posts.
+
+**Posts follow the porch.** Only operations that move corners (move room, joints, wall, typed lengths): a translation moves every post; a post within 1 ft plus half its size of a corner moves with it; else within 4 ft of an edge it takes that edge's normal movement; else it stays. Old corners come from the joint cycle, straight joints included. Splits, merges, separators and deletes never move posts. A plan re-read keeps a person's porch and posts and never duplicates the porch (an absent porch level means the first level).
+
+**Editor.** "Post N" rows under the porch in Scene, with hide and lock; the post card (X, Y, Size, the porch's Columns material, Select the porch, Delete); the porch card's Posts section (count, Add post, Size for all posts, Move posts to the roof shown disabled with its reason). Drag handle with snapping (Shift frees), Move gizmo, arrow keys, typed values, Delete key and menu, Shift and marquee sets, undo and redo keep the right selection. In the Outside view a click on a post selects the building; a second click on a post selects its porch. Doors and windows are placed through posts as through rooms.
+
+**Drawing and cost.** Each post is its own piece in the existing material batches: 0 draws, programs, samplers or triangles. Owner's house: moving or sizing a post updates in place (no rebuild; 2.9 s, of which 2.6 s is the rain cover, still recomputed whole); adding or deleting one rebuilds that building (about 9 s, the same rain cover). A selection tint now covers only the selected post or piece's own ranges where a batch is shared; selecting a building leaves its posts untinted. Close buttons no longer overlap a card's first field.
+
+**Demo.** Opt-in shots `twin-awning-garden` and `twin-downspout-hand`.
+
+Tests: `test_twin_porch_posts_model` (31), `_js` (default 18, `--full` 21 with every wall and split sweep), `_editor_js`, `test_house_editor_porch_posts_live`, and neighbours (plain selection, gutters, add porch, multiselect, history). `test_twin_gutters_js` compares against a pinned commit.
 
 **v2.499.1004 (2026-11-25, NOT device-verified): selecting a room, porch or level is an ordinary selection.**
 

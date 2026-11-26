@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools' / 'demo_capture.py'
 NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters',
          'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts',
-         'twin-eave-streams', 'twin-lit-models']
+         'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -33,7 +33,7 @@ globalThis.getComputedStyle = () => ({visibility:'visible', display:'block'});
 window.Alpine = {$data: () => ({board:{tiles:[{}]}})};
 window.__editor = {ready:true, selected:()=>({pieceId:'r1',buildingId:'synth-house'})};
 window.__twin = {
-  ready:true, plan:{buildings:[{id:'synth-house'}]}, stats:()=>({triangles:100}),
+  ready:true, plan:{buildings:[{id:'synth-house', roofs:[{id:'demo-awning'}]}]}, stats:()=>({triangles:100}),
   eaves:{group:{visible:true}, data:{instances:[{}], pours:[]}},
   weather:{precip:'rain', rate:1, wetness:1},
   bake:{fresh:()=>['light.demo_floor_lamp'], models:{stats:()=>({bricks:4})}},
@@ -42,20 +42,42 @@ window.__twin = {
 };
 window.__demoGutterFrame = {run:'demo-run', spout:'demo-spout'};
 for (const shot of input.shots) {
+  window.__twin.state.time = shot === 'twin-lit-models' ? 'night' : 'auto';
   window.__editor.selected = () => ({pieceId:shot.startsWith('twin-awning-')?'demo-awning':shot==='twin-posts'?'front-porch':'r1',buildingId:'synth-house'});
   nodes.clear();
-  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts'].includes(shot)?'editor':'twin')
+  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts','twin-downspout-hand'].includes(shot)?'editor':'twin')
      : shot==='wall-board'?'/home':'/app'};
   for(const selector of ['.pwa-brief-greet','.pwa-brief-day [data-kind]',
      '#plan-head .pwa-plan-title','.pwa-tl .pwa-ev','[x-data="homeBoard()"]',
      '#piece-card','canvas']) nodes.set(selector,node);
   const postsButton = {...node, textContent:'Move posts to the roof'};
   if(shot==='twin-posts')nodes.set('#piece-card button',postsButton);
+  const placedNote = {...node, textContent:'Placed by hand'};
+  if(shot==='twin-downspout-hand') {
+    nodes.set('#piece-card .editor-downspout-note', placedNote);
+    nodes.set('.editor-handle-downspout', node);
+  }
   assert.equal(check({shot,final:true}).ready, true, shot);
   if(shot==='twin-posts') {
     nodes.delete('#piece-card button');
     assert.equal(check({shot,final:true}).ready,false,'posts shot requires the actual action');
     nodes.set('#piece-card button',postsButton);
+  }
+  if(shot==='twin-awning-garden') {
+    window.__twin.state.time = 'night';
+    assert.equal(check({shot,final:true}).ready,false,'awning-garden shot requires daylight');
+    window.__twin.state.time = 'auto';
+    window.__twin.plan.buildings[0].roofs = [];
+    assert.equal(check({shot,final:true}).ready,false,'awning-garden shot requires demo-awning');
+    window.__twin.plan.buildings[0].roofs = [{id:'demo-awning'}];
+  }
+  if(shot==='twin-downspout-hand') {
+    nodes.delete('#piece-card .editor-downspout-note');
+    assert.equal(check({shot,final:true}).ready,false,'downspout-hand shot requires Placed by hand note');
+    nodes.set('#piece-card .editor-downspout-note', placedNote);
+    nodes.delete('.editor-handle-downspout');
+    assert.equal(check({shot,final:true}).ready,false,'downspout-hand shot requires visible downspout handle');
+    nodes.set('.editor-handle-downspout', node);
   }
   if(shot==='twin-eave-streams') {
     window.__twin.eaves.data.pours = [{}];
@@ -89,7 +111,7 @@ for (const shot of input.shots) {
   location.pathname='/account/login';
   assert.equal(check({shot,final:true}).ready,false,shot+' wrong route');
 }
-console.log('all eleven surfaces reject visible pairing/sign-in overlays and wrong routes');
+console.log('all thirteen surfaces reject visible pairing/sign-in overlays and wrong routes');
 '''
         code, output = run_node(driver, {'root': ROOT.as_posix(), 'guard': SURFACE_STATE, 'shots': NAMES})
         self.assertEqual(code, 0, output)
@@ -190,13 +212,14 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
     def test_opt_in_shots_excluded_from_default(self):
         sys.path.insert(0, str(ROOT))
         from tools import demo_capture as demo
-        for name in ('twin-eave-streams', 'twin-lit-models'):
+        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand')
+        for name in opt_in:
             self.assertNotIn(name, demo.SHOTS)
             self.assertIn(name, demo.OPT_IN_SHOTS)
         with tempfile.TemporaryDirectory() as out, patch.object(demo, 'capture') as cap:
             self.assertEqual(demo.main(['--out', out]), 0)
             self.assertEqual(cap.call_args.args[1], list(demo.SHOTS))
-            for name in ('twin-eave-streams', 'twin-lit-models'):
+            for name in opt_in:
                 cap.reset_mock()
                 self.assertEqual(demo.main(['--out', out, '--shot', name]), 0)
                 self.assertEqual(cap.call_args.args[1], [name])
@@ -383,7 +406,7 @@ with demo.isolated_data() as directory:
                patch.object(storage.db,'path',str(out.parent/'decoy.sqlite3')),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()[:-1]),
                patch.object(storage,'get_all_members',return_value=storage.get_all_members()+[{'id':'decoy'}])]
-        for shot in ('twin-overview', 'twin-eave-streams', 'twin-lit-models'):
+        for shot in ('twin-overview', 'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand'):
             for case in cases:
                 with case:
                     try: demo._save_still(page,shot,out,data,True)

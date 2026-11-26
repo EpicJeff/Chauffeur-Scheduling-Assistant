@@ -1042,19 +1042,18 @@ export function writeWeatherOpen(root,cover,worldScale=1,previousRoot=null) {
 export function refreshSlabCover(root,plan,roofs,buildingId,{postsOnly=false}={}) {
   const b=plan.buildings?.find(b=>b.id===buildingId),surface=roofs.get(buildingId);
   if(!b||!surface)return;
-  // The post caller (46e1361f) supplies immutable slab slices and a targeted
-  // CPU-proxy refresh. Keep its contract without changing legacy captures.
+  // Post changes affect only the retained porch CPU proxy. Its original slice
+  // avoids sampling clipped render batches and keeps an unchanged cover key.
   if(postsOnly&&surface.refreshPostCover?.())return;
-  const proxyCover='refreshPostCover' in surface;
-  if(proxyCover)surface.refreshPostCover=null;
+  surface.refreshPostCover=null;
   root.updateWorldMatrix(true,true);
   const frame=new THREE.Matrix4().makeRotationY((b.rotation||0)*Math.PI/180);
   frame.setPosition(b.position?.[0]||0,buildingBase(plan,b),-(b.position?.[1]||0));
   const inverse=frame.invert().multiply(new THREE.Matrix4().makeScale(1/FT,1/FT,1/FT));
   const positions=[],a=new THREE.Vector3(),c=new THREE.Vector3(),d=new THREE.Vector3(),n=new THREE.Vector3();
   root.traverse(o=>{
-    if(!o.isMesh||(proxyCover?o.userData.ghost:o.layers.isEnabled(31))||!o.geometry?.attributes.position)return;
-    const g=o.geometry,cover=proxyCover&&o.userData.coverPositions,p=cover?new THREE.BufferAttribute(cover,3):g.attributes.position;
+    if(!o.isMesh||o.userData.ghost||!o.geometry?.attributes.position)return;
+    const g=o.geometry,cover=o.userData.coverPositions,p=cover?new THREE.BufferAttribute(cover,3):g.attributes.position;
     const index=cover?null:g.index,matrix=inverse.clone().multiply(o.matrixWorld);
     for(const r of o.userData.snapRanges||[{start:0,count:index?.count??p.count,...o.userData}]) {
       if(r.buildingId!==buildingId||!['floor','room'].includes(r.kind))continue;

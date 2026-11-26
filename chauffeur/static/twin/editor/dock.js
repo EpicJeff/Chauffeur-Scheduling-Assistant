@@ -139,6 +139,11 @@ export function propertyPath(record, state = {}, select = () => {}) {
   const pick = id => () => select(id ? { pieceId: id, buildingId: building?.id ?? null } : null);
   if (!building) return { crumbs: ['Yard', ...(record.poolId ? ['Pool'] : []), piece.name || kind.replaceAll('_', ' ')], back: pick(record.poolId || piece.feature?.feature || null) };
   if (kind === 'building') return { crumbs: [building.name || building.id], back: pick(null) };
+  if (kind === 'porch_post') {
+    const room = building.rooms?.find(r => r.id === record.porchId);
+    const name = room?.name || record.porch?.name || 'Porch';
+    return { crumbs: [name, `Post ${record.index + 1}`], back: pick(record.porchId) };
+  }
   const wall = kind === 'wall' ? piece : building.walls?.find(w => w.id === (piece.wall || piece.host?.wall));
   const room = building.rooms?.find(r => r.id === (kind === 'room' ? piece.id : state.room || piece.host?.floor || piece.host?.ceiling
     || building.anchors?.find(a => a.id === piece.host?.anchor)?.host?.floor))
