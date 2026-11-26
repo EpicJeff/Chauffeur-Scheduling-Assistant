@@ -1,5 +1,6 @@
 {
   "common": {
+    "model_materials": {"type":"object", "default":{}},
     "name": {"type":"text", "default":"", "max":100},
     "rotation": {"type":"angle", "default":0},
     "pitch": {"type":"angle", "default":0, "free":true},
@@ -26,6 +27,7 @@
     "other": {}
   },
   "opening": {
+    "model_materials": {"type":"object", "default":{}},
     "glass": {"type":"choice", "kind":"door", "label":"Door glass", "choices":["none","half"], "labels":{"none":"None","half":"Half glass"}, "default":"none"},
     "model": {"type":"model", "default":null},
     "hinge": {"type":"choice", "choices":["left","right"], "default":"left"},

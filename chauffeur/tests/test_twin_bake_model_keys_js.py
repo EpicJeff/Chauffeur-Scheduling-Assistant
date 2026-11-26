@@ -39,6 +39,14 @@ const atMetres=x=>({buildings:[{id:'b',items:[{id:'i',asset:'chair',host:{ground
 const hash=p=>occluderHash(placedCopies(p),origin,6);
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-9,`${a} != ${b}`);
 const tests={
+ test_atlas_key_ignores_model_materials() {
+  const changed=structuredClone(plan);
+  changed.buildings[0].items[0].model_materials={Wood:{material:'oak',texture:'model',tiles:2}};
+  changed.buildings[0].openings[0].model_materials={Wood:{material:'glass',texture:'real'}};
+  assert.equal(authoredGeometry(changed),authoredGeometry(plan));
+  assert.equal(atlasFor(changed).key,atlasFor(plan).key);
+  assert.equal(atlasJob(built.root,changed,options).cacheKey,atlasJob(built.root,plan,options).cacheKey);
+ },
  test_moving_an_item_keeps_atlas_key() {
   const baseline=atlasFor(plan).key,worker=atlasJob(built.root,plan,options).cacheKey;
   for(const edit of [p=>p.buildings[0].items[0].rotation=90,

@@ -1489,7 +1489,7 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
         from services import twin_objects
         extra = {k: op[k] for k in twin_objects.SCHEMA['opening'] if k in op}
         if extra:
-            twin_objects.update(piece, extra, opening=True)
+            twin_objects.update(piece, extra, opening=True, new_copy=True)
         if 'panels' in op:
             from services.twin_edit import _number as opening_number
             opening_number(op['panels'], 'panels', positive=True)
@@ -1535,7 +1535,7 @@ def _more(building, op, ha_catalogue=None, *, model=None, actor='person'):
                     if kind == 'add_item' else ('mirror_x', 'mirror_y'))
             extra = {k: op[k] for k in keys if k in op}
             if extra:
-                twin_objects.update(piece, extra)
+                twin_objects.update(piece, extra, new_copy=True)
             if kind == 'add_item' and piece['asset'].startswith('import-'):
                 from services import twin_imports
                 if not twin_imports.get(piece['asset']):
@@ -1968,7 +1968,7 @@ def _site_op(model, op, actor, *, _batch_inplace=False):
             raise Refused('Choose an imported model from the library.')
         extra = {k: op[k] for k in (*twin_objects.fields({**piece, 'object_kind': op.get('object_kind', 'plant' if name == 'planting' else 'furniture')}, name), 'object_kind') if k in op}
         if extra:
-            twin_objects.update(piece, extra, name)
+            twin_objects.update(piece, extra, name, new_copy=True)
         if name == 'planting':
             for field in ('height', 'seed'):
                 if field in op:

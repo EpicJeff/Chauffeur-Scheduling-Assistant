@@ -844,6 +844,8 @@ def normalize(raw: dict) -> tuple[dict, list[str]]:
     raw = deepcopy(raw)
     if not isinstance(raw, dict) or raw.get('units') != 'ft':
         raise ValueError('Twin plan units must be ft.')
+    from services import twin_objects
+    twin_objects.validate_plan_model_materials(raw)
     notes = []
     buildings = []
     for index, building in enumerate(_items(raw, 'buildings', notes)):
@@ -935,10 +937,20 @@ def _compose_overrides(value, notes):
         for item_id, changes in properties.items():
             if not isinstance(item_id, str) or not isinstance(changes, dict):
                 continue
+            clean = {key: deepcopy(entry) for key, entry in changes.items() if key != 'model_materials'}
+            if 'model_materials' in changes:
+                try:
+                    twin_objects.validate_model_materials_shape(changes['model_materials'])
+                    clean['model_materials'] = deepcopy(changes['model_materials'])
+                except ValueError:
+                    notes.append('Dropped invalid composed model part materials.')
             try:
                 candidate = {'object_kind': 'plant'}
-                twin_objects.update(candidate, changes, 'planting')
-                valid[item_id] = changes
+                other = {key: entry for key, entry in clean.items() if key != 'model_materials'}
+                if other:
+                    twin_objects.update(candidate, other, 'planting')
+                if clean:
+                    valid[item_id] = clean
             except ValueError:
                 notes.append('Dropped invalid composed object properties.')
         if valid:
