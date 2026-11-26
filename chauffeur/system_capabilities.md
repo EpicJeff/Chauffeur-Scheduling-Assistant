@@ -1,6 +1,14 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1007 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1008 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1008 (2026-11-26, NOT device-verified): the bake follows model changes that alter a shadow.**
+
+Models mode Task 3. Each lamp's occluder hash (`occluderHash`, `bake/model_occluders.js`) now also takes, per nearby copy, `occluderInputs` from `static/twin/model_parts.js`: a model's turn or real-size fix, its mid detail level (percent other than 25, or revision above 1), and the per-part shadow pattern once copy and model overrides resolve (blend and cutout materials, glass and fixture cast none). Only lamps whose reach includes an affected copy go stale. Colour, texture mode, tiles and the full and far percentages stay out of every key. Door and window models now join the hash through opening copies (wall centre and yaw, shared floor reference, gable ends), only when they carry new inputs, so their atlas identity is unchanged.
+
+**Untouched houses keep every key.** 33 lamp keys on the household fixture are byte-identical to before (golden `tests/fixtures/twin_model/model-bake-keys-legacy.json`, captured from the old code); untouched and merely regenerated models add nothing, so this release needs no rebake.
+
+**Catalog.** The bake reads `api/house/models` once per initialize, refresh and press. A 404 (older server) means no records; a failure keeps the last good snapshot, a panel mounting during an outage stays lit with only affected lamps stale, a press refetches and refuses to bake on an unconfirmed catalog, and a 401 pauses for sign-in. Polls rebuild keys only when the per-copy input projection changes, so colour edits cause no re-check. The editor now compares stored occluder hashes and the grid layout hash, so its staleness matches the viewer's.
 
 **v2.499.1007 (2026-11-26, NOT device-verified): model records, the server half of Library Models mode.**
 
