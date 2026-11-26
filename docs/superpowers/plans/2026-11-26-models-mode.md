@@ -126,6 +126,14 @@ model_materials: {partKey: {material: libraryId|'original', texture?: 'real'|'mo
   - Built from `resolvePart` + `materialCastsShadow`, with `part.opaque` for originals.
   - Returns `''` when the record has none of these fields, so today's keys stay unchanged.
 
+*Done 2026-11-26. As built:*
+- `materialCastsShadow` keys on `params.alpha_mode` (`blend` and `cutout` cast no shadow) and on the ids or roles `glass` and `fixture`, matching `alphaModeOf` and `applyMaterialParams`.
+- `occluderInputs` omits members equal to a legacy record:
+  - a mid level is included only when its percent is not 25 or its revision is above 1;
+  - the shadow pattern is included only when it differs from the originals.
+
+  So untouched or regenerated models keep today's keys. `attach_lod` (Task 2) starts the revisions at 1.
+
 - [ ] **Step 1: Write the failing node tests** in `tests/test_model_parts_js.py`, using the pattern in `tests/test_model_lods_js.py`:
   - `keys_for_duplicates_and_unnamed`: `partKeys(['Wood', null, 'Wood', '', 'Metal', 'Wood'])` deep-equals `['Wood', 'unnamed', 'Wood~2', 'unnamed~2', 'Metal', 'Wood~3']`.
   - `resolution_order`:

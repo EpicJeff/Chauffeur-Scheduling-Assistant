@@ -65,8 +65,9 @@ look like your furniture or items."
      (`texture.repeat = 1/tile_ft`). Downloaded models usually carry 0..1 UVs per object, and untextured
      SketchUp-style parts often have none, so the plain wall path would stretch grain or show one flat
      colour. *(Claude's call, after the builder check.)*
-     - At import or LOD generation, each part also gets real-size box-projected UVs (in feet, matching the
-       wall convention, scaled by the size fix), carried through every generated level.
+     - Each part also gets real-size box-projected UVs (in feet, matching the wall convention, scaled by
+       the size fix), computed at load from positions, so every level gets the same projection.
+       *(Amended 2026-11-26 by the plan: computed at load instead of stored in level files.)*
      - Each part row has a **Texture: Real size | Model's own** choice. Real size is the default for an
        override, and the only choice for parts without UVs. "Model's own" keeps the author's unwrap, for
        example a sofa with sewn seams.
@@ -192,8 +193,14 @@ material library the single source of every look.
   - `fix: {height_m | width_m, turn: 0|90|180|270}`;
   - `materials: {partKey: {material: materialId, texture: 'real' | 'model'}}`;
   - `parts: [{key, name, triangles, has_uv}]`, recorded at import for the UI.
-- **Placed copies** (items, site items, openings with `model`) gain an optional `materials` map with the
-  same shape. The resolution order is per-copy part, then model part, then the original material.
+- **Placed copies** (items, site items, openings with `model`) gain an optional `model_materials` map with
+  the same shape, plus `{material: 'original'}`. The resolution order is per-copy part, then model part,
+  then the original material. *(Amended 2026-11-26 by the plan: fixture items and openings already use
+  `materials` for finish kinds, so every placed copy uses `model_materials`.)*
+- **Occluder inputs** (`occluderInputs` in `static/twin/model_parts.js`) include a member only when it
+  differs from a legacy record: a non-zero turn, a height or width fix, the mid level when its percent is
+  not 25 or its revision is above 1, and the per-part shadow pattern when it differs from the originals.
+  Untouched and merely regenerated models therefore keep today's lamp keys, so rollout needs no rebake.
 - **Server.** Validate keys against the record's `parts`, and material ids against the
   material library. Unknown keys are refused, not dropped silently. Deleting a library material that a
   model or placement uses follows the material library's existing in-use rule.
