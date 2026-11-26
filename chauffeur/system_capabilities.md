@@ -1,6 +1,18 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1006 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1007 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1007 (2026-11-26, NOT device-verified): model records, the server half of Library Models mode.**
+
+Every model, imported or built-in, now has one record that Models mode will edit (spec `docs/superpowers/specs/2026-11-23-library-models-mode-design.md`, plan `docs/superpowers/plans/2026-11-26-models-mode.md`, Task 2). Nothing visible changes yet: the Library Models tab and editor part rows are later slices.
+
+**Record** (`services/twin_model_records.py`; shared rules in `services/twin_model_parts.py` and `static/twin/model_parts.js`). Imports keep it in `.asset.json`; built-ins keep only their editable fields in `DATA_DIR/library_models/<id>.json`, merged over the live manifest so manifest file changes still win. Fields: `revision` (bumps on every write), `lod_percent` [full, mid, far] (default 100/25/5), `lods` with per-level `percent` and `revision`, `fix` (turn 0/90/180/270, real height or width in metres), `materials` per part (library material, Real size or Model's own, `tiles` for Model's own), `parts` (stamped once, key per original material, repeats numbered `~2`), `parts_version`. Writes carrying an old `revision` get 409 with the current record. Undo, redo and reset keep the last 20 states of `{lod_percent, fix, materials}`.
+
+**Routes.** `GET /api/house/models`, `GET|PATCH /api/house/models/{id}`, `POST .../undo|redo|reset`; reads WALL_OR_SERVICE, writes PARENTS. Level uploads take `lod0.glb` (generated full, only below 100%), `lod1.glb`, `lod2.glb` plus `percent`; a finish whose percentage was edited meanwhile is refused (409) and attaches nothing. Legacy levels read revision 0 and regenerated levels start at 1, so the bake's lamp keys stay unchanged (see `occluderInputs`). Import files are served `Cache-Control: no-cache`.
+
+**Placed copies.** Items, site furniture, planting and openings accept `model_materials` (same shape, plus `{material: 'original'}` per copy). Changing or clearing an opening's model drops keys the new model lacks; unchanged stale keys pass; new or changed entries must name an active library material, except when a copy is created by Move to or paste, which keeps archived ones. Director yard furniture (`polyhaven:` assets) resolves to the built-in record. Saved director-yard edits keep their other fields when a part map is malformed. `model_materials` stays out of the atlas key.
+
+**In-use rule.** Deleting a library material named by a model default or a copy's `model_materials` is refused ("Used on ...") or archives when the use is history only.
 
 **v2.499.1006 (2026-11-26, NOT device-verified): edits stop recomputing rain cover for the whole scene.**
 

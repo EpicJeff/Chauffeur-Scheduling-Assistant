@@ -83,8 +83,15 @@ def start_upload(body):
     if derived:
         if not get(body['asset_id']):
             raise ValueError('This imported model no longer exists.')
-        if body.get('lod') not in ('lod1.glb', 'lod2.glb') or files != [{'name': body.get('lod'), 'size': size}]:
-            raise ValueError('Upload one lighter version named lod1.glb or lod2.glb.')
+        if body.get('lod') not in ('lod0.glb', 'lod1.glb', 'lod2.glb') or files != [{'name': body.get('lod'), 'size': size}]:
+            raise ValueError('Upload one detail level named lod0.glb, lod1.glb or lod2.glb.')
+        if 'percent' in body and (type(body['percent']) is not int or not 1 <= body['percent'] <= 100):
+            raise ValueError('Send a whole detail percentage from 1 to 100.')
+        # Existing editor uploads omit percent and generate the fixed 25/5 levels.
+        # Capture that identity at start, never infer it from a later record.
+        percent = body.get('percent', {'lod1.glb': 25, 'lod2.glb': 5}.get(body['lod']))
+        if percent is None:
+            raise ValueError('Send the generated full level percentage.')
     if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
         raise ValueError('Give the model a name of at most 100 characters.')
     if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
@@ -114,7 +121,7 @@ def start_upload(body):
         (folder / 'body').write_bytes(b'')
         (folder / 'meta.json').write_text(json.dumps({'name': name.strip(), 'size': size,
             'files': declared, 'received': 0, 'index': 0, 'expires': time.time() + UPLOAD_TTL,
-            **({'asset_id': body['asset_id'], 'lod': body['lod']} if derived else {}),
+            **({'asset_id': body['asset_id'], 'lod': body['lod'], 'percent': percent} if derived else {}),
             **({'material_id': material_id, 'slot': body['slot'], 'actor': body.get('material_actor')}
                if material_id is not None else {})}), encoding='utf-8')
     return {'upload_id': upload_id, 'chunk_bytes': CHUNK_BYTES}
@@ -161,7 +168,7 @@ def finish_upload(upload_id):
                 return twin_materials.set_image(meta['material_id'], meta['slot'],
                                                 next(iter(files.values())), meta.get('actor'))
             if meta.get('asset_id'):
-                return attach_lod(meta['asset_id'], meta['lod'], files[meta['lod']])
+                return attach_lod(meta['asset_id'], meta['lod'], files[meta['lod']], meta.get('percent'))
             return create(files, meta['name'], 'other')
         finally:
             shutil.rmtree(folder)
@@ -199,12 +206,26 @@ def get(asset_id):
         return None
 
 
-def attach_lod(asset_id, name, data):
-    if name not in ('lod1.glb', 'lod2.glb') or len(data) > LOD_MAX_BYTES:
+def attach_lod(asset_id, name, data, percent=None):
+    with twin_store.LIFECYCLE, twin_store._LOCK:
+        return _attach_lod(asset_id, name, data, percent)
+
+
+def _attach_lod(asset_id, name, data, percent):
+    from services import twin_model_records
+    if name not in twin_model_records.LEVELS or len(data) > LOD_MAX_BYTES:
         raise ValueError('Each lighter GLB version may be at most 50 MB.')
     entry = get(asset_id)
     if not entry:
         raise ValueError('This imported model no longer exists.')
+    record = twin_model_records.get(asset_id)
+    index = twin_model_records.LEVELS.index(name)
+    if percent is None:
+        percent = {'lod1.glb': 25, 'lod2.glb': 5}.get(name)
+    if type(percent) is not int or not 1 <= percent <= 100:
+        raise ValueError('Send a whole detail percentage from 1 to 100.')
+    if percent != record['lod_percent'][index] or index == 0 and percent == 100:
+        raise twin_model_records.Conflict(record, 'These detail percentages changed. Rebuild the current level.')
     if name == entry['model'] or name in entry['files'] and not any(l['name'] == name for l in entry.get('lods', [])):
         raise ValueError('The original already uses this filename. Keep the original model untouched.')
     try:
@@ -214,12 +235,18 @@ def attach_lod(asset_id, name, data):
     target = root() / asset_id
     temp = target / ('.' + name + '.tmp')
     temp.write_bytes(data); os.replace(temp, target / name)
+    counters = entry.setdefault('_lod_revisions', {})
+    previous = next((l.get('revision', 0) for l in entry.get('lods', []) if l['name'] == name), 0)
+    revision = max(counters.get(name, 0), previous) + 1
+    counters[name] = revision
     entry['lods'] = sorted([l for l in entry.get('lods', []) if l['name'] != name] +
-                           [{'name': name, 'triangles': triangles, 'bytes': len(data)}], key=lambda l: l['name'])
+                           [{'name': name, 'triangles': triangles, 'bytes': len(data),
+                             'percent': percent, 'revision': revision}], key=lambda l: l['name'])
+    entry['revision'] = record['revision'] + 1
     entry['files'][name] = True
     temp = target / '.asset.tmp'
     temp.write_text(json.dumps(entry), encoding='utf-8'); os.replace(temp, target / META)
-    return entry
+    return twin_model_records.get(asset_id)
 
 
 def catalog():
@@ -412,7 +439,7 @@ def create(files, name, kind, thumbnail=None):
         raise ValueError('The glTF model is invalid or incomplete.') from exc
     thumbnail_bytes = _thumbnail(thumbnail)
     asset_id = 'import-' + uuid.uuid4().hex
-    entry = {'id': asset_id, 'name': name.strip(), 'kind': kind,
+    entry = {'id': asset_id, 'name': name.strip(), 'kind': kind, 'revision': 1,
              'model': next(iter(kmz_models)) if kmz_models else model,
              'files': {n: True for n in files}, **_triangle_metadata(triangles)}
     with twin_store.LIFECYCLE, twin_store._LOCK:
@@ -468,6 +495,7 @@ def rename(asset_id, name, kind=None, thumbnail=None, size=None, triangles=None)
             entry['thumbnail'] = '.thumbnail.png'
             entry['files']['.thumbnail.png'] = True
         target = root() / asset_id / META
+        entry['revision'] = entry.get('revision', 0) + 1
         temp = target.with_suffix('.tmp')
         temp.write_text(json.dumps(entry), encoding='utf-8')
         os.replace(temp, target)
@@ -490,6 +518,7 @@ def delete(asset_id):
             if twin_objects.placements(old, asset_id):
                 entry = get(asset_id)
                 entry['archived'] = True
+                entry['revision'] = entry.get('revision', 0) + 1
                 (root() / asset_id / META).write_text(json.dumps(entry), encoding='utf-8')
                 return
         shutil.rmtree(root() / asset_id)

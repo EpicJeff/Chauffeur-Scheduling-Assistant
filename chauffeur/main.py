@@ -1422,6 +1422,9 @@ async def add_no_cache_headers(request: Request, call_next):
     if (request.url.path.startswith('/api/house/twin/materials/')
             and response.status_code == 200 and 'immutable' in response.headers.get('Cache-Control', '')):
         return response
+    if (request.url.path.startswith('/api/house/twin/imports/')
+            and response.status_code == 200 and response.headers.get('Cache-Control') == 'no-cache'):
+        return response
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
@@ -8312,6 +8315,63 @@ def house_twin_imports():
     return twin_imports.catalog()
 
 
+def _model_record_call(operation, *args, write=False):
+    from services import twin_model_records
+    try:
+        result = operation(*args)
+    except twin_model_records.Conflict as exc:
+        return JSONResponse(status_code=409, content={'detail': str(exc), 'record': exc.current})
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail='No such model.') from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if write:
+        global LAST_UPDATE_TIME
+        LAST_UPDATE_TIME = time.time()
+    return result
+
+
+@app.get('/api/house/models')
+def house_models():
+    from services import twin_model_records
+    return {'models': twin_model_records.catalog()}
+
+
+@app.get('/api/house/models/{asset_id}')
+def house_model_record(asset_id: str):
+    from services import twin_model_records
+    return _model_record_call(twin_model_records.get, asset_id)
+
+
+@app.patch('/api/house/models/{asset_id}')
+def house_model_update(asset_id: str, body: dict, request: Request):
+    from services import twin_model_records
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _model_record_call(twin_model_records.update, asset_id,
+                              {k: v for k, v in body.items() if k != 'revision'}, body.get('revision'), write=True)
+
+
+@app.post('/api/house/models/{asset_id}/undo')
+def house_model_undo(asset_id: str, body: dict, request: Request):
+    from services import twin_model_records
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _model_record_call(twin_model_records.undo, asset_id, body.get('revision'), write=True)
+
+
+@app.post('/api/house/models/{asset_id}/redo')
+def house_model_redo(asset_id: str, body: dict, request: Request):
+    from services import twin_model_records
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _model_record_call(twin_model_records.redo, asset_id, body.get('revision'), write=True)
+
+
+@app.post('/api/house/models/{asset_id}/reset')
+def house_model_reset(asset_id: str, body: dict, request: Request):
+    from services import twin_model_records
+    require_parent_token(request.headers.get('x-member-token') or request.query_params.get('member_token'))
+    return _model_record_call(twin_model_records.reset, asset_id, body.get('revision'), write=True)
+
+
 @app.get('/api/house/twin/imports/{asset_id}/{name:path}')
 def house_twin_import_file(asset_id: str, name: str):
     from services import twin_imports
@@ -8322,7 +8382,7 @@ def house_twin_import_file(asset_id: str, name: str):
     media = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'webp': 'image/webp',
              'gltf': 'model/gltf+json', 'glb': 'model/gltf-binary'}.get(suffix, 'application/octet-stream')
     return FileResponse(twin_imports.root() / asset_id / name,
-                        headers={'X-Content-Type-Options': 'nosniff'}, media_type=media)
+                        headers={'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-cache'}, media_type=media)
 
 
 @app.post('/api/house/editor/imports')
@@ -8362,8 +8422,11 @@ async def house_editor_import(request: Request):
 
 
 def _house_upload_call(fn, *args):
+    from services import twin_model_records
     try:
         return fn(*args)
+    except twin_model_records.Conflict as exc:
+        return JSONResponse(status_code=409, content={'detail': str(exc), 'record': exc.current})
     except (ValueError, OSError, __import__('zipfile').BadZipFile) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:

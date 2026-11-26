@@ -155,7 +155,7 @@ export function selectionFields(plan, refs, { getModel = () => null, getFieldLab
       const s = schema();
       const specs = kind === 'opening' ? s.opening : { object_kind: { type: 'choice', choices: Object.keys(s.kinds), default: kind === 'planting' ? 'plant' : 'furniture' }, ...propertyFields(piece, kind) };
       for (const [field, spec] of Object.entries(specs)) {
-        if (spec.free && piece.host || spec.kind && spec.kind !== piece.kind || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
+        if (spec.type === 'object' || spec.free && piece.host || spec.kind && spec.kind !== piece.kind || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
         const parse = spec.type === 'boolean' ? v => !!v : ['number', 'angle'].includes(spec.type) ? numeric
           : spec.type === 'axes' ? input => String(input).split(',').map(numeric)
             : spec.type === 'visibility' ? input => String(input).split(',').map(value => value.trim()).filter(Boolean)

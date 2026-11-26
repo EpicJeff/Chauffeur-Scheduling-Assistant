@@ -51,7 +51,7 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
   }
   const fields = kind === 'opening' ? s.opening : { object_kind: { type: 'choice', choices: Object.keys(s.kinds), default: kind === 'planting' ? 'plant' : 'furniture' }, ...propertyFields(piece, kind) };
   for (const [field, spec] of Object.entries(fields)) {
-    if (spec.free && piece.host || spec.kind && spec.kind !== piece.kind || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
+    if (spec.type === 'object' || spec.free && piece.host || spec.kind && spec.kind !== piece.kind || field === 'model' || kind === 'item' && ['scale', 'rotation'].includes(field)) continue;
     const label = document.createElement('label'); label.textContent = spec.label || labels[field] || field[0].toUpperCase() + field.slice(1);
     const input = document.createElement(spec.type === 'choice' ? 'select' : 'input');
     input.setAttribute('aria-label', label.textContent);

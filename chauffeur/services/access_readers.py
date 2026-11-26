@@ -131,6 +131,13 @@ READERS = [
     # §4.6 shared screens
     ((R, 'POST', '/api/house/bakes/{key}/grid/{name}.bin'), 'NONE', (), 'binary visibility grid; auth PARENTS and bake lease'),
     ((R, 'GET', '/api/house/bakes/{key}/grid/{name}.bin'), 'NONE', (), 'binary visibility grid; auth WALL_OR_SERVICE'),
+    *[((R, method, path), 'NONE', (), 'model asset metadata; auth WALL_OR_SERVICE reads, PARENTS writes')
+      for method, path in [
+          ('GET', '/api/house/models'), ('GET', '/api/house/models/{asset_id}'),
+          ('PATCH', '/api/house/models/{asset_id}'),
+          ('POST', '/api/house/models/{asset_id}/undo'),
+          ('POST', '/api/house/models/{asset_id}/redo'),
+          ('POST', '/api/house/models/{asset_id}/reset')]],
     ((R, 'GET', '/api/house/state'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),
     ((R, 'GET', '/api/house/programs/{program_id}/session'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),
     ((R, 'GET', '/api/programs/{program_id}/lesson-scenes'), '4.6-shared-screen', ('program',), 'shared_screen_visible'),

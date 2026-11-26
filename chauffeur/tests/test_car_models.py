@@ -108,7 +108,7 @@ class CarModelTests(unittest.TestCase):
         data = glb(27)
         result = self.upload_lod(data)
         self.assertEqual(result['id'], self.car_model['id'])
-        self.assertEqual(result['lods'], [{'name': 'lod1.glb', 'triangles': 27, 'bytes': len(data)}])
+        self.assertEqual(result['lods'], [{'name': 'lod1.glb', 'triangles': 27, 'bytes': len(data), 'percent': 25, 'revision': 1}])
         self.assertEqual(len(twin_imports.catalog()), 1)
         self.assertEqual(result['triangles'], 120)
         served = self.client.get(f"/api/house/twin/imports/{result['id']}/lod1.glb", headers=self.parent)

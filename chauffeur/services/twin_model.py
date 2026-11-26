@@ -608,6 +608,8 @@ def normalize(model: dict, *, persist_t_splits=True, preserve_room_polygons=Fals
     model = deepcopy(model)
     if not isinstance(model, dict) or model.get('units') != 'ft':
         raise ValueError('Twin plan units must be ft.')
+    from services import twin_objects
+    twin_objects.validate_plan_model_materials(model)
     notes, buildings = [], []
     for building in _list(model, 'buildings', notes, 'building'):
         levels = twin_plan._levels(building, notes)

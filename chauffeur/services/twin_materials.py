@@ -617,7 +617,10 @@ def _labels(value, material_id, owner='House', kind='surfaces', feature=False):
                 names = {'fence': 'Fence', 'pool': 'Pool', 'beds': 'Planting bed', 'hardscape': 'Patio',
                          'edges': 'Lawn edge', 'fire_pit': 'Fire pit', 'terraces': 'Pad edge'}
                 for collection, content in child.items():
-                    if collection in names:
+                    if collection in ('furniture', 'planting') and isinstance(content, list):
+                        for piece in content:
+                            labels.extend(_labels(piece, material_id, piece.get('name') or piece.get('id') or 'Yard item'))
+                    elif collection in names:
                         for piece in pieces(content):
                             name = piece.get('name') or ('Path' if piece.get('kind') == 'path' else names[collection])
                             labels.extend(_labels(piece, material_id, name, 'surface', True))
@@ -630,6 +633,9 @@ def _labels(value, material_id, owner='House', kind='surfaces', feature=False):
                 for piece in child:
                     labels.extend(_labels(piece, material_id, piece.get('name') or piece.get('kind')
                                           or {'porches_detail': 'Porch', 'stairs': 'Stair'}.get(key, 'Item'), kind, feature))
+            elif key == 'model_materials' and isinstance(child, dict):
+                labels.extend(f'{owner}: {part}' for part, entry in child.items()
+                              if isinstance(entry, dict) and entry.get('material') == material_id)
             elif key == 'materials' and isinstance(child, dict):
                 for part, slot in child.items():
                     labels.extend(_labels(slot, material_id, owner,
@@ -652,9 +658,22 @@ def _surface_kind(key, default):
 
 
 def uses(material_id) -> dict:
+    from services import twin_model_records
     _id(material_id)
     current = _labels(twin_store.current_model(), material_id)
     history = False
+    for record in twin_model_records.catalog():
+        labels = [f"Model {record['name']}: {part}" for part, entry in record.get('materials', {}).items()
+                  if entry.get('material') == material_id]
+        if record.get('archived'):
+            history = history or bool(labels)
+        else:
+            current.extend(labels)
+        if not history:
+            steps = twin_model_records.history(record['id'])
+            history = any(entry.get('material') == material_id
+                          for state in steps['undo'] + steps['redo']
+                          for entry in state.get('materials', {}).values())
     for row in twin_store.rounds():
         document = _read(Path(twin_store.DATA_DIR) / 'rounds' / f"{row['id']}.json")
         if _labels(document, material_id):
