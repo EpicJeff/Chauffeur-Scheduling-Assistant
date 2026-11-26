@@ -97,7 +97,10 @@ const tests={
   b.levels[0].elevation=2;
   Object.assign(b.items[0],{offset:.5,elevation:1,rotation:20,pitch:10,roll:30,scale:2,scale_axes:[2,3,4],mirror_x:true,mirror_y:true});
   const copies=placedCopies(p),item=copies.find(c=>c.id==='item:house:chair');
-  assert.equal(copies.length,3,'openings and non-import plants are excluded');
+  assert.equal(copies.length,4,'model openings join copies; non-import plants stay excluded');
+  const opening=copies.find(c=>c.id==='opening:house:door');
+  opening.at.forEach((v,i)=>near(v,[10*FT,9.5*FT,-26*FT][i]));
+  assert.deepEqual(opening.rot,[0,90,0]);assert.deepEqual(opening.scale,[1,1,1]);
   assert.equal(item.asset,'chair');item.at.forEach((v,i)=>near(v,[4*FT,7.5*FT,-26*FT][i]));
   assert.deepEqual(item.rot,[10,110,30]);assert.deepEqual(item.scale,[-4,6,-8]);assert.equal(item.castsShadow,true);
   const furniture=copies.find(c=>c.id==='furniture:table');

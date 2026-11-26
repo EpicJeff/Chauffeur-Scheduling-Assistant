@@ -18,6 +18,7 @@ import { matchesEntry, pageDamage, cheapSignatures, realtimeCurrent } from './fr
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
 import { gridLayout, GRID_MASK_RULE } from './grid_layout.js';
 import { mountModelLighting } from './model_lighting.js';
+import { placedCopies, occluderHash, copyInputs, modelRecords } from './model_occluders.js';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 // Every tier lays its atlas out at the desk's 8 texels/ft, so a wall that opens before
@@ -173,6 +174,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
   let stopped = false, allowed = false, permissionChecked = false, atlas = null, pending = null, layout = requestedLayout || options(8);
   let lights = [], lightsKey = '', packed = null, uniforms = null, pages = null;
   let models = null;
+  let records = {}, recordsConfirmed = false;
+  const requireModelRecords = async () => {
+    const snapshot = await modelRecords(api);
+    if (snapshot === null) throw new Error('Could not read the model catalog.');
+    return snapshot;
+  };
   let layers = [], bankBase = [], layerOverflow = false, baker = null, codec = null, running = false, pendingForce = false, pendingRun = false;
   let dragging = false, stillAt = performance.now(), generation = 0;
   let progress = { done: 0, total: 0 }, stale = [], timer = null, patched = false;
@@ -521,7 +528,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     pages = uniforms = null;
     etags.clear(); present.clear(); pageErrors.clear(); manifestText = null; fresh.clear();
     lights = list; lightsKey = JSON.stringify(list);
-    packed = bakeLayout(atlas, layout, lights, history, manifest?.lights);
+    packed = bakeLayout(atlas, layout, lights, history, manifest?.lights, records, view.materialManifest);
     if (packed.banks.some(b => b.chartPacking)) applyChartIndices(atlas);
     // A bank page no placed light writes to (bank zero reserves unlit rooms,
     // Ruling B12) is never fetched or held on the GPU. All lit pages share one
@@ -611,12 +618,13 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (!valid()) return;
     const mine = generation;
     const m = latest?.manifest, text = JSON.stringify(latest);
+    const layoutHash = gridLayout(round).hash;
     editorKey = latest?.key || null; editorManifest = m;
     if (text !== manifestText || !manifestRead) {
       present.clear(); pageErrors.clear();
       presentGrids.clear();
       for (const e of Object.values(m?.lights || {})) {
-        if (!e.grid || !e.gridLayout || e.gridRule !== GRID_MASK_RULE) continue;
+        if (!e.grid || e.gridLayout !== layoutHash || e.gridRule !== GRID_MASK_RULE) continue;
         const r = await api(`api/house/bakes/${editorKey}/grid/${e.grid}.bin`, {headers:{'If-None-Match':'*'}});
         if (!valid() || mine !== generation) return;
         if (r.status === 304 || r.ok) presentGrids.add(e.grid);
@@ -636,26 +644,35 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (damage) pageErrors.set(p, damage); else present.add(p);
       }
     }
-    editorFreshness(m);
+    editorFreshness(m, layoutHash);
     manifestText = text; manifestRead = true; showProgress();
   }
   // Old rounds/manifests retain round-based freshness until a pressed bake.
   const lightingChanged = m => !!m && (m.lighting && view.lighting
     ? m.lighting !== view.lighting : m.round !== (view.round ?? null));
-  function editorFreshness(m) {
+  function editorFreshness(m, layoutHash = gridLayout(round).hash) {
     const cheap = cheapSignatures(lights, m?.ownership, m?.lights);
+    const copies = placedCopies(round), modelInputs = copyInputs(records, view.materialManifest);
     editedRound = lightingChanged(m);
     const currentInputs = !editedRound && !materialDirty && sameKeyInputs(m?.keyInputs, keyInputs(view));
     fresh.clear();
     for (const l of lights) {
       const e = m?.lights?.[l.device];
+      const {source, range} = lightSource(round, l);
+      const occluders = occluderHash(copies, source, range, modelInputs);
+      // Legacy entries predate explicit chip evidence. With no new inputs,
+      // compare against their legacy hash; lightingChanged covers plan edits.
+      const storedOccluders = e?.occluders ?? occluderHash(copies, source, range);
       if (currentInputs && e?.cheap === cheap[l.device] && (l.kind !== 3 || e.scale > 0) &&
+          occluders === storedOccluders &&
           (e.pages || [e.page]).every(p => present.has(p))) fresh.add(l.device);
     }
     resumePending = !!m?.forceRound;
     stale = lights.filter(l => !(currentInputs && !m?.lights?.[l.device] && realtimeCurrent(m, l.device, cheap[l.device])) &&
       (!fresh.has(l.device) || resumePending && m.lights[l.device]?.forceRound !== m.forceRound)).map(l => l.device);
-    staleGrids = lights.filter(l => fresh.has(l.device) && !presentGrids.has(m.lights[l.device]?.grid)).map(l => l.device);
+    staleGrids = lights.filter(l => { const e = m?.lights?.[l.device];
+      return fresh.has(l.device) && (e.gridLayout !== layoutHash || e.gridRule !== GRID_MASK_RULE || !presentGrids.has(e.grid));
+    }).map(l => l.device);
     if (!running) progress = { done: lights.length - stale.length, total: lights.length, grid: progress.grid };
     showProgress();
   }
@@ -683,7 +700,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       // fresh under a new scale if its replacement page is offline or damaged.
       for (const l of packed.lights) if (l.kind === 3 && l.scale !== m.lights[l.device]?.scale)
         for (const p of packed.entries[l.device]?.pages || []) { present.delete(p); etags.delete(p); }
-      const next=bakeLayout(atlas,layout,lights,m.ownership || packed.ownership,m.lights);
+      const next=bakeLayout(atlas,layout,lights,m.ownership || packed.ownership,m.lights,records,view.materialManifest);
       if(!sameSlots(next.ownership,packed.ownership)) prepare(lights,m.ownership,m);
       else packed=next;
     }
@@ -800,11 +817,11 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     showProgress();
     if (automatic && allowed && !running) run();
   }
-  async function run(force = false) {
+  async function run(force = false, snapshot = null) {
     controller.syncBlocked();
     if (blockReason) { requested = false; return; }
     if (!valid() || !requested) return;
-    if (!initialized) await initialize();
+    if (!initialized) { await initialize(); if (recordsConfirmed) snapshot ??= records; }
     if (!allowed || !valid() || !lights.length || !(atlas || pending || inspectOnly) || layerOverflow || authPaused || manualWait || !requested || blockReason) return;
     if (running) { pendingForce ||= force; return; }
     clearRetry();
@@ -818,6 +835,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         await idle();
         if (!valid() || !requested || blockReason || mine !== generation) return;
       }
+      // A mount may use legacy keys for display while the catalog is away.
+      // That fallback is never sufficient evidence for a bake.
+      if (!recordsConfirmed) snapshot = null;
+      snapshot ??= await requireModelRecords();
+      if (!valid() || mine !== generation) return;
+      records = snapshot; recordsConfirmed = true;
       if (inspectOnly && !atlas) {
         pending ||= await loadAtlas(root, round, layout, { signal: halt.signal, apply: false });
         await idle();
@@ -852,7 +875,8 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
         if (layerOverflow) return;
         codec ||= workerCodec();
       }
-      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly,
+      if (!inspectOnly) packed = bakeLayout(atlas, layout, lights, packed?.ownership, packed?.entries, records, view.materialManifest);
+      baker = createBaker(view, { renderer: view.renderer3, atlas, layout, lights, api, codec, forceRound: forceIntent, owner, damaged, inspectLegacy: inspectOnly, records,
         damagedGrids,
         onGrid(grid) {
           if (grid.points) progress = {...progress, grid};
@@ -899,7 +923,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     prepare(lights,manifest?.ownership,manifest);
     await loadPages(); if (!valid()) return;
     showProgress();
-    if (automatic && allowed) run();
+    if (automatic && allowed) run(false, recordsConfirmed ? records : null);
     initialized = true;
   }
   async function refresh() {
@@ -907,6 +931,20 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
     if (!valid() || needsResume() && (authPaused || manualWait)) return;
     if (mode === 'manual' && blockReason) return;
     if (!initialized) { await initialize(); clearFailure('refresh'); return; }
+    const snapshot = await modelRecords(api);
+    if (!valid()) return;
+    const copies = placedCopies(round);
+    const projection = snapshot => {
+      const inputs = copyInputs(snapshot, view.materialManifest);
+      return JSON.stringify(copies.map(inputs));
+    };
+    const changed = snapshot !== null && projection(snapshot) !== projection(records);
+    if (snapshot !== null) { records = snapshot; recordsConfirmed = true; }
+    if (changed && atlas && !inspectOnly) {
+      packed = bakeLayout(atlas, layout, lights, packed?.ownership, packed?.entries, records, view.materialManifest);
+      // Re-evaluate exact keys even when the published manifest is unchanged.
+      manifestText = null;
+    }
     if (inspectOnly) { await idle(); await relight(); if (!running) await loadPages(); clearFailure('refresh'); return; }
     if (pending) {
       // A wall that opened before any bake applies the atlas when one lands (I1, M1).
@@ -967,7 +1005,7 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       // Material edits do not move charts or change their channel assignment.
       // Retain the arrays, shader bindings and unrelated lights' fresh masks.
       const previous = packed;
-      packed = bakeLayout(atlas, layout, lights, packed.ownership, packed.entries);
+      packed = bakeLayout(atlas, layout, lights, packed.ownership, packed.entries, records, view.materialManifest);
       if(packed.ownershipReset) {
         fresh.clear(); present.clear(); etags.clear(); preservePages.clear();
         prepare(lights, packed.ownership);
@@ -1037,6 +1075,12 @@ export function mountBake(view, root, { host, mode = 'manual', parent = false, d
       if (mode === 'manual') await idle();
       if (!valid()) return;
       lights = bakeLights(liveLayout, root, round);
+      const snapshot = await modelRecords(api);
+      if (!valid()) return;
+      // Unknown records must not hide unrelated baked lamps or turn a
+      // catalog-only offline blip into a mount error. Keys remain exact for
+      // legacy lamps; stored new model inputs conservatively read stale.
+      records = snapshot ?? {}; recordsConfirmed = snapshot !== null;
       lightsKey = JSON.stringify(lights);
       stale = lights.map(l => l.device);
       if (inspectOnly) {

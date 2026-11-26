@@ -38,7 +38,7 @@ export function modelOccluderMeshes(root, plan, source, range) {
   if (!root) return [];
   root.updateWorldMatrix(true, true);
   const casts = new Map(placedCopies(plan).map(c => [c.id, c.castsShadow]));
-  // Opening models already belong to the atlas identity, not placedCopies.
+  // Also cover openings whose plan-only host cannot currently be resolved.
   for (const b of plan.buildings || []) for (const o of b.openings || [])
     casts.set(`opening:${b.id}:${o.id}`, o.casts_shadow !== false);
   const copies = new Map();

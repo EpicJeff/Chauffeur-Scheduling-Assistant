@@ -2,7 +2,7 @@ import { assignChannels, CHANNEL_FALLBACK, CHART_STATS, fingerprint, atlasMesh }
 import { renderPage, roomFills, dilateCharts, encodeSumPages, filterCharts } from './bake_pass.js';
 import { withBakeLease, bakeHTTPError } from './bake_lock.js';
 import { reachLights, lightSource } from './reach.js';
-import { placedCopies, occluderHash } from './model_occluders.js';
+import { placedCopies, occluderHash, copyInputs, modelRecords } from './model_occluders.js';
 import { encodeSlots, decodeSlots, sameSlots } from './slots.js';
 import { matchesEntry, cheapSignatures } from './freshness.js';
 import { keyInputs, sameKeyInputs } from './key_inputs.js';
@@ -40,7 +40,7 @@ function lampKey(atlas, light, slot, models) {
 
 // Scales are rendered output. Layout only adopts a previously published scale;
 // an unbaked sum has none and cannot become fresh.
-export function bakeLayout(atlas, layout, lights, history, published = {}) {
+export function bakeLayout(atlas, layout, lights, history, published = {}, records = {}, materialsById = {}) {
   let prior, ownershipReset = false;
   try { prior = decodeSlots(history, atlas.room.charts.length); }
   catch (error) {
@@ -51,8 +51,9 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
     prior = new Map(); ownershipReset = true; published = {};
   }
   const copies = placedCopies(atlas.room.plan);
+  const modelInputs = copyInputs(records, materialsById);
   lights = reachLights(atlas.room, lights).map(l => ({...l,
-    occluders: occluderHash(copies, lightSource(atlas.room.plan, l).source, l.range),
+    occluders: occluderHash(copies, lightSource(atlas.room.plan, l).source, l.range, modelInputs),
     ...(l.kind === 3 ? {scale: Number.isFinite(published[l.device]?.scale) && published[l.device].scale > 0
       ? published[l.device].scale : undefined} : {})}));
   const slots = assignChannels(atlas.room.rooms, lights, prior), banks = atlas.room.packBanks(lights, slots);
@@ -85,6 +86,7 @@ export function bakeLayout(atlas, layout, lights, history, published = {}) {
       location: location.key(),
       grid: gridKey(atlas, light, s, banks[s.bank]),
       gridRule: GRID_MASK_RULE,
+      occluders: light.occluders,
       key: lightKey(atlas, light, s, banks[s.bank]) };
   }
   return { lights, slots, banks, offsets, entries, pages: offset,
@@ -111,7 +113,7 @@ async function exists(api, url) {
 
 export function createBaker(view, { renderer, atlas, layout, lights, api: request, codec, force = false, forceRound = null,
   round = view.round ?? null, lighting = view.lighting ?? null, owner = null, damaged = [], inspectLegacy = false,
-  onGrid = () => {}, damagedGrids = [] }) {
+  onGrid = () => {}, damagedGrids = [], records = null }) {
   const plan = view.bakePlan || view.plan, enabled = ['high', 'max'].includes(view.tier);
   const inputLights = lights; // reachLights adds derived, metre-valued ranges.
   const inputs = keyInputs(view);
@@ -208,11 +210,14 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     manifest.lights[device]?.gridRule !== GRID_MASK_RULE ||
     manifest.lights[device]?.grid !== packed.entries[device].grid ||
     manifest.lights[device]?.gridLayout !== (runGridLayout ||= gridLayout(plan)).hash);
-  const ready = enabled ? readManifest().then(async m => {
+  const ready = enabled ? (async () => {
+    records ??= await modelRecords(api);
+    if (records === null) throw new Error('Could not read the model catalog.');
+    const m = await readManifest();
     await view.bake?.idle?.();
     if (!valid()) return;
     assignmentHistory=m?.ownership;
-    packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights);
+    packed=bakeLayout(atlas,layout,lights,assignmentHistory,m?.lights,records,view.materialManifest);
     lights=packed.lights;
     if (m?.forceRound === activeForce) forcePending = false;
     if (!forcePending) activeForce = m?.forceRound || null;
@@ -239,7 +244,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
         unavailable.add(id); delete manifest.lights[id];
       }
     }
-  }) : Promise.resolve();
+  })() : Promise.resolve();
   async function staleLights() {
     await ready;
     return enabled && valid() ? lights.filter(l => isStale(l.device)).map(l => l.device) : [];
@@ -265,7 +270,7 @@ export function createBaker(view, { renderer, atlas, layout, lights, api: reques
     const latest = await readManifest();
     if(latest?.ownership && !sameSlots(latest.ownership,assignmentHistory)) {
       assignmentHistory=latest.ownership;
-      packed=bakeLayout(atlas,layout,lights,assignmentHistory,latest?.lights);
+      packed=bakeLayout(atlas,layout,lights,assignmentHistory,latest?.lights,records,view.materialManifest);
       lights=packed.lights;
     }
     // A reload or another desk can have advanced this same force while we waited.

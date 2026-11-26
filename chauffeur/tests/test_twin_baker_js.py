@@ -175,6 +175,9 @@ function fakeServer({ leaseRequired = false } = {}) {
     calls.push(call);
     const injected = fail?.(method, p);
     if (injected) return answer(injected, '{"detail":"injected"}', 'application/json');
+    // Optional catalog read introduced by Models mode; no models in this fake.
+    if (p === 'api/house/models' && method === 'GET')
+      return answer(200, '{"models":[]}', 'application/json');
     if (p === 'api/house/bakes' && method === 'GET') {
       const latest = [...manifests].at(-1);
       return answer(200, JSON.stringify(latest ? {key: latest[0], manifest: latest[1]} : null), 'application/json');
