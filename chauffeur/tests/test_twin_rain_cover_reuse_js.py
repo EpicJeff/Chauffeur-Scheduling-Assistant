@@ -17,8 +17,7 @@ from pathlib import Path
 from test_twin_yard_reuse_js import PREFIX
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE = '49a643ab'
-POST_CALLER = '46e1361f'
+BASELINE = 'e392e57d5335e88de0518596987ced1d7a61b013'
 OWNER = Path(r'C:\Users\ffejn\Downloads\Current house.chauffeur-house-11-20-2016.json')
 
 
@@ -184,8 +183,14 @@ function editList(plan){
  const post=p=>p.buildings.find(x=>x.id===b.id).porches.find(p=>p.columns?.length).columns;
  const build=(p,id=b.id)=>p.buildings.find(x=>x.id===id);
  const roof=(p,id=b.id)=>build(p,id).roof.sections[0];
+ const editPosts=(p,mutate)=>{const porch=build(p).porches.find(p=>p.columns?.length);
+  porch.columns.forEach((c,i)=>{c.id||=`post:${porch.id}:${i}`;});mutate(porch);};
  return [
  ['delete-post',p=>post(p).pop()],['move-post',p=>post(p)[0].at[0]+=.5],
+ ['move-post-field',p=>editPosts(p,po=>po.columns[0].at[0]+=.125)],
+ ['size-post',p=>editPosts(p,po=>po.columns[0].size=(po.columns[0].size||.5)+.125)],
+ ['add-post',p=>editPosts(p,po=>{let i=0;while(po.columns.some(c=>c.id===`post:${po.id}:${i}`))i++;
+   po.columns.push({id:`post:${po.id}:${i}`,at:[po.columns[0].at[0]+.25,po.columns[0].at[1]],size:po.columns[0].size||.5});})],
  ['raise-main-roof',p=>roof(p).plate+=.5],['raise-pool-roof',p=>roof(p,other.id).plate+=.5],
  ['move-roof-edge',p=>roof(p).rect[0]-=.5],
  ['add-awning',p=>build(p).roof.sections.push({id:'rain-test-awning',kind:'shed',rect:[-6,-6,6,0],plate:8,pitch:2,low_side:'y0',support:{kind:'post',count:2}})],
@@ -202,12 +207,15 @@ async function mount(module,plan,kit){const start=process.cpuUsage(),threadStart
  const elapsed=process.cpuUsage(start),thread=process.threadCpuUsage(threadStart),label=module===baseline?'baseline':'current';
  mountCPU[label]+=(elapsed.user+elapsed.system)/1000;mountThreadCPU[label]+=(thread.user+thread.system)/1000;return view;}
 async function yardReady(v){while(v.yardSettling)await new Promise(resolve=>setTimeout(resolve,1));assert.equal(v.yardError,null);}
-if(!input.postMove)for(const fixture of privateInput.fixtures){
+for(const fixture of privateInput.fixtures){
  const {label,plan,kit}=fixture;
   for(const route of input.route?[input.route]:input.full?['rebuild','settle']:['rebuild']){
+  for(let mountRun=0;mountRun<(input.firstLoad?input.repeat:1);mountRun++){
   globalThis.coverCPU={baseline:0,current:0};
   globalThis.coverThreadCPU={baseline:0,current:0};mountCPU.baseline=mountCPU.current=mountThreadCPU.baseline=mountThreadCPU.current=0;
-  const old=await mount(baseline,plan,kit),now=await mount(current,plan,kit);
+  let old,now;
+  if(mountRun%2){now=await mount(current,plan,kit);old=await mount(baseline,plan,kit);}
+  else{old=await mount(baseline,plan,kit);now=await mount(current,plan,kit);}
   let settlePath=null;
   async function compare(name){const a=snapshot(old),b=snapshot(now);
    assert.equal(b.rows.length,a.rows.length,`${label}/${route}/${name}: mesh count`);
@@ -227,68 +235,39 @@ if(!input.postMove)for(const fixture of privateInput.fixtures){
    // Drain them before the next edit's counters are reset.
    if(atlas)await new Promise(resolve=>setImmediate(resolve));
    console.log('RAIN_COVER '+JSON.stringify({fixture:label,route,edit:name,settle_path:settlePath,cpu_ms,thread_cpu_ms,fresh_baseline:!input.noAtlas,
-    mount_cpu_ms:name==='first-build'?{...mountCPU}:undefined,mount_thread_cpu_ms:name==='first-build'?{...mountThreadCPU}:undefined,
+    mount_cpu_ms:name.startsWith('first-build')?{...mountCPU}:undefined,mount_thread_cpu_ms:name.startsWith('first-build')?{...mountThreadCPU}:undefined,
     geometry_bytes:b.geometryBytes,meshes:b.rows.length,memory,atlas}));}
-  await compare('first-build');
-  let edits=editList(plan);if(!input.full)edits=edits.filter(([n])=>['delete-post','raise-pool-roof','move-roof-edge'].includes(n));
+  await compare(input.firstLoad?'first-build#'+mountRun:'first-build');
+  if(input.firstLoad){old.dispose();now.dispose();continue;}
+  let edits=editList(plan);if(!input.full)edits=edits.filter(([n])=>['delete-post','move-post-field','size-post','add-post','raise-pool-roof','move-roof-edge'].includes(n));
   if(input.edits)edits=edits.filter(([n])=>input.edits.includes(n));
   async function apply(p,name){globalThis.coverCPU={baseline:0,current:0};globalThis.coverThreadCPU={baseline:0,current:0};
-   await old[route](structuredClone(p));
+   const edit=name.replace(/^undo-/,'').replace(/#\d+$/,'');
+   const field=edit==='move-post-field';
+   const update=async v=>{const next=structuredClone(p);
+    if(!field)return v[route](next);
+    const b=next.buildings.find(b=>b.porches?.some(po=>po.columns?.length)),po=b.porches.find(po=>po.columns?.length);
+    const level=b.rooms.find(r=>r.id===po.id)?.level||po.level||b.levels[0].id;
+    v.rebuildLevel(b.id,level,next,{walls:[],rooms:[],openings:[],anchors:[],items:[]});
+    return v.settle(next,{buildingId:b.id,levelId:level});};
+   const oldOutcome=await update(old);
    await yardReady(old);
    const beforeCover=input.diagnostics?C.rainCover(now.scene):null;
    if(profiler){await profileCall('Profiler.enable');await profileCall('Profiler.start');}
-   const outcome=await now[route](structuredClone(p));
+   const outcome=await update(now);
    await yardReady(now);
    settlePath=outcome?.path??null;
-   if(route==='settle'&&['move-wall','move-room','hardscape'].includes(name.replace(/^undo-/,'')))assert.equal(settlePath,'deform','exercise the actual settle deformation/deferred-yard path');
+   assert.equal(outcome?.path,oldOutcome?.path,'pinned and current use the same view path');
+   if(field||route==='settle'&&['size-post','move-wall','move-room','hardscape'].includes(edit))assert.equal(settlePath,'deform','exercise the actual post/level deformation/deferred-yard path');
+   if(route==='settle'&&['add-post','delete-post'].includes(edit))assert.equal(settlePath,'rebuild','post topology rebuilds');
    if(profiler){const {profile}=await profileCall('Profiler.stop');writeFileSync(input.profile+'/'+label+'-'+route+'-'+name+'.cpuprofile',JSON.stringify(profile));}
    if(input.diagnostics)console.log('RAIN_DIAGNOSTICS '+JSON.stringify({fixture:label,edit:name,...C.rainDiagnostics(beforeCover,C.rainCover(now.scene))}));
    await compare(name);}
   try{for(const [name,mutate] of edits)for(let repeat=0;repeat<input.repeat;repeat++){
     const suffix=input.repeat>1?'#'+repeat:'';const p=structuredClone(plan);mutate(p);await apply(p,name+suffix);await apply(plan,'undo-'+name+suffix);}
-   if(input.full&&!input.edits){const p=structuredClone(plan);edits[0][1](p);await apply(p,'two-edits-first');edits[2][1](p);await apply(p,'two-edits-second');await apply(plan,'undo-two-edits');}
+   if(input.full&&!input.edits){const p=structuredClone(plan);edits.find(([n])=>n==='delete-post')[1](p);await apply(p,'two-edits-first');edits.find(([n])=>n==='raise-main-roof')[1](p);await apply(p,'two-edits-second');await apply(plan,'undo-two-edits');}
   }finally{old.dispose();now.dispose();}
- }
-}
-if(input.full||input.postMove){
- const postPaths=Object.keys(input.postSources),graphs={};
- for(const label of ['baseline','current']){
-  const graph=new Map();
-  for(const [path,original] of Object.entries(input.postSources)){
-   if(label==='current'&&path.endsWith('/sky_cover.js')){graph.set(path,file(path));continue;}
-   let source=original;
-   if(path.endsWith('/sky_cover.js')){
-    const anchor='export function refreshSlabCover';
-    source=input.sources[path].split(anchor)[0]+anchor+original.split(anchor)[1];
-    source=instrument(source,'baseline');
-   }
-   if(path.endsWith('/twin_generator.js'))source=source.replace('writeWeatherOpen(root, next.skyCover);','writeWeatherOpen(root, next.skyCover, 1, previous?.root);');
-   source=source.replaceAll('import.meta.url',JSON.stringify(file(path)))
-    .replace(/((?:from|import)\s*['"])(\.[^'"]+)(['"])/g,(_,a,s,b)=>{
-      const url=new URL(s,file(path)).href,ref=postPaths.find(p=>file(p)===url);return a+(ref?'rain-post-'+label+':'+ref:url)+b;
-    });
-   graph.set(path,data(source));
   }
-  graphs[label]=graph;
- }
- registerHooks({resolve(spec,ctx,next){for(const label of ['baseline','current']){
-  const prefix='rain-post-'+label+':';if(spec.startsWith(prefix))return {url:graphs[label].get(spec.slice(prefix.length)),shortCircuit:true};}
-  return next(spec,ctx);}});
- const oldPost=await import(graphs.baseline.get('static/twin/twin_view.js')),newPost=await import(graphs.current.get('static/twin/twin_view.js'));
- for(const fixture of privateInput.fixtures){
-  const {label,plan,kit}=fixture,b=plan.buildings.find(b=>b.porches?.some(p=>p.columns?.length)),porch=b.porches.find(p=>p.columns?.length);
-  const level=b.rooms.find(r=>r.id===porch.id)?.level||porch.level||b.levels[0].id;
-  const old=await mount(oldPost,plan,kit),now=await mount(newPost,plan,kit);
-  const moved=structuredClone(plan);moved.buildings.find(x=>x.id===b.id).porches.find(x=>x.id===porch.id).columns[0].at[0]+=.125;
-  const hint={walls:[],rooms:[],openings:[],anchors:[],items:[]};
-  try{for(let i=0;i<input.repeat;i++)for(const [name,p] of [['post-field-move',moved],['undo-post-field-move',plan]]){
-    globalThis.coverCPU={baseline:0,current:0};globalThis.coverThreadCPU={baseline:0,current:0};
-    for(const v of [old,now]){const next=structuredClone(p);v.rebuildLevel(b.id,level,next,hint);
-      assert.equal((await v.settle(next,{buildingId:b.id,levelId:level})).path,'deform','actual post caller deforms');await yardReady(v);}
-    const a=snapshot(old),z=snapshot(now),hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
-    assert.equal(hash(z.rows),hash(a.rows),label+' post caller exact buffers/ranges/program keys');
-    console.log('RAIN_POST '+JSON.stringify({fixture:label,caller:input.postCaller,edit:name+'#'+i,cpu_ms:coverCPU,thread_cpu_ms:coverThreadCPU,geometry_bytes:z.geometryBytes}));
-  }}finally{old.dispose();now.dispose();}
  }
 }
 console.log('PASS pinned rain-cover equality');
@@ -309,10 +288,13 @@ def main():
     parser.add_argument('--diagnostics', action='store_true', help='Print cache counts and projection checks, never plan contents')
     parser.add_argument('--repeat', type=int, default=1, help='Repeat each edit/undo for CPU medians')
     parser.add_argument('--bind-atlas', action='store_true', help='Additional live atlas-bound receiver stress run')
-    parser.add_argument('--post-move', action='store_true', help='Only the binding post-field gate through pinned caller 46e1361f')
+    parser.add_argument('--post-move', action='store_true', help='Only the post-field matrix edit against the pinned baseline')
+    parser.add_argument('--first-load', action='store_true', help='Only paired mounts; --repeat sets mount count, alternating order')
     args = parser.parse_args()
     if args.repeat < 1:
         parser.error('--repeat must be positive')
+    if args.post_move:
+        args.edits = ['move-post-field']
     sys.path.insert(0, str(ROOT))
     from services.twin_model_bridge import assemble, flatten
     kit = json.loads((ROOT / 'twin_kits/modern_farmhouse.json').read_text(encoding='utf-8'))
@@ -329,8 +311,8 @@ def main():
         fixtures = []
     paths = []
     try:
-        for suffix, content in (('.mjs', DRIVER), ('.json', json.dumps({'root': ROOT.as_posix(), 'sources': sources(), 'postSources': sources(POST_CALLER) if args.full or args.post_move else None,
-                'postCaller': POST_CALLER,'postMove': args.post_move,'full': args.full, 'route': args.route, 'edits': args.edits, 'noAtlas': args.no_atlas, 'profile': args.profile.resolve().as_posix() if args.profile else None, 'diagnostics': args.diagnostics, 'repeat': args.repeat, 'bindAtlas': args.bind_atlas}))):
+        for suffix, content in (('.mjs', DRIVER), ('.json', json.dumps({'root': ROOT.as_posix(), 'sources': sources(),
+                'firstLoad': args.first_load,'full': args.full, 'route': args.route, 'edits': args.edits, 'noAtlas': args.no_atlas, 'profile': args.profile.resolve().as_posix() if args.profile else None, 'diagnostics': args.diagnostics, 'repeat': args.repeat, 'bindAtlas': args.bind_atlas}))):
             with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix=suffix, prefix='rain_cover_', delete=False) as f:
                 paths.append(Path(f.name))
                 f.write(content)
