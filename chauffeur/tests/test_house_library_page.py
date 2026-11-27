@@ -10,6 +10,7 @@ def test_page_renders_with_manifest_and_gate():
         response = c.client.get('/house/library')
         assert response.status_code == 200, response.text
         assert 'window.twinManifest' in response.text
+        assert 'window.chfLodWorker' in response.text
         assert 'adminGate()' in response.text
         assert 'Changes here apply everywhere this material is used.' in response.text
         assert '../house/editor' in response.text

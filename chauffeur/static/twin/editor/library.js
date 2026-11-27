@@ -14,6 +14,7 @@ import { undersideMaterialSurface } from '../underside_material.js';
 import { isSupported } from '../roof_supports.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
+import { createThumbnailRenderer } from '../model_thumbnails.js';
 import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
 import { mountImports } from './imports.js';
 import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
@@ -287,22 +288,8 @@ export function itemOperation(surface, item, ground) {
 
 // One detached canvas serves all thumbnails; only images remain in the panel.
 function createThumbnails(kit) {
-  const renderer = new THREE.WebGLRenderer({ canvas: document.createElement('canvas'), alpha: true, antialias: true });
-  renderer.setSize(112, 96, false); renderer.setPixelRatio(1);
-  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(36, 112 / 96, .01, 100);
-  const sun = new THREE.DirectionalLight('#fff3de', 3); sun.position.set(3, 5, 4);
-  scene.add(new THREE.HemisphereLight('#ffffff', '#68764f', 2), sun);
-  const cache = new Map(); let disposed = false;
-  function render(object) {
-    if (disposed) { disposeObject(object); return null; }
-    const box = new THREE.Box3().setFromObject(object);
-    if (box.isEmpty()) { disposeObject(object); object = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: '#b8b0a4' })); box.setFromObject(object); }
-    const centre = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
-    object.position.sub(centre); const distance = Math.max(size.x, size.y, size.z) * 2.3;
-    camera.position.set(distance, distance * .65, distance); camera.lookAt(0, 0, 0);
-    scene.add(object); renderer.render(scene, camera);
-    const url = renderer.domElement.toDataURL('image/png'); object.removeFromParent(); disposeObject(object); return url;
-  }
+  const renderer = createThumbnailRenderer({ width: 112, height: 96, fallbackBox: true });
+  const cache = new Map();
   function picture(entry, material) {
     const key = JSON.stringify([material, entry.id, entry.color, entry.revision]);
     if (!cache.has(key)) cache.set(key, (async () => {
@@ -310,9 +297,9 @@ function createThumbnails(kit) {
         const ref = kit.materials?.[entry.id] || Object.values(kit.materials || {}).find(r => r.asset === entry.id);
         const finish = kitMaterial('preview', { ...kit, materials: { preview: { ...ref, asset: entry.id, color: entry.color } } }, 'low');
         await finish.userData.ready;
-        return render(new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), finish));
+        return renderer.render(new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), finish));
       }
-      if (entry.kind === 'furniture') return render(await loadModel(entry.id, kit) || new THREE.Group());
+      if (entry.kind === 'furniture') return renderer.render(await loadModel(entry.id, kit) || new THREE.Group());
       const { Tree } = await import('@dgreenheck/ez-tree');
       const tree = new Tree(); tree.loadPreset(entry.id); tree.options.seed = 1; tree.generate();
       // EZ-Tree owns shared texture maps. Release only this preview's geometry.
@@ -322,11 +309,11 @@ function createThumbnails(kit) {
           map: m.map?.clone(), alphaMap: m.alphaMap?.clone(), alphaTest: Math.max(.5, m.alphaTest || 0), side: m.side, roughness: .9 });
         o.material = Array.isArray(o.material) ? o.material.map(convert) : convert(o.material);
       });
-      return render(tree);
+      return renderer.render(tree);
     })());
     return cache.get(key);
   }
-  return { picture, dispose() { disposed = true; renderer.dispose(); renderer.forceContextLoss(); } };
+  return { picture, dispose() { renderer.dispose(); } };
 }
 
 export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu }) {
