@@ -1,0 +1,543 @@
+{
+ "_about": "Presentation-board contract sample. Keys are held by services/boards_contract.py; regenerate with python tests/fixtures/make_board_view_v1.py.",
+ "views": {
+  "options": {
+   "id": "b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Concert outfit",
+   "ask": "Find an outfit for a band concert: black dress, or black button-down and skirt, black tights, black 2-inch heels.",
+   "layout": "options",
+   "noun": "looks",
+   "commit": "buy",
+   "version": 1,
+   "copied_from": null,
+   "summary_line": "3 looks · from $118",
+   "slots": [
+    {
+     "id": "s0",
+     "role": "Dress or top"
+    },
+    {
+     "id": "s1",
+     "role": "Skirt"
+    },
+    {
+     "id": "s2",
+     "role": "Tights"
+    },
+    {
+     "id": "s3",
+     "role": "Heels 2\""
+    }
+   ],
+   "options": [
+    {
+     "id": "o1",
+     "title": "Look 1",
+     "note": "Midi dress, opaque tights, block heel",
+     "round": 0,
+     "total": {
+      "amount": 118,
+      "currency": "USD"
+     },
+     "items": [
+      {
+       "id": "i1",
+       "slot_id": "s0",
+       "title": "Black midi dress",
+       "url": "https://demo.invalid/demo-dresses/1",
+       "store": "Demo Dresses",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000001",
+       "price": {
+        "amount": 79,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i2",
+       "slot_id": "s2",
+       "title": "Opaque tights, 80 denier",
+       "url": "https://demo.invalid/demo-hosiery/2",
+       "store": "Demo Hosiery",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000002",
+       "price": {
+        "amount": 12,
+        "currency": "USD"
+       },
+       "facts": [
+        {
+         "label": "Pack",
+         "value": "2 pairs"
+        }
+       ]
+      },
+      {
+       "id": "i3",
+       "slot_id": "s3",
+       "title": "Block heel pump, 2 in",
+       "url": "https://demo.invalid/demo-shoes/3",
+       "store": "Demo Shoes",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000003",
+       "price": {
+        "amount": 27,
+        "currency": "USD"
+       },
+       "facts": [
+        {
+         "label": "Heel",
+         "value": "2 in"
+        },
+        {
+         "label": "Width",
+         "value": "Regular"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "o2",
+     "title": "Look 2",
+     "note": "Button-down and skirt; the heel price was not on the page",
+     "round": 0,
+     "total": null,
+     "items": [
+      {
+       "id": "i4",
+       "slot_id": "s0",
+       "title": "Black button-down shirt",
+       "url": "https://demo.invalid/demo-shirts/4",
+       "store": "Demo Shirts",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000004",
+       "price": {
+        "amount": 34,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i5",
+       "slot_id": "s1",
+       "title": "Black A-line skirt",
+       "url": "https://demo.invalid/demo-skirts/5",
+       "store": "Demo Skirts",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000005",
+       "price": {
+        "amount": 41,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i6",
+       "slot_id": "s2",
+       "title": "Sheer black tights",
+       "url": "https://demo.invalid/demo-hosiery/6",
+       "store": "Demo Hosiery",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000006",
+       "price": {
+        "amount": 9,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i7",
+       "slot_id": "s3",
+       "title": "Pointed pump, 2 in",
+       "url": "https://demo.invalid/demo-shoes/7",
+       "store": "Demo Shoes",
+       "image": null,
+       "price": null,
+       "facts": []
+      }
+     ]
+    },
+    {
+     "id": "o3",
+     "title": "Look \"3\" <script>x</script> it's",
+     "note": "<img src=x onerror=alert(1)>",
+     "round": 0,
+     "total": {
+      "amount": 167,
+      "currency": "USD"
+     },
+     "items": [
+      {
+       "id": "i8",
+       "slot_id": "s0",
+       "title": "Wrap dress",
+       "url": "https://demo.invalid/o'neil-\"&\"-<b>/8",
+       "store": "O'Neil \"&\" <b>",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000008",
+       "price": {
+        "amount": 98,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i9",
+       "slot_id": "s2",
+       "title": "Fleece-lined tights",
+       "url": "https://demo.invalid/demo-hosiery/9",
+       "store": "Demo Hosiery",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000009",
+       "price": {
+        "amount": 14,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i10",
+       "slot_id": "s3",
+       "title": "Strap heel, 2 in",
+       "url": "https://demo.invalid/demo-shoes/10",
+       "store": "Demo Shoes",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_000000000a",
+       "price": {
+        "amount": 55,
+        "currency": "USD"
+       },
+       "facts": []
+      }
+     ]
+    }
+   ],
+   "keeps": {},
+   "shortlist": [],
+   "reactions": {},
+   "can": {
+    "react": false,
+    "keep": false,
+    "find_more": false,
+    "copy": false,
+    "commit": false
+   }
+  },
+  "compare": {
+   "id": "c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Summer day camps",
+   "ask": "Compare three day camps for week 2 of July.",
+   "layout": "compare",
+   "noun": "camps",
+   "commit": "book",
+   "version": 1,
+   "copied_from": null,
+   "summary_line": "3 camps · from $310",
+   "slots": [
+    {
+     "id": "s0",
+     "role": "Camp"
+    }
+   ],
+   "options": [
+    {
+     "id": "o1",
+     "title": "Lakeside Day Camp",
+     "note": null,
+     "round": 0,
+     "total": {
+      "amount": 310,
+      "currency": "USD"
+     },
+     "items": [
+      {
+       "id": "i1",
+       "slot_id": "s0",
+       "title": "Lakeside Day Camp",
+       "url": "https://demo.invalid/demo-parks/21",
+       "store": "Demo Parks",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000015",
+       "price": {
+        "amount": 310,
+        "currency": "USD"
+       },
+       "facts": [
+        {
+         "label": "Dates",
+         "value": "Jul 13-17"
+        },
+        {
+         "label": "Ages",
+         "value": "6-12"
+        },
+        {
+         "label": "Distance",
+         "value": "4 mi"
+        },
+        {
+         "label": "Hours",
+         "value": "9-3"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "o2",
+     "title": "Maker Camp",
+     "note": null,
+     "round": 0,
+     "total": {
+      "amount": 395,
+      "currency": "USD"
+     },
+     "items": [
+      {
+       "id": "i2",
+       "slot_id": "s0",
+       "title": "Maker Camp",
+       "url": "https://demo.invalid/demo-makerspace/22",
+       "store": "Demo Makerspace",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000016",
+       "price": {
+        "amount": 395,
+        "currency": "USD"
+       },
+       "facts": [
+        {
+         "label": "Dates",
+         "value": "Jul 13-17"
+        },
+        {
+         "label": "Ages",
+         "value": "8-13"
+        },
+        {
+         "label": "Distance",
+         "value": "7 mi"
+        },
+        {
+         "label": "Hours",
+         "value": "9-4"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "o3",
+     "title": "Nature Explorers",
+     "note": null,
+     "round": 0,
+     "total": {
+      "amount": 340,
+      "currency": "USD"
+     },
+     "items": [
+      {
+       "id": "i3",
+       "slot_id": "s0",
+       "title": "Nature Explorers",
+       "url": "https://demo.invalid/demo-nature-center/23",
+       "store": "Demo Nature Center",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000017",
+       "price": {
+        "amount": 340,
+        "currency": "USD"
+       },
+       "facts": [
+        {
+         "label": "Dates",
+         "value": "Jul 13-17"
+        },
+        {
+         "label": "Ages",
+         "value": "5-10"
+        },
+        {
+         "label": "Distance",
+         "value": "11 mi"
+        },
+        {
+         "label": "Hours",
+         "value": "9-2"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "keeps": {},
+   "shortlist": [],
+   "reactions": {},
+   "can": {
+    "react": false,
+    "keep": false,
+    "find_more": false,
+    "copy": false,
+    "commit": false
+   }
+  },
+  "list": {
+   "id": "d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Camp packing list",
+   "ask": "What to buy for sleepaway camp.",
+   "layout": "list",
+   "noun": "things",
+   "commit": "none",
+   "version": 1,
+   "copied_from": null,
+   "summary_line": "3 things",
+   "slots": [
+    {
+     "id": "s0",
+     "role": "Thing"
+    }
+   ],
+   "options": [
+    {
+     "id": "o1",
+     "title": "Packing list",
+     "note": null,
+     "round": 0,
+     "total": null,
+     "items": [
+      {
+       "id": "i1",
+       "slot_id": "s0",
+       "title": "Water bottle, 24 oz",
+       "url": "https://demo.invalid/demo-outdoors/31",
+       "store": "Demo Outdoors",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_000000001f",
+       "price": {
+        "amount": 18,
+        "currency": "USD"
+       },
+       "facts": []
+      },
+      {
+       "id": "i2",
+       "slot_id": "s0",
+       "title": "Headlamp",
+       "url": "https://demo.invalid/demo-outdoors/32",
+       "store": "Demo Outdoors",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000020",
+       "price": null,
+       "facts": []
+      },
+      {
+       "id": "i3",
+       "slot_id": "s0",
+       "title": "Name labels, 100",
+       "url": "https://demo.invalid/demo-labels/33",
+       "store": "Demo Labels",
+       "image": "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000021",
+       "price": {
+        "amount": 8.5,
+        "currency": "USD"
+       },
+       "facts": []
+      }
+     ]
+    }
+   ],
+   "keeps": {},
+   "shortlist": [],
+   "reactions": {},
+   "can": {
+    "react": false,
+    "keep": false,
+    "find_more": false,
+    "copy": false,
+    "commit": false
+   }
+  }
+ },
+ "cards": [
+  {
+   "kind": "board",
+   "board_id": "b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Concert outfit",
+   "summary_line": "3 looks · from $118",
+   "kept": 0,
+   "hero": [
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000001",
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000002",
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e/image/lk_0000000003"
+   ],
+   "note": null
+  },
+  {
+   "kind": "board",
+   "board_id": "c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Summer day camps",
+   "summary_line": "3 camps · from $310",
+   "kept": 0,
+   "hero": [
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/c0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000015"
+   ],
+   "note": null
+  },
+  {
+   "kind": "board",
+   "board_id": "d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+   "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+   "title": "Camp packing list",
+   "summary_line": "3 things",
+   "kept": 2,
+   "hero": [
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_000000001f",
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000020",
+    "api/projects/0f1e2d3c4b5a69788796a5b4c3d2e1f0/boards/d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f/image/lk_0000000021"
+   ],
+   "note": "3 more looks around your kept dress and heels"
+  }
+ ],
+ "rows": [
+  {
+   "kind": "board",
+   "group": "now",
+   "title": "Concert outfit",
+   "subtitle": "3 looks · from $118",
+   "sheet": {
+    "kind": "board",
+    "id": "b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e",
+    "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+   },
+   "actions": []
+  },
+  {
+   "kind": "board",
+   "group": "now",
+   "title": "Camp packing list",
+   "subtitle": "3 things · 2 kept",
+   "sheet": {
+    "kind": "board",
+    "id": "d0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+    "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+   },
+   "actions": []
+  }
+ ],
+ "mission_done": {
+  "kind": "mission_done",
+  "mission_id": "e0a1e2f3a4b5c6d7e8f90a1b2c3d4e5f",
+  "summary": "Three looks from $118 to $167.",
+  "drafts": [],
+  "open": [],
+  "boards": [
+   {
+    "board_id": "b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e",
+    "project_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "title": "Concert outfit"
+   }
+  ]
+ },
+ "deep_links": {
+  "good": "#board-0f1e2d3c4b5a69788796a5b4c3d2e1f0-b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e",
+  "bad": [
+   "#board-",
+   "#board-xyz-123",
+   "#board-abc",
+   "#board-0f1e2d3c4b5a69788796a5b4c3d2e1f0-b0a7d1e2f3a4b5c6d7e8f90a1b2c3d4e-x"
+  ]
+ }
+}

@@ -87,6 +87,8 @@
 - Create: `chauffeur/tests/fixtures/board_view_v1.json`: one `options` board with 4 slots and 3 options. Option 1 has all prices in USD. Option 2 is missing one price. Option 3's title is the hostile string `Look "3" <script>x</script> it's`. The fixture also holds one `compare` board and one `list` board, the matching `card` payloads, one project `row`, and one `mission_done` card with a `boards` line.
 - Create: `chauffeur/tests/test_board_contract.py`: it loads the fixture and asserts the key sets below, so a drift on either side fails one test that both sides run.
 - Create: `chauffeur/services/boards_contract.py`: the key sets as frozen constants, imported by Task 3's `boards.view` tests and by this test.
+- Create: `chauffeur/tests/fixtures/make_board_view_v1.py`: rebuilds the fixture (`python tests/fixtures/make_board_view_v1.py`).
+- Done 2026-11-27 (the contract commit on `presentation-boards`).
 
 **Interfaces (Produces, used by every later task):**
 
@@ -195,7 +197,8 @@ Totals:
 - `summary_line`:
   - "from" uses the minimum of complete totals for multi-slot boards, or the minimum item price for single-slot and compare boards;
   - price format: `$118` for USD whole amounts, `$118.50` otherwise, `118 EUR` for other currencies;
-  - "from" is left out when there is no price or the minimum spans mixed currencies.
+  - "from" is left out when there is no price or the minimum spans mixed currencies;
+  - a `list` board counts items, not options, and never shows a price (`"3 things"`). The full rule is in the `services/boards_contract.py` docstring.
 - `spoken`:
   - `"I found {n} {noun} for {title}, from {lo} to {hi} dollars. Open the board on your phone to pick."` when prices exist;
   - `", at {lo} dollars"` when lo equals hi;
