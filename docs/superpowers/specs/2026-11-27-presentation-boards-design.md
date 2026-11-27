@@ -1,6 +1,6 @@
 # Presentation boards: Argyle shows options and the family answers back
 
-Status: design, awaiting owner approval (2026-11-27). Branch `presentation-boards`.
+Status: design APPROVED by the owner 2026-11-27. Branch `presentation-boards`.
 Mockups the owner reacted to: https://claude.ai/artifact/Aq5iMBLwGdMc3ZDopSUtt6 (version 1 = layouts A/B/C, version 2 = B with Keep).
 
 ## 1. Intent
