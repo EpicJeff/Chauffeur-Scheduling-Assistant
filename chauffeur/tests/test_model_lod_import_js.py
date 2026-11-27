@@ -34,13 +34,19 @@ globalThis.Worker=class {
 };
 const source=new THREE.Group(),geometry=new THREE.SphereGeometry(2,112,112),material=new THREE.MeshStandardMaterial();
 const mesh=new THREE.Mesh(geometry,material);source.add(mesh);
-const id='import-'+ '8'.repeat(32),entry={id,kind:'car',model:'original.glb',files:{'original.glb':true},lods:[]};
+const {stampParts}=await import(file('static/twin/model_levels.js'));
+const id='import-'+ '8'.repeat(32),entry={id,kind:'car',model:'original.glb',files:{'original.glb':true},lods:[],revision:0,lod_percent:[100,25,5],parts:stampParts(source)};
 let upload=null,buffer=null,calls=[];
 globalThis.fetch=async (input,opts={})=>{
  const url=typeof input==='string'?input:input.url;
  const reply=value=>new Response(JSON.stringify(value),{status:200});calls.push([url,opts.method]);
+ if(url.endsWith('/models/'+id)&&opts.method==='PATCH'){
+  const body=JSON.parse(opts.body);assert.equal(body.revision,entry.revision);assert.equal(body.parts_version,1);assert.deepEqual(body.parts,entry.parts);
+  Object.assign(entry,body);entry.revision++;return reply(entry);
+ }
  if(url.endsWith('/imports/uploads')){
   upload=JSON.parse(opts.body);assert.equal(upload.asset_id,id);assert.ok(['lod1.glb','lod2.glb'].includes(upload.lod));
+  assert.equal(upload.percent,entry.lod_percent[Number(upload.lod[3])]);
   assert.deepEqual(upload.files,[{name:upload.lod,size:upload.size}]);buffer=new Uint8Array();return reply({upload_id:'derived',chunk_bytes:4194304});
  }
  if(url.endsWith('/derived/0')){buffer=new Uint8Array(await opts.body.arrayBuffer());assert.equal(buffer.byteLength,upload.size);return reply({received:buffer.byteLength,index:1});}
@@ -48,7 +54,7 @@ globalThis.fetch=async (input,opts={})=>{
   assert.equal(new DataView(buffer.buffer).getUint32(0,true),0x46546c67,'actual binary GLB');
   const decoded=await new GLTFLoader().parseAsync(buffer.buffer,'');let triangles=0;
   decoded.scene.traverse(o=>{if(o.isMesh)triangles+=(o.geometry.index?.count||o.geometry.attributes.position.count)/3;});
-  entry.lods.push({name:upload.lod,triangles,bytes:buffer.byteLength});entry.files[upload.lod]=true;return reply(entry);
+  entry.lods.push({name:upload.lod,triangles,bytes:buffer.byteLength,percent:upload.percent,revision:1});entry.files[upload.lod]=true;entry.revision++;return reply(entry);
  }
  throw new Error('Unexpected derived request '+url);
 };
@@ -58,18 +64,18 @@ assert.equal(rows.length,2,'generation must reach exporter and uploads instead o
 assert.deepEqual(entry.lods.map(l=>l.name),['lod1.glb','lod2.glb']);
 rows.forEach((row,i)=>assert.equal(row.triangles,entry.lods[i].triangles));
 assert.ok(entry.lods[1].bytes<entry.lods[0].bytes);assert.equal(source.children[0].geometry,geometry);assert.equal(source.children[0].material,material);
-assert.equal(calls.length,6);assert.ok(rows.every(r=>r.picture.startsWith('data:image/png')));
+assert.equal(calls.length,7);assert.ok(rows.every(r=>r.picture.startsWith('data:image/png')));
 assert.deepEqual(progress,['Making lighter versions… 1 of 2','Making lighter versions… 2 of 2']);
 assert.equal(workerStarts,2);assert.equal(workerStops,2,'both versions release their worker');
 console.log('ok actual LOD generation, GLTFExporter binary export, two chunk uploads on same import, decoded counts and compact bytes');
 globalThis.fetch=async()=>{throw new Error('upload offline');};
-assert.deepEqual(await generateVersions(entry,source,new AbortController().signal),[]);
+assert.deepEqual(await generateVersions({...entry,lods:[]},source,new AbortController().signal),[]);
 abort.abort();assert.deepEqual(await generateVersions(entry,source,abort.signal),[]);
 console.log('ok failed and cancelled optional generation return quietly and preserve original');
 
 const ProtocolWorker=globalThis.Worker;delete globalThis.Worker;
 const huge=new THREE.Mesh(new THREE.SphereGeometry(2,390,390),material);
-const skipped=await generateVersions(entry,huge,new AbortController().signal);
+const skipped=await generateVersions({...entry,lods:[]},huge,new AbortController().signal);
 assert.equal(skipped.length,0);assert.match(skipped.note,/200,000 triangles.*worker is unavailable/);
 assert.equal(huge.geometry.attributes.position.count,391*391);
 console.log('ok no-worker oversized mesh returns no LODs, keeps its original and reports the quiet skip reason');
@@ -85,12 +91,13 @@ Element.prototype.focus=function(){};
 Object.defineProperty(Element.prototype,'isConnected',{get(){return !!this.parentElement;}});
 window.twinObjectSchema={kinds:{car:{},furniture:{},door:{},window:{}}};
 window.showGlobalAlert=message=>{throw new Error(message);};
-const fresh={id:'import-'+'9'.repeat(32),name:'dialog',model:'original.glb',files:{'original.glb':true},lods:[]};
+const fresh={id:'import-'+'9'.repeat(32),name:'dialog',model:'original.glb',files:{'original.glb':true},lods:[],revision:0,lod_percent:[100,25,5],parts:[]};
 let deleted=false;
 globalThis.fetch=async(input,opts={})=>{
  const url=typeof input==='string'?input:input.url;
  const json=value=>new Response(JSON.stringify(value));
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
+ if(url.endsWith('/models/'+fresh.id)&&opts.method==='PATCH'){const body=JSON.parse(opts.body);assert.equal(body.revision,fresh.revision);assert.ok(body.parts.length);Object.assign(fresh,body);fresh.revision++;return json(fresh);}
  if(url.endsWith('/imports/uploads'))return json({upload_id:'dialog',chunk_bytes:4194304});
  if(url.endsWith('/dialog/0'))return json({});
  if(url.endsWith('/dialog/finish'))return json(fresh);
@@ -139,6 +146,8 @@ globalThis.fetch=async(input,opts={})=>{
  const url=typeof input==='string'?input:input.url,json=value=>new Response(JSON.stringify(value));
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
  if(url.endsWith('/imports'))return json([...entries.values()]);
+ const stamp=url.match(/\/models\/(import-\d{32})$/);
+ if(stamp&&opts.method==='PATCH'){const e=entries.get(stamp[1]),body=JSON.parse(opts.body);assert.ok(e);assert.equal(body.revision,e.revision);assert.ok(body.parts.length);assert.equal(body.parts_version,1);Object.assign(e,body);e.revision++;return json(e);}
  if(url.endsWith('/imports/uploads')){
   const body=JSON.parse(opts.body),key='queue'+(++uploadSerial);uploads.set(key,body);
   return json({upload_id:key,chunk_bytes:4194304});
@@ -147,8 +156,8 @@ globalThis.fetch=async(input,opts={})=>{
  if(chunk){
   const body=uploads.get(chunk[1]);if(chunk[2]==='0')return json({});
   if(body.asset_id){const e=entries.get(body.asset_id);assert.ok(e,'cancelled/deleted entries never upload');
-   e.lods.push({name:body.lod});e.files[body.lod]=true;derived.push([e.id,body.lod]);return json(e);}
-  const e={...fresh,id:'import-'+String(++picked).repeat(32),name:body.name,lods:[],files:{'original.glb':true}};
+   assert.equal(body.percent,e.lod_percent[Number(body.lod[3])]);e.lods.push({name:body.lod,percent:body.percent,revision:1});e.files[body.lod]=true;e.revision++;derived.push([e.id,body.lod]);return json(e);}
+  const e={...fresh,id:'import-'+String(++picked).repeat(32),name:body.name,lods:[],files:{'original.glb':true},revision:0,parts:[],parts_version:undefined};
   entries.set(e.id,e);return json(e);
  }
  const asset=url.match(/\/(import-\d{32})(?:\/original.glb)?$/);
@@ -221,7 +230,7 @@ console.log('ok accepting consecutive imports frees the picker during a blocked 
 
 // Existing imports take the same worker/export/upload path in background.
 globalThis.Worker=ProtocolWorker;
-const background={...fresh,id:'import-'+'7'.repeat(32),lods:[]};
+const background={...fresh,id:'import-'+'7'.repeat(32),lods:[],revision:0,parts:[],parts_version:undefined};
 let derivedName,backgroundUploads=0;
 globalThis.fetch=async(input,opts={})=>{
  const url=typeof input==='string'?input:input.url;
@@ -229,13 +238,14 @@ globalThis.fetch=async(input,opts={})=>{
  if(url.endsWith('/import-settings'))return json({limit_mb:50,unpacked_limit_mb:200});
  if(url.endsWith('/imports'))return json([background]);
  if(url.includes(background.id)&&url.endsWith('original.glb'))return new Response(modelBytes);
+ if(url.endsWith('/models/'+background.id)&&opts.method==='PATCH'){const body=JSON.parse(opts.body);assert.equal(body.revision,background.revision);assert.ok(body.parts.length);Object.assign(background,body);background.revision++;return json(background);}
  if(url.endsWith('/imports/uploads')){
   const body=JSON.parse(opts.body);assert.equal(body.asset_id,background.id);derivedName=body.lod;
   return json({upload_id:'background',chunk_bytes:4194304});
  }
  if(url.endsWith('/background/0'))return json({});
  if(url.endsWith('/background/finish')){
-  backgroundUploads++;background.lods.push({name:derivedName});background.files[derivedName]=true;return json(background);
+  backgroundUploads++;background.lods.push({name:derivedName,percent:background.lod_percent[Number(derivedName[3])],revision:1});background.files[derivedName]=true;background.revision++;return json(background);
  }
  throw new Error('unexpected background request '+url);
 };

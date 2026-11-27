@@ -6,7 +6,7 @@ import { applyObject, bakeMatrix, fitOpening, objectShown, objectMaterialKey } f
 // All geometry is in plan feet; only the returned root converts to metres.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
+import { applyPartMaterials, modelMaterialKit, modelMaterialInputs, kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, currentMaterial, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, alphaModeOf, copyMaterialParams } from './twin_library.js';
 import { postRef } from './porch_posts.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { supportMaterialSurface } from './support_material.js';
@@ -116,7 +116,7 @@ export function mergeStatic(group, { perPiece = false } = {}) {
     mesh.userData.snapRanges = entries.flatMap(e => {
       const d = e.mesh.userData, count = e.geometry.attributes.position.count;
       const ranges = d.snapRanges?.map(r => ({...r, start: r.start + start}))
-        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, bakePart:d.bakePart, ghost: d.ghost, terrain: d.terrain, ...(d.surfaceKind ? { surfaceKind: d.surfaceKind } : {})}];
+        || [{start, count, kind: d.kind, visibilityKind: d.visibilityKind, pieceId: d.pieceId, parentPieceId: d.parentPieceId, buildingId: d.buildingId, part: d.part, partKey: d.partKey, bakePart:d.bakePart, ghost: d.ghost, terrain: d.terrain, ...(d.surfaceKind ? { surfaceKind: d.surfaceKind } : {})}];
       start += count; return ranges;
     });
     geometry.userData.snapRanges = mesh.userData.snapRanges;
@@ -376,6 +376,11 @@ function buildingKeyParts(plan, b, kit, tier, { viewing = false, showAnchors = f
   for (const item of [...(b.openings || []), ...porches, ...(b.stairs || []), ...(b.fixtures || []), ...(b.items || []).filter(i => i.rect)])
     for (const [kind, slot] of Object.entries(item.materials || {}))
       if (slot && kindRow(kind)) finishes.push(['item-surface', item.id, kind, resolved(kind, slot)]);
+  for (const item of [...(b.items || []), ...(b.openings || [])]) {
+    const id = (item.asset || item.model || '').replace(/^polyhaven:/, '');
+    const inputs = id && modelMaterialInputs(id, item.model_materials, kit);
+    if (inputs?.length) finishes.push(['model-parts', item.id, inputs]);
+  }
   const slab = b.foundation?.materials?.slab;
   if (slab) finishes.push(['slab', slab, resolved('patio_concrete', slab), known[slab.id]]);
   for (const p of porches) for (const [slot, ref] of Object.entries(porchFoundation(p.foundation).materials)) if (ref) {
@@ -995,6 +1000,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (defaultRequest) materials.set(alias, materials.get(key));
       return materials.get(key);
     });
+    const modelKit = modelMaterialKit(materialKit, tier, materials, mat);
     const kindResolution = (kind, item = null) => {
       const fallback = kindRow(kind).fallback;
       const level = b.levels.find(l => l.id === (item?.level || b.walls?.find(w => w.id === item?.wall)?.level));
@@ -1224,7 +1230,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const data = activePiece || { pieceId: 'structure', kind: 'building', buildingId: b.id };
       const key = `${b.id}:${data.pieceId}`;
       // A random-offset material shifts this piece's base uv by its own seed, before batching.
-      if ((!retained || ref?.uv) && !data.ghost && activePiece) {
+      if ((!retained || ref?.uv) && !data.ghost && activePiece && !geometry.userData.modelPartOverride) {
         const uv = (ref || surfaceRef(material.name, levels[activeSurface?.level])).uv;
         if (uv) uvParts.push({geometry, material, seed: seed || key, offset: uv,
           key: JSON.stringify([part.startsWith('roof-plane:') ? b.id : data.kind === 'porch_post' ? seed : key, part || material.name, uv])});
@@ -1233,6 +1239,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       const object = retained || addMesh(group, geometry, data.ghost ? ghost : material);
       if (retained && data.ghost) object.material = ghost;
       Object.assign(object.userData, data);
+      if (geometry.userData.partKey) object.userData.partKey = geometry.userData.partKey;
       if(part && !geometry.userData.bakePlaneSurface)object.userData.bakePart=part;
       if (!pieces.has(key)) pieces.set(key, []);
       const objects = pieces.get(key); objects.push(object);
@@ -1258,6 +1265,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
     };
     const retainLod = (group, model) => {
       group.add(model); model.updateWorldMatrix(true, true);
+      model.traverse(o => { if (o.isMesh && o.userData.partKey) o.geometry.userData.partKey = o.userData.partKey; });
       model.traverse(object => { if (object.isMesh) mesh(group, object.geometry, object.material, object); });
     };
     const center = b.walls.length ? b.walls.reduce((a, w) => [a[0] + w.from[0] / b.walls.length, a[1] + w.from[1] / b.walls.length], [0, 0]) : [0, 0];
@@ -1449,7 +1457,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
           const placeholder = localBox(cu, cv, width, height, Math.min(thickness, .08), kindMat('window_frame', h), 0, kindRef('window_frame', h), 'window_frame');
           if (placeholder) placeholder.userData.pendingImport = true;
           const openingData = activePiece;
-          pendingModels.push(loadModel(h.model, kit, undefined, { tier: modelTier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
+          pendingModels.push(loadModel(h.model, modelKit, undefined, { tier: modelTier, editor: !viewing, onFailure: onAssetFailure }).then(source => {
             if (!source) return;
             if (root.userData.disposed) { disposeObject(source); return; }
             const livePlaceholder = pieces.get(`${b.id}:${openingData.pieceId}`)?.find(o => o === placeholder);
@@ -1457,6 +1465,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
               livePlaceholder.removeFromParent(); livePlaceholder.geometry.dispose();
               const objects = pieces.get(`${b.id}:${openingData.pieceId}`); objects.splice(objects.indexOf(livePlaceholder), 1);
             }
+            applyPartMaterials(source, source.userData.modelRecord, h.model_materials || {}, modelKit);
             const fitted = fitOpening(source, width, height, thickness);
             fitted.position.set(cu, h.v0, offset);
             if (h.hinge === 'right') fitted.scale.x *= -1;
@@ -1468,7 +1477,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
               retainLod(group, transform); activePiece = saved; registerRecords(); return;
             }
             fitted.traverse(object => {
-              if (object.isMesh) mesh(group, bakeMatrix(object.geometry.clone(), matrix.clone().multiply(object.matrixWorld)), object.material);
+              if (object.isMesh) {
+                const geometry = bakeMatrix(object.geometry.clone(), matrix.clone().multiply(object.matrixWorld));
+                geometry.userData.partKey = object.userData.partKey;
+                mesh(group, geometry, object.material);
+              }
             });
             activePiece = saved;
             const geometries = new Set(); fitted.traverse(o => { if (o.geometry) geometries.add(o.geometry); }); geometries.forEach(g => g.dispose());
@@ -2548,7 +2561,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (root.userData.disposed) { if (source) disposeObject(source); return; }
         if (!source && !fallback) return;
         const level = !source && fallback ? levels[fallback.piece.level] : hostLevel(item.host);
-        if (!level) { if (source) disposeObject(source); return; }
+        if (!level) {
+          // This copy borrowed record overrides from the still-live scene cache.
+          if (source) disposeObject(source, { keepMaterials: new Set(materials.values()) });
+          return;
+        }
         const key = `${b.id}:${item.id}`;
         const proxy = pickObjects.get(key);
         if (proxy) { proxy.removeFromParent(); proxy.geometry.dispose(); pickObjects.delete(key); }
@@ -2567,10 +2584,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
         if (source) {
           const model = source;
           applyObject(model, item, { id: `${b.id}:${item.id}` });
+          applyPartMaterials(model, model.userData.modelRecord, item.model_materials || {}, modelKit);
           // Structural finish reuse must not give a replacement asset the old
           // item's imported materials (even when its piece id is unchanged).
-          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + JSON.stringify([asset, modelAssetKey(asset, kit)])
-            + ':' + objectMaterialKey(item, `${b.id}:${item.id}`), materials);
+          cacheModelMaterials(model, 'item:' + b.id + ':' + item.id + ':' + JSON.stringify([asset, model.userData.modelMaterialKey])
+            + ':' + objectMaterialKey(item, `${b.id}:${item.id}`) + ':' + JSON.stringify(item.model_materials || {}), materials);
           model.position.set(point[0], point[2] + (item.elevation || 0), -point[1]);
           model.updateMatrixWorld(true);
           use(item, 'item', item.id);
@@ -2578,7 +2596,11 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
             retainLod(group, model); registerRecords(); return;
           }
           model.traverse(object => {
-            if (object.isMesh) mesh(group, bakeMatrix(object.geometry.clone(), object.matrixWorld), object.material);
+            if (object.isMesh) {
+              const geometry = bakeMatrix(object.geometry.clone(), object.matrixWorld);
+              geometry.userData.partKey = object.userData.partKey;
+              mesh(group, geometry, object.material);
+            }
           });
           const geometries = new Set(); model.traverse(o => { if (o.geometry) geometries.add(o.geometry); });
           geometries.forEach(g => g.dispose());
@@ -2595,7 +2617,7 @@ function generateTwin(plan, kit, tier, { showAnchors = false, editableLevel = nu
       if (point) {
         if (!models.has(asset)) {
           lateItems.set(asset, []);
-          models.set(asset, loadModel(asset, kit, model => {
+          models.set(asset, loadModel(asset, modelKit, model => {
             if (root.userData.disposed) { disposeObject(model); return; }
             for (const update of lateItems.get(asset)) update(model.clone(true), true);
           }, { tier: modelTier, editor: !viewing, onFailure: onAssetFailure }));

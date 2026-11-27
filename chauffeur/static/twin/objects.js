@@ -131,15 +131,16 @@ export function mergeByMaterial(source) {
           part.setAttribute(key, new THREE.BufferAttribute(values, attr.itemSize));
         }
         bakeMatrix(part, matrix);
-        if (!groups.has(material)) groups.set(material, []);
-        groups.get(material).push(part);
+        const key = material.userData.partKey || material;
+        if (!groups.has(key)) groups.set(key, { material, parts: [] });
+        groups.get(key).parts.push(part);
       }
     }
     geo.dispose();
   });
   const result = new THREE.Group();
   result.add(source);
-  for (const [material, parts] of groups) {
+  for (const { material, parts } of groups.values()) {
     const attributes = new Map();
     parts.forEach(part => Object.entries(part.attributes).forEach(([key, attr]) => attributes.set(key, Math.max(attributes.get(key) || 0, attr.itemSize))));
     // glTF can omit an optional attribute on some primitives of one material.
@@ -153,7 +154,9 @@ export function mergeByMaterial(source) {
     }
     const geometry = mergeGeometries(parts);
     if (!geometry) throw new Error('Could not merge the model geometry.');
-    const mesh = new THREE.Mesh(geometry, material); mesh.castShadow = mesh.receiveShadow = true; result.add(mesh);
+    const mesh = new THREE.Mesh(geometry, material);
+    if (material.userData.partKey) mesh.userData.partKey = material.userData.partKey;
+    mesh.castShadow = mesh.receiveShadow = true; result.add(mesh);
     parts.forEach(part => part.dispose());
   }
   // Keep non-mesh descendants and their transforms in the original hierarchy.

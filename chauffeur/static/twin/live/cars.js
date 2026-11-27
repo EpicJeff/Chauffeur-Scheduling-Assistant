@@ -5,17 +5,25 @@ import { markerSprite } from './markers.js';
 import { guessEnergy, carHome, carPower, carCharging, chargingCar, watts } from './energy_mapping.js';
 import { energyAnchors, worldPoint } from './energy_geometry.js';
 import { loadModel } from '../twin_library.js';
+import { fixTurnRadians } from '../model_parts.js';
 
 export function placeCarModel(model, spot) {
   // Imported models are metres, bottom centred. Parking's zero turn has its
   // long edge along plan Y (world -Z); preserve the authored physical scale.
   const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
   const wrapper = new THREE.Group(); wrapper.add(model);
+  const turn = model.userData.modelRecord?.fix?.turn;
+  if (turn) {
+    wrapper.userData.modelTurn = fixTurnRadians(model.userData.modelRecord.fix);
+    // loadModel has already applied the fix. Move its yaw to the parking
+    // wrapper so live updates cannot reapply automatic long-axis alignment.
+    model.rotation.y -= wrapper.userData.modelTurn;
+  }
   wrapper.userData.longAxisX = size.x > size.z;
   wrapper.rotation.y = carTurn(wrapper, spot);
   wrapper.position.copy(worldPoint(spot.at)); return wrapper;
 }
-const carTurn = (model, spot) => (spot.rotation || 0) * Math.PI / 180 + (model.userData.longAxisX === (spot.depth >= spot.width) ? Math.PI / 2 : 0);
+const carTurn = (model, spot) => (spot.rotation || 0) * Math.PI / 180 + (model.userData.modelTurn ?? (model.userData.longAxisX === (spot.depth >= spot.width) ? Math.PI / 2 : 0));
 
 export function carTexture(color, ring = '') {
   color = /^#[\da-f]{6}$/i.test(color || '') ? color : '#64748b';

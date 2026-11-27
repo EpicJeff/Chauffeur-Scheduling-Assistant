@@ -4,6 +4,8 @@ import { normaliseModel, modelBudget, mergeByMaterial, singlePassMaterial, heavy
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { tierModel } from './model_lods.js';
 import { BUILTIN_LOOKS, builtinMaterial } from './surface_kinds.js';
+import { stampParts } from './model_levels.js';
+import { DEFAULT_LOD_PERCENT, resolvePart, fixScale, fixTurnRadians, boxUvFeet, modelUv } from './model_parts.js';
 
 export const base = () => window.chfBase ?? '../';
 export function libUrl(assetId, name) {
@@ -28,6 +30,21 @@ export function manifest(kit) { return kit?.manifest || window.twinManifest || {
 // a connection stays open without delivering its image, buffer or HDR.
 const ASSET_TIMEOUT_MS = 15000;
 const modelCache = new Map(), skyCache = new Map(), textureCache = new Map();
+// These hold live THREE objects outside userData (Object3D.clone JSON-serialises
+// userData). A shallow scene clone still finds its authored state by geometry.
+const partOriginals = new WeakMap(), sharedPartMaterials = new WeakSet(), partMaterialCaches = new WeakMap();
+// Scene slots are shared too, but retain the scene's normal disposal lifetime.
+const standalonePartMaterials = new WeakSet();
+const partUvGeometries = new WeakSet();
+const partUvModes = new WeakMap();
+const partUvVariants = new WeakMap();
+const partWarnings = new Set();
+function attributeValues(attr) {
+  if (!attr.isInterleavedBufferAttribute && !attr.normalized) return attr.array;
+  const values = new Float32Array(attr.count * attr.itemSize);
+  for (let i = 0; i < attr.count; i++) for (let c = 0; c < attr.itemSize; c++) values[i * attr.itemSize + c] = attr.getComponent(i, c);
+  return values;
+}
 function loadTexture(url) {
   if (!textureCache.has(url)) {
     const request = new Promise((done, reject) => new THREE.TextureLoader().load(url, done, undefined, reject))
@@ -67,11 +84,17 @@ function optionalAsset(cache, key, load, copy, onLate, onFailure) {
 function copyModel(source) {
   const model = source.clone(true), geometries = new Map(), materials = new Map(), textures = new Map();
   model.traverse(o => {
+    const originalState = o.geometry && partOriginals.get(o.geometry);
     if (o.geometry) {
       if (!geometries.has(o.geometry)) geometries.set(o.geometry, o.geometry.clone());
+      const original = partOriginals.get(o.geometry), changedUv = partUvGeometries.has(o.geometry), uvMode = partUvModes.get(o.geometry);
       o.geometry = geometries.get(o.geometry);
+      if (original) partOriginals.set(o.geometry, original);
+      if (changedUv) partUvGeometries.add(o.geometry);
+      if (uvMode) partUvModes.set(o.geometry, uvMode);
     }
     const copy = material => {
+      if (sharedPartMaterials.has(material)) return material;
       if (!materials.has(material)) {
         const out = material.clone();
         for (const [key, texture] of Object.entries(out)) if (texture?.isTexture) {
@@ -83,6 +106,12 @@ function copyModel(source) {
       return materials.get(material);
     };
     if (o.material) o.material = Array.isArray(o.material) ? o.material.map(copy) : copy(o.material);
+    if (originalState) {
+      const original = partUvGeometries.has(o.geometry) ? originalState.geometry : o.geometry;
+      partOriginals.set(o.geometry, { ...originalState, geometry:original,
+        uv:original === o.geometry ? o.geometry.attributes.uv : originalState.uv,
+        material:copy(originalState.material) });
+    }
   });
   return model;
 }
@@ -499,19 +528,67 @@ export function materialSlot(value, defaultRole, kit, tier, cache, roleMaterial)
 }
 
 const imported = new Map();
+const modelRecords = new Map(), modelReads = new Map(), failedModelReads = new Map();
 // Include the metadata used by loadModel (including LOD/file revisions) in
 // callers' retained-geometry keys. An unknown import is resolved during load.
-export const modelAssetKey = (id, kit) => id.startsWith('import-') ? imported.get(id) : manifest(kit)[id];
+export const modelAssetKey = (id, kit) => {
+  const asset = id.startsWith('import-') ? imported.get(id) : manifest(kit)[id];
+  const record = modelRecords.get(id) || asset;
+  if (!record) return undefined;
+  const model = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n)) || record.model;
+  return { model, files: asset?.files || record.files,
+    size: asset?.size || record.size, triangles: asset?.triangles ?? record.triangles,
+    revision: record.revision || 0, lod_percent: record.lod_percent || DEFAULT_LOD_PERCENT,
+    lods: (record.lods || []).map(l => ({ name:l.name, percent:l.percent ?? DEFAULT_LOD_PERCENT[Number(l.name[3])], revision:l.revision || 0 })),
+    fix: record.fix || null, parts_version: record.parts_version || 0, materials: record.materials || {} };
+};
+// Rendering retention follows material revisions too; these are appearance
+// inputs only and never enter the bake's atlas or occluder keys.
+export function modelMaterialInputs(id, copyMaterials, kit) {
+  const record = modelAssetKey(id, kit), known = manifest(kit);
+  return Object.entries({ ...record?.materials, ...copyMaterials }).map(([key, ref]) => [key, ref, known[ref.material]]);
+}
 let importRead = null;
-export function rememberImport(entry) { imported.set(entry.id, entry); }
-export function forgetImport(assetId) {
-  const asset = imported.get(assetId);
-  for (const name of [asset?.model, ...(asset?.lods || []).map(l => l.name)].filter(Boolean)) {
-    const key = libUrl(assetId, name), cached = modelCache.get(key);
-    modelCache.delete(key);
-    cached?.complete.then(model => { if (model) disposeObject(model); });
+export function rememberImport(entry) {
+  failedModelReads.delete(entry.id);
+  if ((modelRecords.get(entry.id)?.revision || 0) > (entry.revision || 0)) return;
+  imported.set(entry.id, entry);
+  // The import catalog/upload response already contains the .asset.json record.
+  // Reuse that snapshot, including legacy revision 0, rather than fetch it twice.
+  modelRecords.set(entry.id, { ...entry, revision: entry.revision || 0,
+    lod_percent: entry.lod_percent || DEFAULT_LOD_PERCENT, parts: entry.parts || [],
+    lods: (entry.lods || []).map(l => ({ ...l, percent: l.percent ?? DEFAULT_LOD_PERCENT[Number(l.name[3])], revision: l.revision || 0 })) });
+}
+// Call with refresh after an out-of-band edit. PATCH/upload replies can instead
+// be passed to rememberImport, avoiding another GET before the next PATCH.
+export async function modelRecord(assetId, { refresh = false } = {}) {
+  const known = modelRecords.get(assetId);
+  if (!refresh && known) return known;
+  const failure = failedModelReads.get(assetId);
+  if (!refresh && failure && failure.until > Date.now()) throw failure.error;
+  if (refresh) modelReads.delete(assetId);
+  if (!modelReads.has(assetId)) {
+    const pending = fetch(base() + 'api/house/models/' + encodeURIComponent(assetId), { signal: AbortSignal.timeout(ASSET_TIMEOUT_MS) }).then(async response => {
+      if (!response.ok) throw new Error(`Could not read model (HTTP ${response.status}).`);
+      const record = await response.json();
+      if (record.id !== assetId) throw new Error('Could not read the model record.');
+      const current = modelRecords.get(assetId);
+      if (!current || (record.revision || 0) >= (current.revision || 0)) {
+        modelRecords.set(assetId, record); if (assetId.startsWith('import-')) imported.set(assetId, record);
+      }
+      return modelRecords.get(assetId);
+    }).catch(error => {
+      failedModelReads.set(assetId, { error, until:Date.now() + 30000 }); throw error;
+    }).finally(() => { if (modelReads.get(assetId) === pending) modelReads.delete(assetId); });
+    modelReads.set(assetId, pending);
   }
-  imported.delete(assetId); importRead = null;
+  return modelReads.get(assetId);
+}
+export function forgetImport(assetId) {
+  for (const [key, cached] of modelCache) if (key.includes(encodeURIComponent(assetId) + '/')) {
+    modelCache.delete(key); cached.complete.then(model => { if (model) disposeObject(model); });
+  }
+  modelRecords.delete(assetId); modelReads.delete(assetId); failedModelReads.delete(assetId); imported.delete(assetId); importRead = null;
 }
 export async function importedModels(refresh = false) {
   if (refresh) importRead = null;
@@ -521,10 +598,22 @@ export async function importedModels(refresh = false) {
   }).catch(error => { importRead = null; throw error; });
   return importRead;
 }
-export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null, onFailure } = {}) {
+export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, editor = false, shared = false, lodName = null, source = false, onFailure } = {}) {
   // Optional models may arrive late or use a tier-specific stand-in/LOD.
   // They remain visible and cast shadows, but cannot own shared lightmap UVs.
   const renderOnly = model => {
+    if (model?.isLOD) {
+      const origin = model.levels[0].object.userData.modelOffset;
+      if (origin) for (const {object} of model.levels.slice(1)) {
+        const offset = object.userData.modelOffset;
+        if (!offset) continue; // Legacy files were already authored bottom-centred.
+        const delta = offset.map((v,i) => v - origin[i]);
+        object.position.add(new THREE.Vector3(...delta).sub(new THREE.Vector3(...(object.userData.modelAlignment || [0,0,0]))));
+        object.userData.modelAlignment = delta;
+      }
+      model.userData.modelMaterialKey = model.levels.map(l => l.object.userData.modelMaterialKey);
+    }
+    if (model) { model.userData.modelRecord = record; model.userData.modelTier = tier; }
     model?.traverse(o => { if (o.geometry) o.geometry.userData.bakeExcluded = true; });
     return model;
   };
@@ -533,14 +622,24 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     try { await importedModels(); }
     catch { onFailure?.(); return null; }
   }
-  const asset = isImport ? imported.get(assetId) : manifest(kit)[assetId];
-  if (isImport && !editor && !lodName && asset?.lods?.length && (tier !== 'low' || asset.lods.some(l => l.name === 'lod2.glb'))) {
+  let record;
+  try { record = await modelRecord(assetId); }
+  catch { record = isImport ? imported.get(assetId) : manifest(kit)[assetId]; }
+  const asset = record;
+  const full = asset?.lods?.find(l => l.name === 'lod0.glb' && (asset.lod_percent?.[0] ?? 100) < 100);
+  const fullTriangles = full?.triangles ?? asset?.triangles;
+  if (!source && isImport && !editor && !lodName && asset?.lods?.length && (tier !== 'low' || asset.lods.some(l => l.name === 'lod2.glb'))) {
     const names = new Set(asset.lods.map(l => l.name));
     if (tier === 'low' && names.has('lod2.glb')) return loadModel(assetId, kit, onLate, { tier, kind, shared, lodName: 'lod2.glb', onFailure });
-    const levels = [null, null, null]; let initial = true, delivered = false;
+    const levels = [null, null, null]; let initial = true, delivered = false, delivery = null;
     const late = i => model => {
       levels[i] = model;
-      if (!initial && !delivered && levels[0]) { delivered = true; onLate?.(renderOnly(tierModel(levels, tier))); }
+      if (!initial && !delivered && levels[0] && delivery === null) delivery = setTimeout(() => {
+        // A late full level also releases the other levels' alignment waits.
+        // Let those ready decodes settle before handing the hierarchy over.
+        if (delivered) return;
+        delivered = true; onLate?.(renderOnly(tierModel(levels, tier)));
+      }, 0);
     };
     await Promise.all([null, 'lod1.glb', tier === 'medium' ? null : 'lod2.glb'].map(async (name, i) => {
       if (i && (!name || !names.has(name))) return;
@@ -551,8 +650,12 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     if (levels[0]) { delivered = true; return renderOnly(tierModel(levels, tier)); }
     return null;
   }
-  if (!editor && !lodName && isImport && tier === 'low' && asset?.triangles > 300000 && asset?.size) return renderOnly(heavyStandIn(asset.size, kind || asset.kind));
-  const name = lodName || asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n));
+  if (!source && !editor && !lodName && isImport && tier === 'low' && fullTriangles > 300000 && asset?.size) {
+    const standIn = heavyStandIn(asset.size, kind || asset.kind);
+    standIn.scale.setScalar(fixScale(asset.fix, asset.size)); standIn.rotation.y = fixTurnRadians(asset.fix);
+    return renderOnly(standIn);
+  }
+  const name = lodName || (!source && full?.name) || asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n));
   if (!name) return null;
   // Authenticate buffers and textures as well as the top-level model. Resolving
   // each resource against a query-free directory avoids token loss on relatives.
@@ -566,17 +669,27 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     if (u.origin === directory.origin && u.pathname.startsWith(directory.pathname)) {
       const path = decodeURIComponent(u.pathname.slice(directory.pathname.length));
       if (isImport && !Object.hasOwn(asset.files || {}, path)) throw new Error('Imported models must use their included resources.');
+      // Match main's resource URL: strip old auth, then authenticate once. Only
+      // the selected level file gets its positive content revision back.
       u.search = '';
+      if (path === name && revision) u.searchParams.set('v', revision);
       return window.chfAuthUrl ? window.chfAuthUrl(u.href) : u.href;
     }
     if (isImport) throw new Error('Imported models must use their included resources.');
     return raw;
   });
-  return optionalAsset(modelCache, libUrl(assetId, name), async () => {
+  const revision = asset?.lods?.find(l => l.name === name)?.revision || 0;
+  const secondary = !source && /^lod[12]\.glb$/.test(name) && revision >= 1;
+  const fullIdentity = full ? [full.name, full.percent, full.revision || 0] : [asset?.model,100,0];
+  const url = new URL(libUrl(assetId, name), window.location.href);
+  if (revision) url.searchParams.set('v', revision);
+  const modelUrl = revision ? url.href : libUrl(assetId, name);
+  const cacheKey = modelUrl + JSON.stringify([asset?.fix || null, secondary ? fullIdentity : null]);
+  return optionalAsset(source ? new Map() : modelCache, cacheKey, async () => {
     const loader = modelLoader(name, manager, asset.files || {});
     let result;
     try {
-      result = await loader.setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(libUrl(assetId, name));
+      result = await loader.setResourcePath(new URL(name.slice(0, name.lastIndexOf('/') + 1), directory).href).loadAsync(modelUrl);
       if (result && /\.(dae|kmz)$/i.test(name)) await colladaTexturesReady(result.scene);
     } catch (error) {
       if (result?.scene) disposeObject(result.scene);
@@ -585,6 +698,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
     if (!result) return null;
     // Applied on every load, so models imported before this keep no edge lines either.
     if (isImport) dropEdgeLines(result.scene);
+    const parts = stampParts(result.scene);
     const converted = new Map();
     result.scene.traverse(o => {
       if (!o.isMesh) return;
@@ -600,6 +714,7 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
               ...(m.emissive ? { emissive: m.emissive, emissiveMap: m.emissiveMap } : {}),
             }) : singlePassMaterial(m);
           converted.set(m, out);
+          out.userData.partKey = m.userData.partKey;
           if (out !== m) m.dispose();
           return out;
         }
@@ -613,15 +728,166 @@ export async function loadModel(assetId, kit, onLate, { tier = 'high', kind, edi
           alphaTest: m.alphaTest, side: m.side, emissive: m.emissive, emissiveMap: m.emissiveMap, emissiveIntensity: m.emissiveIntensity,
         });
         m.dispose();
+        out.userData.partKey = m.userData.partKey;
         converted.set(m, out);
         return out;
       });
       if (o.material.length === 1) o.material = o.material[0];
     });
-    if (isImport) { modelBudget(result.scene, { resizeTextures: false }); return lodName ? result.scene : normaliseModel(mergeByMaterial(result.scene)); }
-    return result.scene;
-  }, model => renderOnly(!editor && !lodName && tier === 'low' && isImport && asset?.triangles > 300000
-    ? heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind) : shared ? model.clone(true) : copyModel(model)), onLate, onFailure);
+    let model = result.scene, fullOffset = null, fullSize = null;
+    if (!source && /^lod[012]\.glb$/.test(name) && revision >= 1) {
+      let anchor;
+      model.traverse(o => { if (o.userData.modelLevelAnchor) anchor = o.userData.modelLevelAnchor; });
+      if (anchor && (JSON.stringify(anchor.original) === JSON.stringify([asset.model,100,0])
+          || (secondary && JSON.stringify(anchor.full) === JSON.stringify(fullIdentity)))) {
+        const box = new THREE.Box3(new THREE.Vector3(...anchor.min), new THREE.Vector3(...anchor.max));
+        fullSize = box.getSize(new THREE.Vector3()).toArray();
+        const centre = box.getCenter(new THREE.Vector3()); centre.y = box.min.y;
+        centre.multiplyScalar(fixScale(asset.fix, fullSize)).applyAxisAngle(new THREE.Vector3(0,1,0), fixTurnRadians(asset.fix));
+        fullOffset = centre.toArray();
+      } else if (secondary) {
+        // Early stamped files lack anchor extras. Resolve their full level once;
+        // ordinary generated files take the metadata-only path above.
+        const origin = await loadModel(assetId, kit, undefined, { editor:true, shared:true });
+        fullOffset = origin?.userData.modelOffset;
+        fullSize = origin?.userData.modelSize;
+      }
+    }
+    const authoredSize = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray();
+    if (!source && asset?.fix) {
+      model.scale.multiplyScalar(fixScale(asset.fix, fullSize || authoredSize)); model.rotation.y += fixTurnRadians(asset.fix);
+    }
+    if (isImport) {
+      modelBudget(model, { resizeTextures: false });
+      if (!source && (!lodName || revision >= 1 || asset?.fix)) {
+        model = mergeByMaterial(model);
+        const box = new THREE.Box3().setFromObject(model), centre = box.getCenter(new THREE.Vector3());
+        const offset = fullOffset || [centre.x, box.min.y, centre.z];
+        if (fullOffset) {
+          model.position.sub(new THREE.Vector3(...offset));
+          const wrapper = new THREE.Group(); wrapper.add(model); model = wrapper;
+        } else model = normaliseModel(model);
+        model.userData.modelOffset = offset;
+      }
+    } else if (!source && asset?.fix) model = normaliseModel(model);
+    model.userData.modelParts = parts;
+    model.userData.modelSize = fullSize || authoredSize;
+    model.updateMatrixWorld(true);
+    model.traverse(o => { if (o.isMesh && !Array.isArray(o.material)) {
+      o.userData.partKey = o.material.userData.partKey;
+      o.geometry.userData.bakeExcluded = true;
+      // Project in the fixed model's metre coordinates, before a placement
+      // converts to feet or stretches an opening. Built-ins retain hierarchy.
+      partOriginals.set(o.geometry, { geometry:o.geometry, material: o.material, uv: o.geometry.attributes.uv,
+        matrix: isImport && !source ? null : o.matrixWorld.clone() });
+    } });
+    return model;
+  }, model => {
+    if (!source && !editor && !lodName && isImport && tier === 'low' && fullTriangles > 300000) {
+      return renderOnly(heavyStandIn(new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).toArray(), kind || asset.kind));
+    }
+    const copy = source ? model : shared ? model.clone(true) : copyModel(model);
+    copy.userData.modelTier = tier;
+    copy.userData.modelMaterialKey = [assetId, name, revision];
+    if (!source) applyPartMaterials(copy, { ...asset, parts: asset?.parts?.length ? asset.parts : model.userData.modelParts }, {}, kit);
+    return renderOnly(copy);
+  }, onLate, onFailure);
+}
+
+export function applyPartMaterials(root, record = root?.userData.modelRecord || {}, copyMaterials = {}, kit = {}) {
+  if (!root || root.userData.heavyStandIn) return;
+  const known = manifest(kit), parts = record.parts?.length ? record.parts : root.userData.modelParts || [];
+  const byKey = new Map(parts.map(p => [p.key, p]));
+  const warn = key => {
+    const id = `${record.id || 'model'}:${key}`;
+    if (!partWarnings.has(id)) { partWarnings.add(id); console.warn(`Model ${record.id || ''}: original material kept for part ${key}; override target is unavailable.`); }
+  };
+  for (const key of new Set([...Object.keys(record.materials || {}), ...Object.keys(copyMaterials)])) if (!byKey.has(key)) warn(key);
+  root.traverse(mesh => {
+    if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+    const key = mesh.userData.partKey || mesh.material.userData.partKey;
+    if (!key) return;
+    mesh.userData.partKey = key;
+    let original = partOriginals.get(mesh.geometry);
+    if (!original) { original = { geometry:mesh.geometry, material: mesh.material, uv: mesh.geometry.attributes.uv }; partOriginals.set(mesh.geometry, original); }
+    Object.defineProperty(mesh.userData, 'uvOriginal', { configurable:true, enumerable:false,
+      get:() => original.uv ? attributeValues(original.uv) : null });
+    const part = byKey.get(key);
+    let resolved = part && resolvePart(part, record.materials || {}, copyMaterials);
+    if (!part) { if (record.materials?.[key] || copyMaterials[key]) warn(key); resolved = null; }
+    if (resolved?.material && ((!Object.hasOwn(BUILTIN_LOOKS, resolved.material) && !known[resolved.material]) || known[resolved.material]?.archived)) { warn(key); resolved = null; }
+    // No override leaves today's tint/lamp material and attributes untouched.
+    if (!resolved?.material) {
+      if (sharedPartMaterials.has(mesh.material) || resolved?.source === 'copy') mesh.material = original.material;
+      if (partUvGeometries.has(mesh.geometry)) {
+        mesh.geometry = original.geometry;
+      }
+      return;
+    }
+    let material;
+    if (kit.modelMaterial) material = kit.modelMaterial(resolved.material);
+    else {
+      if (!partMaterialCaches.has(kit)) partMaterialCaches.set(kit, new Map());
+      const cache = partMaterialCaches.get(kit), tier = root.userData.modelTier || 'high';
+      const roleMaterial = role => {
+        const key = materialKey(kit.materials?.[role] || {}, role, tier, known);
+        if (!cache.has(key)) cache.set(key, kitMaterial(role, kit, tier)); return cache.get(key);
+      };
+      material = modelMaterialKit(kit, tier, cache, roleMaterial).modelMaterial(resolved.material);
+      standalonePartMaterials.add(material);
+    }
+    sharedPartMaterials.add(material); mesh.material = material;
+    const useModelUv = original.uv && part.has_uv && resolved.texture === 'model';
+    const mode = useModelUv ? JSON.stringify([resolved.tiles, material.userData.tileFt || [4, 4]]) : 'real';
+    if (partUvModes.get(mesh.geometry) === mode) return;
+    // Share unchanged buffers, and one UV variant across every matching copy.
+    // Object3D.clone cannot JSON-copy the authored UVs: the getter is hidden.
+    if (!partUvVariants.has(original.geometry)) partUvVariants.set(original.geometry, new Map());
+    const variants = partUvVariants.get(original.geometry);
+    if (variants.has(mode)) { mesh.geometry = variants.get(mode); return; }
+    const geometry = new THREE.BufferGeometry(), authored = original.geometry;
+    geometry.attributes = { ...authored.attributes }; geometry.index = authored.index;
+    geometry.morphAttributes = authored.morphAttributes; geometry.morphTargetsRelative = authored.morphTargetsRelative;
+    geometry.groups = authored.groups.map(g => ({...g})); geometry.drawRange = {...authored.drawRange};
+    geometry.boundingBox = authored.boundingBox?.clone() || null; geometry.boundingSphere = authored.boundingSphere?.clone() || null;
+    geometry.userData = {...authored.userData, modelPartOverride:true}; mesh.geometry = geometry;
+    partOriginals.set(geometry, original); variants.set(mode, geometry);
+    partUvGeometries.add(mesh.geometry);
+    partUvModes.set(mesh.geometry, mode);
+    let uv;
+    if (useModelUv) uv = modelUv(attributeValues(original.uv), resolved.tiles, material.userData.tileFt || [4, 4]);
+    else {
+      if (!original.boxUv) {
+        const projected = authored.clone();
+        if (!projected.attributes.normal) projected.computeVertexNormals();
+        if (original.matrix) projected.applyMatrix4(original.matrix);
+        original.boxUv = boxUvFeet(attributeValues(projected.attributes.position), attributeValues(projected.attributes.normal), 1);
+        projected.dispose();
+      }
+      uv = original.boxUv;
+    }
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  });
+}
+
+// Bind model overrides to the receiving scene's existing wall/slot cache.
+export function modelMaterialKit(kit, tier, cache, roleMaterial) {
+  return { ...kit, modelMaterial: id => {
+    const existing = [...cache.values()].find(m => {
+      if ((m?.userData?.materialId || m?.userData?.bakeMaterialId) !== id || m.userData.reflection) return false;
+      return Object.hasOwn(BUILTIN_LOOKS, id)
+        ? cache.get(JSON.stringify(['builtin-look', id, m.name, null])) === m
+        : m.userData.materialKey === materialKey({id}, m.name, tier, manifest(kit));
+    });
+    if (existing) return existing;
+    const role = Object.keys(kit.materials || {}).find(r => (kit.materials[r].id || kit.materials[r].asset) === id && !kit.materials[r].color) || 'material';
+    const clean = { ...kit, materials:{...kit.materials, [role]:{id}} };
+    return materialSlot({ id }, role, clean, tier, cache, r => {
+      const candidate = roleMaterial(r), key = materialKey({id}, r, tier, manifest(kit));
+      if (candidate?.userData.materialKey === key) return candidate;
+      if (!cache.has(key)) cache.set(key, kitMaterial(r, clean, tier)); return cache.get(key);
+    });
+  } };
 }
 
 export async function loadSky(kit, onLate) {
@@ -637,11 +903,14 @@ export async function loadSky(kit, onLate) {
 // Geometry rebuilds of the same asset keep its compiled material instances.
 // The caller owns this cache and releases it with the rest of its view.
 export function cacheModelMaterials(root, key, cache) {
-  const seen = new Map(), retired = new Set();
+  const seen = new Map(), retired = new Set(), partCounts = new Map();
   root.traverse(o => {
     const reuse = m => {
+      if (sharedPartMaterials.has(m)) return m;
       if (!seen.has(m)) {
-        const id = `model:${key}:${seen.size}`, cached = cache.get(id);
+        const part = m.userData.partKey, n = partCounts.get(part) || 0;
+        if (part) partCounts.set(part, n + 1);
+        const id = `model:${key}:${part ? JSON.stringify([part,n]) : seen.size}`, cached = cache.get(id);
         if (cached && cached !== m) retired.add(m);
         const material = cached || m; cache.set(id, material); seen.set(m, material);
       }
@@ -665,7 +934,7 @@ export function disposeObject(root, { keepMaterials = new Set() } = {}) {
     if (o.isInstancedMesh) o.dispose();
     if (o.geometry) geometries.add(o.geometry);
     for (const m of o.material ? [].concat(o.material) : []) {
-      if (keepMaterials.has(m)) continue;
+      if (keepMaterials.has(m) || standalonePartMaterials.has(m)) continue;
       materials.add(m);
       // An environment map belongs to the view (the sky, a reflection probe), never to the surface.
       for (const [key, value] of Object.entries(m)) if (value?.isTexture && key !== 'envMap') textures.add(value);

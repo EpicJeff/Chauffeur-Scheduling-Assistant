@@ -132,6 +132,11 @@ export async function simplifyGeometry(source, ratio, signal, session) {
 }
 
 export async function makeLod(source, level, signal) {
+  return generateLevel(source, LOD_RATIOS[level - 1] * 100, signal, LOD_TEXTURE_SIZES[level - 1]);
+}
+
+// Full detail may also be simplified. It retains the original texture size.
+export async function generateLevel(source, percent, signal, textureSize = Infinity) {
   cancelled(signal);
   const session = workerSession(signal);
   const root = source.clone(true), materials = new Map(), textures = new Map(), meshes = [];
@@ -139,7 +144,7 @@ export async function makeLod(source, level, signal) {
   const textureCopy = async texture => {
     if (!textures.has(texture)) {
       await frame(signal);
-      const copy = texture.clone(), image = texture.image, max = LOD_TEXTURE_SIZES[level - 1];
+      const copy = texture.clone(), image = texture.image, max = textureSize;
       if (image && Math.max(image.width, image.height) > max) {
         const canvas = document.createElement('canvas'), ratio = max / Math.max(image.width, image.height);
         canvas.width = Math.max(1, Math.round(image.width * ratio)); canvas.height = Math.max(1, Math.round(image.height * ratio));
@@ -155,7 +160,7 @@ export async function makeLod(source, level, signal) {
     for (const mesh of meshes) {
       await idle(signal);
       if (mesh.isSkinnedMesh || mesh.isInstancedMesh) throw new Error('Animated models keep their original version.');
-      mesh.geometry = await simplifyGeometry(mesh.geometry, LOD_RATIOS[level - 1], signal, session);
+      mesh.geometry = percent === 100 ? mesh.geometry.clone() : await simplifyGeometry(mesh.geometry, percent / 100, signal, session);
       const copy = async material => {
         if (!materials.has(material)) {
           const out = material.clone();

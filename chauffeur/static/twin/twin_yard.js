@@ -61,7 +61,7 @@ export function presetTree(preset, seed) {
   return tree;
 }
 import { FT, addMesh, boxGeometry, boxRect, polygon, mergeStatic, allPorches } from './twin_generator.js';
-import { kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, copyMaterialParams } from './twin_library.js';
+import { applyPartMaterials, modelMaterialKit, modelMaterialInputs, kitMaterial, materialSlot, materialKey, loadModel, disposeObject, cacheModelMaterials, manifest, modelAssetKey, offsetSurfaceUvs, offsetSurfaceUvParts, copyMaterialParams } from './twin_library.js';
 import { resolveSurfaceMaterial } from './surface_material.js';
 import { withoutSurfaceMaterials } from './bake/geometry_key.js';
 import { bakeAuthoredMaterial, captureBakeMaterials, registerBakeSource } from './bake/source.js';
@@ -254,7 +254,7 @@ function yardMaterialInputs(plan, kit) {
 export const yardMaterialKey = (plan, kit, tier) => JSON.stringify([tier, yardMaterialInputs(plan, kit)]);
 
 const fields = (value, names) => names.split(' ').map(k => value?.[k]);
-const objectFields = 'id kind asset at elevation visible_in scale scale_axes pitch rotation roll tint casts_shadow object_kind emissive emissive_color light_entity preset height seed';
+const objectFields = 'id kind asset at elevation visible_in scale scale_axes pitch rotation roll tint casts_shadow object_kind emissive emissive_color light_entity preset height seed model_materials';
 function yardSiteInputs(site) {
   return [site.lot, (site.terraces || []).map(p => [p.id, p.polygon, p.height, p.blend,
     (p.edges || []).map(e => [e.edge, e.wall && fields(e.wall, 'material thickness_in above_in materials cap rail'),
@@ -320,6 +320,8 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
     (b.rooms || []).filter(r => r.kind === 'porch').map(r => [r.level, r.state, canonicalOutline(r.polygon), r.floor_offset_ft])]);
   const models = [...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))]
     .map(f => (f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, ''));
+  const modelFinishes = [...(site.furniture || []), ...(site.planting || []).filter(p => p.asset?.startsWith('import-'))]
+    .flatMap(f => modelMaterialInputs((f.asset || kit.furniture?.[f.kind] || '').replace(/^polyhaven:/, ''), f.model_materials, kit));
   return {
     // terrain: tier, lot; ordered grade; sharp-edge wall/stair presence (suppresses
     // earth skirts); pool polygon and spa polygons only; resolved lawn finish.
@@ -355,7 +357,7 @@ export function yardPartKeys(plan, kit, tier, { viewing = false, stage = default
     // polygon/level/floor (including alias dedup), porch room level/state/polygon/
     // floor_offset_ft. These place models on porches, never shape lawn.
     furniture: key(tier, viewing, grade, own[9], (site.planting || []).filter(p => p.asset?.startsWith('import-')).map(p => fields(p, objectFields)),
-      buildings, models.map(id => [id, modelAssetKey(id, kit)])),
+      buildings, models.map(id => [id, modelAssetKey(id, kit)]), ...(modelFinishes.length ? [modelFinishes] : [])),
     // Field positions depend only on lot/grade/cover geometry and lawn identity.
     // Preserve the existing fringe's inputs, independently of the lawn finish.
     grass: TIERS[tier].lawnBlades ? key(tier, grade, site.lot, grassCovers(plan, canonicalOutline), finishes(['lot']),
@@ -391,6 +393,7 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
     if(sourceRole==='lawn'&&grassLawn(materialKit))mats.get(key).userData.seasonLawn=true;
     return mats.get(key);
   };
+  const modelKit = modelMaterialKit(materialKit, tier, mats, mat);
   // A random-offset material shifts each surface's base uv by its piece id (server
   // plans give every site piece one); a surface without an id is drawn as made.
   const uvParts = [];
@@ -809,7 +812,9 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
         const place = (model, late = false) => {
           if (root.userData.disposed) { disposeObject(model); return; }
           applyObject(model, f, { id: `site:${f.id || f.at.join(',')}` });
-          cacheModelMaterials(model, 'yard:' + assetId + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
+          applyPartMaterials(model, model.userData.modelRecord, f.model_materials || {}, modelKit);
+          cacheModelMaterials(model, 'yard:' + assetId + ':' + JSON.stringify([model.userData.modelMaterialKey, f.model_materials || {}])
+            + ':' + objectMaterialKey(f, `site:${f.id || f.at.join(',')}`), mats);
           let elevation = groundAt(plan, ...f.at);
           for (const b of plan.buildings || []) for (const porch of allPorches(b)) if (porch.polygon) {
             const pos = b.position || [0, 0], angle = -(b.rotation || 0) * Math.PI / 180;
@@ -822,13 +827,15 @@ export async function buildYard(plan, kit, tier, { viewing = false, materials = 
             }
           }
           model.position.set(f.at[0], elevation + (f.elevation || 0), -f.at[1]);
-          model.traverse(object => Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture', visibilityKind: f.object_kind === 'lamp' ? 'fixture' : undefined}));
+          model.traverse(object => {
+            Object.assign(object.userData, {pieceId:f.id, kind:(site.planting || []).includes(f) ? 'planting' : 'furniture', visibilityKind: f.object_kind === 'lamp' ? 'fixture' : undefined});
+          });
           if (late) { model.userData.yardPart = 'furniture'; root.add(model); mergeStatic(model); writeWeatherOpen(model, skyCover, root.parent ? 1 : FT); }
           return model;
         };
         if (!models.has(assetId)) {
           latePlacements.set(assetId, []);
-          models.set(assetId, loadModel(assetId, kit, source => {
+          models.set(assetId, loadModel(assetId, modelKit, source => {
             if (root.userData.disposed) { disposeObject(source); return; }
             for (const draw of latePlacements.get(assetId)) draw(source.clone(true), true);
           }, { tier: modelTier, editor: !viewing }));

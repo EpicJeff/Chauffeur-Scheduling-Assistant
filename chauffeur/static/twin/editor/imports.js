@@ -1,55 +1,10 @@
 import * as THREE from 'three';
-import { importedModels, rememberImport, forgetImport, loadModel, disposeObject } from '../twin_library.js';
+import { importedModels, modelRecord, rememberImport, forgetImport, loadModel, disposeObject } from '../twin_library.js';
 import { modelBudget, suggestKind, schema } from '../objects.js';
 import { request, report } from './api.js';
-import { makeLod, idle, frame } from '../model_lods.js';
-import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-
-// Files form one byte stream; chunk boundaries need not match file boundaries.
-export async function uploadFiles(files, progress, signal, send = request, derived = {}) {
-  const start = await send('imports/uploads', 'POST', {
-    name: files[0].name.replace(/\.[^.]+$/, '').slice(0, 100),
-    size: files.reduce((n, f) => n + f.size, 0),
-    files: files.map(f => ({ name: f.webkitRelativePath || f.name, size: f.size })),
-    ...derived,
-  });
-  const path = 'imports/uploads/' + start.upload_id, body = new Blob(files);
-  let bytes = Math.min(start.chunk_bytes, 4 * 1024 * 1024), offset = 0, index = 0, finished = false;
-  try {
-    progress(`Uploading 0 of ${Math.ceil(body.size / 1048576)} MB…`);
-    while (offset < body.size) {
-      if (signal?.aborted) throw Object.assign(new Error('Model upload cancelled.'), { cancelled: true });
-      const chunk = body.slice(offset, offset + bytes);
-      try { await send(`${path}/${index}`, 'PUT', chunk); }
-      catch (error) {
-        if (error.status !== 413) throw error;
-        if (bytes <= 256 * 1024) throw new Error('Home Assistant refused even a 256 KB model chunk. Check its ingress upload limit and try again.');
-        bytes = Math.max(256 * 1024, Math.floor(bytes / 2)); continue;
-      }
-      offset += chunk.size; ++index;
-      progress(`Uploading ${Math.ceil(offset / 1048576)} of ${Math.ceil(body.size / 1048576)} MB…`);
-    }
-    if (signal?.aborted) throw Object.assign(new Error('Model upload cancelled.'), { cancelled: true });
-    progress('Preparing model…');
-    const entry = await send(path + '/finish', 'POST'); finished = true; return entry;
-  } finally {
-    if (!finished) await send(path, 'DELETE').catch(() => {});
-  }
-}
-
-function thumbnail(model) {
-  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
-  renderer.setSize(160, 128, false); renderer.setPixelRatio(1);
-  const scene = new THREE.Scene(), box = new THREE.Box3().setFromObject(model);
-  const centre = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
-  const distance = Math.max(size.x, size.y, size.z) * 2.5;
-  const camera = new THREE.PerspectiveCamera(36, 160 / 128, .001, Math.max(100, distance * 10));
-  camera.position.copy(centre).add(new THREE.Vector3(distance, distance * .6, distance)); camera.lookAt(centre);
-  const sun = new THREE.DirectionalLight('#ffffff', 3); sun.position.set(3, 5, 4);
-  scene.add(model, sun, new THREE.HemisphereLight('#ffffff', '#687078', 2));
-  try { renderer.render(scene, camera); return renderer.domElement.toDataURL('image/png'); }
-  finally { model.removeFromParent(); renderer.dispose(); renderer.forceContextLoss(); }
-}
+import { idle, frame } from '../model_lods.js';
+import { uploadFiles, thumbnail, generateVersions, pendingLevels } from '../model_levels.js';
+export { uploadFiles, generateVersions } from '../model_levels.js';
 
 // This uses the piece card's native labels and controls. No browser dialogs.
 function details(entry, suggested, picture, signal, versions, updates) {
@@ -121,7 +76,7 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
           // Keep the dialog's paint opportunity, independently of accepting it.
           await frame(jobSignal); await frame(jobSignal);
           if (!canEdit()) continue;
-          job.source ||= await loadModel(job.entry.id, kit, undefined, { editor: true });
+          job.source ||= await loadModel(job.entry.id, kit, undefined, { editor: true, source: true });
           if (job.source && !jobSignal.aborted) rows = await generateVersions(job.entry, job.source, jobSignal,
             text => { job.update(text); showStatus(); }, async entry => {
               job.entry = entry;
@@ -152,9 +107,10 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
   // Old imports join the very same queue as new picks; only one job runs.
   (async () => {
     await idle(signal);
-    for (const entry of await importedModels()) {
+    for (const raw of await importedModels()) {
       if (!canEdit() || signal.aborted) break;
-      if (entry.archived || entry.lods?.length === 2) continue;
+      const entry = await modelRecord(raw.id);
+      if (entry.archived || !pendingLevels(entry).length) continue;
       if (!jobs.has(entry.id) && !cancelled.has(entry.id)) enqueue(entry);
     }
   })().catch(() => {});
@@ -173,7 +129,7 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
       if (files.reduce((n, file) => n + file.size, 0) > settings.limit_mb * 1024 * 1024) throw new Error(`Models may be at most ${settings.limit_mb} MB.`);
       status.textContent = 'Loading model…';
       entry = await uploadFiles(files, text => { status.textContent = text; }, signal); rememberImport(entry);
-      model = await loadModel(entry.id, kit, undefined, { editor: true });
+      model = await loadModel(entry.id, kit, undefined, { editor: true, source: true });
       if (!model) throw new Error('Could not load this model. Check that its buffers and textures are included.');
       const budget = modelBudget(model, { resizeTextures: false }), size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
       const picture = thumbnail(model);
@@ -210,34 +166,4 @@ export function mountImports({ canvas, kit, canEdit, signal, changed }) {
     catch (error) { report(error); }
   });
   return { cancel, status: backgroundStatus };
-}
-
-export async function generateVersions(entry, source, signal, progress = () => {}, changed = () => {}) {
-  const rows = [];
-  for (const level of [1, 2]) {
-    let model;
-    try {
-      if (signal.aborted) break;
-      progress(`Making lighter versions… ${level} of 2`);
-      await frame(signal);
-      model = await makeLod(source, level, signal);
-      await frame(signal);
-      const triangles = modelBudget(model, { resizeTextures: false }).triangles, picture = thumbnail(model);
-      await frame(signal);
-      const buffer = await new GLTFExporter().parseAsync(model, { binary: true, onlyVisible: true });
-      if (signal.aborted) break;
-      const name = `lod${level}.glb`;
-      if (buffer.byteLength > 50 * 1024 * 1024) throw new Error('Each lighter version may be at most 50 MB.');
-      const updated = await uploadFiles([new File([buffer], name)], () => {}, signal, request, { asset_id: entry.id, lod: name });
-      if (signal.aborted) break;
-      rememberImport(updated); await changed(updated);
-      rows.push({ name: `LOD${level}`, picture, triangles });
-    } catch (error) {
-      // Optional derived files never prevent accepting the original.
-      if (error.lodSkipped) { rows.note = error.message; progress(error.message); break; }
-    }
-    finally { if (model) disposeObject(model); }
-    if (signal.aborted) break;
-  }
-  return rows;
 }
