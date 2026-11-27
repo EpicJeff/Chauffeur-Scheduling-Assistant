@@ -1,6 +1,38 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1009 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1010 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1010 (2026-11-26, NOT device-verified): the Library page has a Models tab.**
+
+Models mode Task 5. The Library page (`house/library`) now has a `Materials | Models` tab strip. `?model=<id>` opens the Models tab on that model, which is how the editor's "Edit in Library" link for models will land (Task 6). The Materials tab is unchanged, including `importGltf` on a material-file drop.
+
+- **Layout** (`static/twin/library_page/models.js`, `mountModels`), in three columns:
+  - Left: the model grid, with search, All / Built-in / Mine and a kind filter, Import model, and a model-file drop. Below the grid sits a searchable Materials palette, for dragging onto parts and for Use selected.
+  - Centre: the preview, with Full / Mid / Far (each showing its triangle count and bytes) and a Wireframe toggle.
+  - Right: Undo, Redo, Reset and Delete; Name and Kind; Size (feet and inches, height or width) and quarter turns; Detail levels (three percentages); Parts.
+- **Import** uses the editor's path (`uploadFiles`, then `rememberImport`, then `buildLevels`). An older import with no `parts_version` regenerates once on selection and shows its progress.
+- **Parts:** each part has a `createSlotRow` row with Real size / Model's own (disabled with no uv), Tiles (shown only with Model's own), Use selected and Clear. A material dropped on a part in the preview applies to it. Dragging over a part shows a tinted outline (`preview.js` `partAt`, `highlightPart`).
+- **Writes:**
+  - Every write carries the record's `revision`. A 409 reloads the record and alerts once.
+  - Writes queue, and each one builds its change from the latest acknowledged record, so two quick part edits both stick.
+  - A reply that arrives after the selection changed updates its grid row only.
+  - Tab switches carry a generation, so only the latest requested tab mounts.
+- **Detail levels:** a percentage edit cancels the stale build, so only the latest percentage's upload attaches. The preview drops back to a valid level at once.
+- **Thumbnails:** after a parts or fix change, an import's thumbnail is re-rendered and sent through `PATCH /api/house/editor/imports/{id}`. Built-ins are rendered locally and never saved.
+- **Overrides that miss:** a household material absent from the active catalogue (archived) counts as unavailable in the Models kit, so its part renders the original and the console warns once. The server manifest is unchanged.
+- **Ownership:**
+  - The preview tracks what it owns and frees it on swap, on delete and at teardown.
+  - Material caches are leased: a material refresh retires the old cache, and the cache is drained only when no load and no displayed object still uses it.
+  - Shared-cache materials and cached sibling geometry are never disposed.
+- **Shared thumbnails** (`static/twin/model_thumbnails.js`): one detached renderer, with the editor's lights and tone mapping, fits the projected bounds to the tile with about 14% padding. The editor's Library dock now uses it too, so dock thumbnails fill their tiles, and Bush 1 and Bush 2 no longer clip at the old fixed far plane. The interactive preview keeps its own framing and 6 ft scale figure.
+- **Page:** `templates/house_library.html` gains `window.chfLodWorker` and the versioned `GLTFExporter` and three.js import-map entries, matching the editor.
+
+**Cost:** the Library page holds at most three WebGL contexts (Materials preview, Models preview, detached thumbnails), all freed at teardown. The page adds no new programs to the twin views.
+
+**Tests:**
+- `test_twin_library_models_js.py` has 22 runtime scenarios, including the plan's ten, the review regressions (stale level, archived fallback, ownership and the cache-lease races, quick edits, late replies, tab race, thumbnails and framing) and a real raycast drag and drop.
+- `test_house_library_page.py` checks `chfLodWorker`.
+- Known failures on main, not this release: `test_library_live.py`, `test_twin_library_assign_live.py` (`scenario_use_selected_assigns_a_wall_face`), and the floor-drop scenario of `test_twin_editor_library_js.py`.
 
 **v2.499.1009 (2026-11-26, NOT device-verified): models load with their fix, their part materials and levels at chosen percents.**
 
