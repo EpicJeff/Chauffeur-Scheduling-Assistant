@@ -143,7 +143,7 @@
                             <div class="space-y-1.5">
                                 <template x-for="r in g.rows" :key="rowKey(r)">
                                     <!-- The Logbook stays folded; the row just ticked stays in view until the next visit. -->
-                                    <div :data-row="r.kind + ':' + r.id" :data-row-group="r.group" :data-moment="JSON.stringify(r.moment)"
+                                    <div :data-row="r.kind + ':' + (r.id || (r.sheet && r.sheet.id) || '')" :data-row-group="r.group" :data-moment="JSON.stringify(r.moment || {})"
                                          x-show="g.key !== 'logbook' || logOpen || justDone === rowKey(r)"
                                          class="bg-gray-950/60 border border-gray-800 rounded-lg px-2.5 py-1.5 flex items-start gap-2.5"
                                          :class="r.group === 'later' ? 'opacity-60' : (r.box === 'asking' ? 'border-amber-500/50' : '')">
@@ -466,7 +466,7 @@ function projectsPage(host = 'admin') {
             return [this.memberName(p.owner_member_id), p.body_goal ? 'Only you' : p.audience_label, p.done_when,
                     p.target_date ? 'target ' + p.target_date : ''].filter(Boolean).join(' · ');
         },
-        rowKey(r) { return r.kind + ':' + r.id + ':' + (r.moment.window_date || '') + ':' + (r.moment.slot_rank || 0); },
+        rowKey(r) { const m = r.moment || {}; return r.kind + ':' + (r.id || (r.sheet && r.sheet.id) || '') + ':' + (m.window_date || '') + ':' + (m.slot_rank || 0); },
         groups(p) {
             const all = this.shownRows(p);
             const defs = [['now', 'Now', 'text-amber-400'], ['next', 'Next', 'text-teal-300'], ['later', 'Later', 'text-gray-500'], ['linked', 'Linked', 'text-gray-500'], ['logbook', 'Logbook', 'text-gray-600']];
@@ -480,7 +480,7 @@ function projectsPage(host = 'admin') {
             const day = d.toDateString() === today.toDateString() ? 'today' : d.toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'});
             return r.when.time ? day + ' ' + (window.formatClock ? window.formatClock(r.when.time) : r.when.time) : day;
         },
-        glyph(r) { return {trip: '✈', occasion: '🎉', list: '☰'}[r.glyph] || '›'; },
+        glyph(r) { return {trip: '✈', occasion: '🎉', list: '☰', board: '▤'}[r.glyph || r.kind] || '›'; },
         // The row's record, for hosts and tests that open a piece by key; a
         // run with several windows answers on its first row only.
         pieceKey(p, r) {
@@ -538,6 +538,12 @@ function projectsPage(host = 'admin') {
             } finally { this.busy = false; }
         },
         openRow(p, r) {
+            if (r.kind === 'board' && r.sheet) {
+                window.dispatchEvent(new CustomEvent('chf-board-open', {
+                    detail: { projectId: r.sheet.project_id || p.id, boardId: r.sheet.id },
+                }));
+                return;
+            }
             if (r.kind === 'step') { const step = (p.steps || []).find(s => s.id === r.id); if (step) this.stepSheet = {project: p, step, row: r}; return; }
             if (r.kind === 'link') {
                 const card = (this.pieces[p.id] || []).find(c => c.id === r.id && !['thread', 'mission', 'program'].includes(c.kind));

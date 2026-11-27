@@ -156,6 +156,7 @@
          wall board and the Programs page open. Included once here, at the
          page, same grouping as the overlays just above. -->
     {% include 'components/lesson_player.html' %}
+    {% include 'components/board_sheet.html' %}
 
     <!-- Header -->
     <header
@@ -5771,6 +5772,7 @@
         function renderCard(card) {
             if (!card) return '';
             if (card.kind === 'ask') return renderAskCard(card);
+            if (card.kind === 'board') return renderBoardCard(card);
             if (card.kind === 'mission_ask') return renderMissionAskCard(card);
             if (card.kind === 'mission_done') return renderMissionDoneCard(card);
             if (card.kind === 'program_course') return window.Situations.programCourseHtml(card, selectedMemberId);
@@ -5819,15 +5821,64 @@
         // Include the mission in the key: question and handoff options share "answer".
         const missionAskOptions = new Map();
 
+        function boardCardEscape(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function renderBoardCard(card) {
+            const pid = boardCardEscape(card.project_id || '');
+            const bid = boardCardEscape(card.board_id || '');
+            const prefix = typeof apiBase === 'string' ? apiBase : '';
+            const heroRe = /^api\/projects\/[0-9a-f]+\/boards\/[0-9a-f]+\/image\/lk_[0-9a-f]{10}$/;
+            const heroPaths = (Array.isArray(card.hero) ? card.hero : [])
+                .filter(p => typeof p === 'string' && heroRe.test(p.trim()))
+                .slice(0, 4);
+            let heroHtml = '';
+            if (heroPaths.length) {
+                const cols = heroPaths.length === 1 ? 'grid-cols-1'
+                    : heroPaths.length === 2 ? 'grid-cols-2'
+                    : heroPaths.length === 3 ? 'grid-cols-3' : 'grid-cols-4';
+                heroHtml = `<div class="grid ${cols} gap-1.5 mb-2">` + heroPaths.map(p => {
+                    const raw = prefix + p.trim();
+                    const src = (typeof window !== 'undefined' && typeof window.chfAuthUrl === 'function')
+                        ? window.chfAuthUrl(raw) : raw;
+                    return `<div class="h-20 rounded-lg overflow-hidden bg-gray-800"><img src="${boardCardEscape(src)}" alt="" loading="lazy" decoding="async" data-board-img="card" class="w-full h-full object-cover"></div>`;
+                }).join('') + `</div>`;
+            }
+            const kept = Number(card.kept) > 0 ? ` · ${Math.floor(Number(card.kept))} kept` : '';
+            const meta = (card.summary_line || '') + kept;
+            const note = card.note ? `<div class="text-xs text-gray-400 mt-1">${boardCardEscape(card.note)}</div>` : '';
+            return `<div class="mt-1 px-3 py-2.5 rounded-xl bg-gray-900 border border-gray-700" data-board-card="${bid}">
+                ${heroHtml}
+                <div class="text-sm text-gray-100 font-semibold">${boardCardEscape(card.title || 'Board')}</div>
+                ${meta ? `<div class="text-xs text-gray-400 mt-0.5">${boardCardEscape(meta)}</div>` : ''}
+                ${note}
+                <div class="mt-2"><button type="button" data-board-open data-project-id="${pid}" data-board-id="${bid}" class="px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white">Open</button></div>
+            </div>`;
+        }
+
         function renderMissionDoneCard(card) {
             const canShare = ['parent', 'adult'].includes(myRole());
             const drafts = (card.drafts || []).map(d => `<div class="mt-2" data-mission-draft>
                 <div class="text-xs text-gray-200">To ${mfEscape(d.to)}: <span data-draft-words class="whitespace-pre-wrap">${mfEscape(d.words)}</span></div>
                 ${canShare ? '<div class="flex gap-2 mt-1"><button data-copy class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Copy</button><button data-share class="px-3 py-1 rounded-lg text-xs font-semibold bg-gray-700 text-gray-200">Share</button></div>' : ''}
             </div>`).join('');
+            const boards = (Array.isArray(card.boards) ? card.boards : []).filter(b => b && b.board_id).map(b => {
+                const bpid = boardCardEscape(b.project_id || '');
+                const bbid = boardCardEscape(b.board_id || '');
+                return `<div class="mt-2 flex items-center justify-between gap-2 pt-2 border-t border-gray-800" data-mission-done-board>
+                    <span class="text-xs text-gray-200 font-semibold min-w-0 truncate">${boardCardEscape(b.title || 'Board')}</span>
+                    <button type="button" data-board-open data-project-id="${bpid}" data-board-id="${bbid}" class="shrink-0 px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white">Open</button>
+                </div>`;
+            }).join('');
             const open = (card.open || []).map(line => `<li>${mfEscape(line)}</li>`).join('');
             return `<div class="mt-1 px-3 py-2 rounded-xl bg-gray-900 border border-gray-700">
-                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.summary || '')}</div>${drafts}
+                <div class="text-xs text-gray-200 font-medium">${mfEscape(card.summary || '')}</div>${boards}${drafts}
                 ${open ? `<div class="text-xs text-gray-400 mt-2">Still open<ul>${open}</ul></div>` : ''}</div>`;
         }
 
@@ -6018,6 +6069,16 @@
             if (!ev.target.matches('[data-you-decide]')) return;
             const input = ev.target.closest('[data-plan-question]').querySelector('[data-q]');
             if (input) input.disabled = ev.target.checked;
+        });
+
+        document.addEventListener('click', (ev) => {
+            const btn = ev.target && ev.target.closest ? ev.target.closest('[data-board-open]') : null;
+            if (!btn) return;
+            const projectId = btn.getAttribute('data-project-id');
+            const boardId = btn.getAttribute('data-board-id');
+            if (projectId && boardId) {
+                window.dispatchEvent(new CustomEvent('chf-board-open', { detail: { projectId, boardId } }));
+            }
         });
 
         document.addEventListener('click', async (ev) => {
@@ -11012,10 +11073,22 @@
             }
         }
 
+        function maybeOpenBoardHash(fromHashChange) {
+            if (typeof window.parseBoardHash !== 'function') return;
+            const parsed = window.parseBoardHash(window.location.hash);
+            if (parsed) {
+                window.dispatchEvent(new CustomEvent('chf-board-open', {
+                    detail: Object.assign({}, parsed, { fromHashChange: !!fromHashChange }),
+                }));
+            }
+        }
+        window.addEventListener('hashchange', function () { maybeOpenBoardHash(true); });
+
         window.onload = async () => {
             await init();
             pwaNavigationReady = true;
             maybeOpenNavigation();
+            maybeOpenBoardHash(false);
         };
 
         // Listen for real-time updates from the backend
