@@ -1,6 +1,37 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1014 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1015 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1015 (2026-11-27): presentation boards, slice 1 (boards that show).**
+
+Spec `docs/superpowers/specs/2026-11-27-presentation-boards-design.md`, plan `docs/superpowers/plans/2026-11-27-presentation-boards-slices-0-1.md`. A mission can now end in a typed board of options (looks, camps, tents) that Chauffeur renders. The board is read-only in this slice: no Like, Keep, Find more, Copy or Buy controls are drawn, and `view.can.*` is all `false`.
+
+- **Page look-ups (`services/page_lookup.py`).** `look_up` is a mission planner action, not an Argyle tool, so only a mission can make lookups.
+  - It fetches a public page and reads `og:*` tags and JSON-LD `Product` (title, store, image, price, currency, availability) into a `lookups` record (`lk_<10 hex>`) tied to the mission.
+  - Only `http(s)` URLs are kept. Every hop of every redirect passes `services/net_guard.check_public` (moved out of the twin library, now shared), so household and loopback addresses are refused.
+  - Pages without product data, or answering 401/403/429, fall back to a guarded headless Chromium render (`browse.render_page`).
+  - Each mission gets at most `mission_cap_lookups` look-ups (default 30; Missions settings).
+- **Provenance.** The model never supplies a URL, image or price. A `present` item names a lookup id from its own mission, and the server fills the store, link, photo and price from that record. Items that name unknown lookups are dropped. A present with too few complete options is refused back to the planner, and two refusals fall back to a text answer.
+- **Boards (`services/boards.py`, contract `services/boards_contract.py`, fixture `tests/fixtures/board_view_v1.json`).**
+  - `present` builds an `options` board on the mission's project, with slots, options, an optional `noun` and server-computed totals.
+  - An option total is `null` unless every item has a price in the same currency. The card line is `"{n} {noun} · from {price}"`, or `"{n} {noun}"` when no total is complete.
+- **Who sees a board.** A board is visible only to someone who can see its project and who passes `access.record_visible` on its source mission (`boards.can_see`).
+  - A `parents` board, or a surprise mission's board, never reaches a child.
+  - That child gets no card, a 404 from the board and image routes, no project row, and `board_view` refuses.
+- **Routes.**
+  - `GET /api/projects/{pid}/boards/{bid}` returns the view.
+  - `GET .../image/{lookup_id}` serves only a lookup on that board. It fetches through the guard once, downscales to 800 px, stores a JPEG under the board's image folder, and serves it from that cache from then on. A failure returns 404, which the UI draws as a placeholder.
+- **Surfaces.**
+  - A board card in the requester's Argyle DM: up to 4 hero photos, the title, the summary line and Open.
+  - A planned mission's final present adds a board line to its `mission_done` card instead of posting a second card.
+  - A `board` row in the project's Now group, on the phone and on admin Projects.
+  - The board sheet (`components/board_sheet.html`, `static/board_sheet.js`) shows one option per screen with a pager, a hero collage, item rows (thumbnail, role, title, store link, price, facts) and a total. On phone width it is a full-screen sheet; on desktop it is a modal.
+  - Deep link `app#board-<project_id>-<board_id>`.
+  - The read-only `board_view` Argyle tool, which speaks only `household` boards.
+- **Deletion.** Deleting a project removes its boards, their lookups and the image folder. Deleting a mission keeps the lookups its boards still use. An old card's Open then shows "This board is no longer available."
+- **Demo shot `board`** (opt-in, `--shot board --timeout 240`): invented looks, stores and photo tiles, seeded by `demo_seed.seed_board()`.
+- **Browser check (Claude, served app, Chromium).** A real mission ran with faked web pages. The DM card, the phone sheet, the admin modal, both project rows and the deep link all opened with no page errors, and the child was refused on a `parents` board. Cost: opening the sheet makes 1 view request, plus up to 4 image requests per screen (look 1 came from the browser cache after the card), with no Chromium fallbacks. The image cache held 44 KB for 4 photos.
+- Tests: `test_page_lookup.py`, `test_boards.py`, `test_board_contract.py`, `test_mission_present.py`, `test_board_routes.py`, `test_board_sheet_render.py`, `test_demo_capture.py`.
 
 **v2.499.1014 (2026-11-27): links in chat bubbles are clickable.**
 
