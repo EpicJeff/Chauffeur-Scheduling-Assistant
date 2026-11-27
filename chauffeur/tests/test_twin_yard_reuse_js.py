@@ -15,7 +15,7 @@ const {mountTwin} = await import(file('static/twin/twin_view.js'));
 const {yardKey,yardMaterialKey,buildYard,canonicalOutline,yardPartKeys,YARD_PARTS} = await import(file('static/twin/twin_yard.js'));
 globalThis.__THREE_MESH=THREE.Mesh;globalThis.__THREE_BOX=THREE.BoxGeometry;globalThis.__THREE_STD=THREE.MeshStandardMaterial;
 const {beginEdit,mountEditTiming} = await import(file('static/twin/edit_timing.js'));
-const {rememberImport} = await import(file('static/twin/twin_library.js'));
+const {rememberImport,forgetImport} = await import(file('static/twin/twin_library.js'));
 const square=(x,y,w=4)=>[[x,y],[x+w,y],[x+w,y+w],[x,y+w]];
 const fixture=()=>{
  const plan=structuredClone(input.plan);
@@ -367,7 +367,8 @@ await test('key_covers_every_buildYard_input',()=>{
  check(n=>n.buildings[0].porch.floor++,'legacy porch',alias);
  check(n=>n.buildings[0].levels[1].elevation=-99,'lowest level changes footprint');
  for(const path of mutations(kit.materials.lawn))check((n,k)=>mutate(k.materials.lawn,path),'kit lawn.'+path.join('.'));
- for(const path of mutations(kit.manifest))check((n,k)=>mutate(k.manifest,path),'manifest.'+path.join('.'));
+ // Since v2.499.1009 the key projects only inputs loadModel reads; a built-in's kind is not one of them.
+ for(const path of mutations(kit.manifest,[],p=>p.length===2&&p[0]==='model'&&p[1]==='kind'))check((n,k)=>mutate(k.manifest,path),'manifest.'+path.join('.'));
  check(n=>{delete n.site.furniture[0].asset;},'furniture kind resolves kit');
  const kind=structuredClone(p);delete kind.site.furniture[0].asset;
  check((n,k)=>k.furniture.chair='other','kit furniture',kind);
@@ -384,6 +385,8 @@ await test('key_covers_every_buildYard_input',()=>{
  const asset={id:'import-test',model:'m.glb',revision:1,kind:'chair',size:[1,2,3],triangles:400000,lods:[{name:'lod2.glb'}],files:{'m.glb':'hash'}};
  const imported=structuredClone(p);imported.site.furniture[0].asset=asset.id;
  for(const path of mutations(asset,[],p=>p.join('.')==='id')){
+  // The revision mutation must not make rememberImport reject later baseline resets as stale.
+  forgetImport(asset.id);
   rememberImport(asset);const before=yardKey(imported,kit,'high');
   const next=structuredClone(asset);mutate(next,path);rememberImport(next);
   assert.notEqual(yardKey(imported,kit,'high'),before,'import.'+path.join('.'));checked++;

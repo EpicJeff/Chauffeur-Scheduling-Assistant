@@ -536,7 +536,7 @@ export const modelAssetKey = (id, kit) => {
   const record = modelRecords.get(id) || asset;
   if (!record) return undefined;
   const model = asset?.model || Object.keys(asset?.files || {}).find(n => /\.(gltf|glb|dae|kmz)$/i.test(n)) || record.model;
-  return { model, files: asset?.files || record.files,
+  return { ...(id.startsWith('import-') ? { kind: record.kind } : {}), model, files: asset?.files || record.files,
     size: asset?.size || record.size, triangles: asset?.triangles ?? record.triangles,
     revision: record.revision || 0, lod_percent: record.lod_percent || DEFAULT_LOD_PERCENT,
     lods: (record.lods || []).map(l => ({ name:l.name, percent:l.percent ?? DEFAULT_LOD_PERCENT[Number(l.name[3])], revision:l.revision || 0 })),

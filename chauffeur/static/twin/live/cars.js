@@ -4,7 +4,7 @@ import { LUCIDE } from '../../vendor/lucide/icons.js';
 import { markerSprite } from './markers.js';
 import { guessEnergy, carHome, carPower, carCharging, chargingCar, watts } from './energy_mapping.js';
 import { energyAnchors, worldPoint } from './energy_geometry.js';
-import { loadModel } from '../twin_library.js';
+import { loadModel, modelAssetKey } from '../twin_library.js';
 import { fixTurnRadians } from '../model_parts.js';
 
 export function placeCarModel(model, spot) {
@@ -54,24 +54,70 @@ export function mountCars({view, live = () => view.live, modelLoader = loadModel
   const sheet=document.createElement('aside');sheet.className='twin-car-sheet';sheet.hidden=true;sheet.setAttribute('role','dialog');document.body.append(sheet);
   const events=new AbortController(),textures=new Map(),rows=new Map();let selected=null,stopped=false;
   const models=new Map();
+  const keyFor=(id,tier,asset)=>JSON.stringify([id,tier,asset]);
+  const keepsLoad=(load,id,asset)=>load.pending && load.id===id && load.tier===view.tier &&
+    (!load.asset || asset && asset.revision<=load.asset.revision);
+  function prune(load) {
+    const used=new Set([...rows.values()].map(row=>row.load));
+    // Sources came from shared:true; drop our references, never their GPU data.
+    for(const [key,other] of models)if(other!==load && other.id===load.id && other.tier===load.tier && !used.has(other))models.delete(key);
+  }
+  function promote(load,asset) {
+    if(models.get(load.key)===load)models.delete(load.key);
+    load.asset=asset;load.key=keyFor(load.id,load.tier,asset);models.set(load.key,load);
+    for(const row of rows.values())if(row.load===load)row.modelKey=load.key;
+    prune(load);
+  }
   function modelFor(row, spot) {
-    const id=row.car.twin_model, key=id ? `${id}:${view.tier}` : null;
-    if(row.modelKey!==key){row.model?.removeFromParent();row.model=null;row.modelKey=key;row.pending=false;}
+    const id=row.car.twin_model, asset=id ? modelAssetKey(id,view.kit || {}) : undefined, key=id ? keyFor(id,view.tier,asset) : null;
+    if(row.modelKey!==key){
+      // A cold load fills the shared record cache before its decode completes.
+      // Keep that load; a later revision, model or tier still supersedes it.
+      if(row.load && keepsLoad(row.load,id,asset))promote(row.load,asset);
+      else {row.model?.removeFromParent();row.model=null;row.modelKey=key;row.pending=false;row.load=null;}
+    }else if(!row.load)return; // A failed key retries only after its identity changes.
     if(!key || row.model || row.pending)return;
     row.pending=true;
-    if(!models.has(key))models.set(key,modelLoader(id,view.kit || {},source=>{
-      if(stopped)return;models.set(key,Promise.resolve(source));
-      for(const carRow of rows.values())if(carRow.modelKey===key && !carRow.model){carRow.pending=false;modelFor(carRow,carRow.spot || spot);}
-    },{tier:view.tier,shared:true}).catch(()=>null));
+    let load=models.get(key) || [...models.values()].find(load=>keepsLoad(load,id,asset));
+    if(load && load.key!==key)promote(load,asset);
+    if(!load){
+      load={id,tier:view.tier,key,asset,pending:true};models.set(key,load);
+      let resolve;load.ready=new Promise(done=>{resolve=done;});
+      const fail=()=>{
+        if(!load.pending)return;
+        if(models.get(load.key)===load)models.delete(load.key);
+        load.pending=false;resolve(null);
+        for(const carRow of rows.values())if(carRow.load===load){carRow.pending=false;carRow.load=null;}
+      };
+      const deliver=source=>{
+        if(stopped || !source || !load.pending)return;
+        const current=modelAssetKey(id,view.kit || {});
+        const loadedRecord=source.userData.modelRecord;
+        if(loadedRecord && (loadedRecord.revision || 0)<(current?.revision || 0)){
+          // A newer edit arrived during decoding. Never label old geometry with
+          // its key, including when it arrives through the late-LOD callback.
+          if(models.get(load.key)===load)models.delete(load.key);
+          load.pending=false;resolve(null);
+          for(const carRow of rows.values())if(carRow.load===load){carRow.pending=false;carRow.load=null;carRow.modelKey=null;modelFor(carRow,carRow.spot || spot);}
+          return;
+        }
+        promote(load,current);load.pending=false;resolve(source);
+      };
+      Promise.resolve().then(()=>modelLoader(id,view.kit || {},deliver,{tier:load.tier,shared:true,onFailure:fail}))
+        .then(deliver,fail);
+    }
+    row.load=load;
+    prune(load);
     const attach=source=>{
-      if(stopped || row.modelKey!==key || !rows.has(row.car.id) || !source)return;
+      if(stopped || row.load!==load || rows.get(row.car.id)!==row || !source)return;
+      row.pending=false;
       const model=source.clone(true);row.model=placeCarModel(model,row.spot || spot);root.add(row.model);
       row.height=new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).y;
       row.model.traverse(o=>{o.userData.carModel=row.car.id;});
       // Warm all levels once; a distance switch reuses these programs.
       view.renderer3.compileAsync?.(view.scene,view.camera).catch(()=>{});dirty=true;
     };
-    models.get(key).then(attach);
+    load.ready.then(attach);
   }
   const canvas=view.renderer3.domElement, raycaster=new THREE.Raycaster();let down=null;
   canvas.addEventListener('pointerdown',e=>{down=[e.clientX,e.clientY];},{signal:events.signal});

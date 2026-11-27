@@ -105,7 +105,7 @@ await test('action bar and tile context menu keep the material link and import c
  assert.equal(JSON.parse(requests.find(([url,o])=>o.method==='PATCH')[1].body).name,'Renamed door');
  imported.kind='window';await fire(window,'focus');await wait();
  assert.equal(library.selected()?.kind,'window','selection follows catalogue metadata by id when an import changes kind');
- await fire(tile(imported.id),'contextmenu');assert.deepEqual(menus.at(-1).map(e=>e.label),['Rename Renamed door','Delete Renamed door']);
+ await fire(tile(imported.id),'contextmenu');assert.deepEqual(menus.at(-1).map(e=>e.label),['Edit in Library','Rename Renamed door','Delete Renamed door']);
  let asked=0;window.promptConfirm=async()=>{asked++;return false;};await click(byText('Delete Renamed door'));assert.ok(tile(imported.id));
  window.promptConfirm=async()=>{asked++;return true;};await click(byText('Delete Renamed door'));
  assert.equal(asked,2);assert.equal(tile(imported.id),null);assert.equal(library.selected(),null);

@@ -26,7 +26,7 @@ export const createLotTools=()=>({dragging:()=>false,handles:()=>[]});
 export const createTerrainTools=()=>({refresh(){},cancel(){}});
 export const streetView=()=>null,streetSegment=()=>null;
 export const createRoofTools=()=>({cancel(){},addDormer(){}});
-export const createLibrary=()=>({refresh(){},selected:()=>null,onSelect:()=>()=>{},reveal:async()=>{}});
+export const createLibrary=options=>(globalThis.libraryOptions=options,{refresh(){},selected:()=>null,onSelect:()=>()=>{},reveal:async()=>{}});
 export const createFlags=()=>({refresh(){}});
 export const createPauses=()=>({sync(){},current:()=>null,dismissed:()=>false,dismiss(){}});
 export const applyRegistration=(_,p)=>p,invertRegistration=(_,p)=>p;
@@ -96,7 +96,8 @@ try {
  };
  globalThis.editorView={scene:{},plan:null,state:{time:'now',unlit:false},
   async settle(p,{selection=null}={}){await this.rebuild(p);return {path:'rebuild',selection};},
-  setTime(time){this.state.time=time;},setUnlit(on){this.state.unlit=on;},dispose(){},rebuild:async p=>{
+  setTime(time){this.state.time=time;},setUnlit(on){this.state.unlit=on;},dispose(){},rebuild:async (p,options)=>{
+  editorView.rebuildOptions=options;
   editorView.plan=p;if(holdRender){const gate=holdRender;holdRender=null;await gate.promise;}
  }};
  const {createClipboard}=await import(file('static/twin/editor/clipboard.js'));
@@ -110,6 +111,9 @@ try {
  assert.equal(sessionStarts,1);
  assert.deepEqual(alerts,['Older history was cleared. A copy of the house was saved as Before cleanup 2026-11-16.']);alerts.length=0;
  ok('editor starts one session and reports its saved cleanup copy');
+ assert.equal(libraryOptions.history,houseOptions.history,'Library shares the editor history owner');
+ await libraryOptions.refreshModels();assert.equal(editorView.rebuildOptions,undefined);
+ ok('model-record refresh uses ordinary rebuild even without a new house round');
  assert.equal(editorView.state.time,'day');assert.equal(editorView.state.unlit,false);
  const hooks=window.__twinEditor,card=document.getElementById('piece-card');
  const button=text=>card.querySelectorAll('button').find(b=>b.textContent===text);

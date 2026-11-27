@@ -13,7 +13,7 @@ const {siteMaterialSlots,drawSiteShapeShelf}=await import(file('static/twin/edit
 const p=fixture(),b=p.buildings[0],k=kit();
 const material={id:'choice',name:'Family finish',color:'#456789',thumbnail_url:'test.jpg'};
 const modelImports=['door','window'].map(kind=>({kind,id:'import-'+kind,name:'Imported '+kind,thumbnail_url:'import-'+kind+'.png'}));
-globalThis.fetch=async url=>new Response(JSON.stringify(String(url).endsWith('/imports')?modelImports:String(url).endsWith('/materials')?{materials:[material]}:{materials:[],items:[],imports:[]}));
+globalThis.fetch=async url=>new Response(JSON.stringify(String(url).includes('/models/')?{id:String(url).split('/').at(-1),revision:1,parts:[],parts_version:1}:String(url).endsWith('/imports')?modelImports:String(url).endsWith('/materials')?{materials:[material]}:{materials:[],items:[],imports:[]}));
 const wait=async()=>{await new Promise(r=>setTimeout(r,20));};
 const lines=(kind,piece)=>L.materialLines({kind,piece,building:b},p,k);
 await test('lines_per_item_type',async()=>{
@@ -200,7 +200,7 @@ const {materialLines}=await import(file('static/twin/editor/library.js'));
 const {siteRecords}=await import(file('static/twin/objects.js'));
 const {siteMaterialSlots}=await import(file('static/twin/editor/site_shape_shelf.js'));
 window.twinObjectSchema=JSON.parse((await import('node:fs')).readFileSync(input.root+'/static/twin/object_schema.json','utf8'));
-globalThis.fetch=async()=>new Response(JSON.stringify([]));
+globalThis.fetch=async url=>new Response(JSON.stringify(String(url).includes('/models/')?{id:String(url).split('/').at(-1),revision:1,parts:[],parts_version:1}:[]));
 const listeners=new Set(),library={selected:()=>null,onSelect:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},reveal:async()=>{}};
 const cards=createCards({getPlan:()=>input.household,getKit:()=>input.houseKit,getLabel:()=>'',canEdit:()=>true,select(){},op:async()=>{},edit:async()=>{},library,
  haLink:{draw(){},state:()=>({available:false,devices:[]})}}),card=document.getElementById('piece-card');

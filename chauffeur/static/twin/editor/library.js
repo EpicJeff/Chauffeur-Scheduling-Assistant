@@ -14,18 +14,20 @@ import { undersideMaterialSurface } from '../underside_material.js';
 import { isSupported } from '../roof_supports.js';
 import { groundAt, buildingGround, inPolygon, edgeDistance } from '../twin_ground.js';
 import { kitMaterial, loadModel, disposeObject } from '../twin_library.js';
-import { rememberImport, forgetImport, libUrl, materialUrl } from '../twin_library.js';
+import { rememberImport, forgetImport, libUrl, materialUrl, modelRecord } from '../twin_library.js';
 import { mountImports } from './imports.js';
-import { objectShown, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
+import { objectShown, objectOperation, siteRecords, siteRecord, sitePoints, siteShapeKinds } from '../objects.js';
 import { pathSurfacePolygons } from '../path_shapes.js';
 import { request, report } from './api.js';
 import { lotPoint } from './point_snap.js';
+import { prepareModelParts } from './model_records.js';
 
 import { materialName, describeMaterial, readLibraryCatalog, surfaceDescription } from './material_catalog.js';
 import { resolveSurfaceMaterial } from '../surface_material.js';
 import { planes } from '../twin_roof.js';
 export { materialName } from './material_catalog.js';
 export const libraryMaterialHref = id => (window.chfBase ?? '../') + 'house/library?material=' + encodeURIComponent(id);
+export const libraryModelHref = id => (window.chfBase ?? '../') + 'house/library?model=' + encodeURIComponent(id);
 
 export function contextPoint(plan, building, point) {
   const at = lotPoint(point);
@@ -218,6 +220,7 @@ export function materialLines(record, plan, kit) {
 // The scope chooser's choices, surface first and the whole building last
 // (spec 5.7: the surface, the room, the floor, the building).
 export function scopeChoices(surface) {
+  if (surface.kind === 'model-part') return [['This copy', 'copy'], ['The model (all copies)', 'model']];
   const floor = surface.level ? [['This floor', 'level']] : [];
   if (surface.kind === 'wall') return [['This wall face', 'face'], ['This room', 'room'], ...floor, ['The whole building', 'building']];
   if (surface.kind === 'room') return [['This room', 'face'], ...floor, ['The whole building', 'building']];
@@ -226,6 +229,8 @@ export function scopeChoices(surface) {
 
 export function surfaceOperation(surface, scope, material) {
   const { building, piece, kind, side, room, role } = surface;
+  if (kind === 'model-part' && scope === 'copy') return objectOperation(surface.record,
+    { model_materials: { ...piece.model_materials, [surface.partKey]: { material: material.id } } });
   if (role === 'water' && ['pool', 'spa'].includes(kind)) return kind === 'pool'
     ? { op: 'update_site_shape', list: 'pool', ...(piece.id ? { id: piece.id } : { index: 0 }), materials: { water: { id: material.id } } }
     : { op: 'update_pool_feature', id: piece.id, materials: { water: { id: material.id } } };
@@ -329,7 +334,7 @@ function createThumbnails(kit) {
   return { picture, dispose() { disposed = true; renderer.dispose(); renderer.forceContextLoss(); } };
 }
 
-export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu }) {
+export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, onInteract, dock, dialogs, createMenu, history, refreshModels }) {
   const el = id => document.getElementById(id), canvas = view.renderer3.domElement, host = el('library-panel');
   const raycaster = new THREE.Raycaster(), thumbnails = { current: null };
   let catalog = null, loading = null, tab = 'materials', drag = null, siteDrag = null, chooser = null;
@@ -347,8 +352,8 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     thumb: entry.thumbnail_url || (entry.thumbnail ? libUrl(entry.id, entry.thumbnail) : entry.thumb) || null });
   function assetActions(entry, material) {
     const actions = [];
-    if (material) {
-      const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = libraryMaterialHref(entry.id);
+    if (material || entry.kind === 'furniture' || entry.id.startsWith('import-') || window.twinManifest?.[entry.id]?.kind === 'model') {
+      const edit = document.createElement('a'); edit.textContent = 'Edit in Library'; edit.href = material ? libraryMaterialHref(entry.id) : libraryModelHref(entry.id);
       edit.target = '_blank'; edit.rel = 'noopener'; edit.className = 'library-edit-link';
       edit.setAttribute('aria-label', 'Edit in Library'); actions.push(edit);
     }
@@ -448,7 +453,10 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return [point.x / FT, -point.z / FT];
   }
   function surfaceAt(event, options) {
-    const picked = view.pick(event.clientX, event.clientY, { ...options, water: true }); if (!picked) return null;
+    const picked = view.pick(event.clientX, event.clientY, { ...options, water: true });
+    const modelPart = options?.modelParts !== false && modelPartAt(event, picked, options);
+    if (modelPart) return modelPart;
+    if (!picked) return null;
     const building = getPlan().buildings.find(b => b.id === (picked.building || picked.buildingId));
     let kind = picked.kind, id = picked.id || picked.pieceId;
     if (picked.part === 'water' && ['pool', 'spa'].includes(kind)) {
@@ -505,6 +513,43 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     }
     return point && { building, kind, piece, point: point.toArray(), side, room, role, surface, level: piece.level };
   }
+  function modelPartAt(event, picked, options) {
+    // Selection proxies describe a whole copy. Only the drawn triangle's range
+    // can identify its part, including a copy in a merged yard/house batch.
+    const meshes = [];
+    function visit(node) {
+      const data = node.userData || {};
+      if (node.visible === false || node.layers?.isEnabled(PICK_LAYER) || node.isHelper
+        || data.preview || data.helper || data.marker || data.ghost || data.emitter || data.fireFlame || data.effectFixture
+        || /^(editor-|sky|sun|stars|marker|preview|helper)/i.test(node.name || '')) return;
+      if (node.isMesh && node.geometry && [].concat(node.material || []).some(m => m.visible !== false && m.opacity !== 0)) meshes.push(node);
+      for (const child of node.children || []) visit(child);
+    }
+    view.scene.updateMatrixWorld(true); ray(event); visit(view.scene);
+    const pickedId = picked?.pieceId || picked?.id, bid = picked?.buildingId || picked?.building;
+    const pickedRecord = bid ? findPiece(getPlan(), pickedId, bid) : siteRecord(getPlan(), pickedId);
+    const pickedModel = pickedRecord?.kind === 'opening' ? pickedRecord.piece.model : pickedRecord?.piece.asset;
+    const proxyDistance = picked?.point && raycaster.ray.origin.distanceTo(new THREE.Vector3(...picked.point));
+    for (const hit of raycaster.intersectObjects(meshes, false)) {
+      const ranges = hit.object.userData.snapRanges || hit.object.geometry.userData.snapRanges;
+      const offset = (hit.faceIndex ?? 0) * 3;
+      const data = ranges?.find(r => offset >= r.start && offset < r.start + r.count) || hit.object.userData;
+      const same = pickedId === data.pieceId && (bid || null) === (data.buildingId || null);
+      // A selected hosted proxy may be behind another structural draw (top
+      // view). Keep the view's owner, but never jump over a nearer drawn wall
+      // when there is no model owner under the cursor.
+      if (pickedModel && !same) continue;
+      if (!pickedModel && proxyDistance != null && hit.distance > proxyDistance + .02) return null;
+      if (!data.partKey) return null;
+      if (options?.skip?.includes(data.kind) || view.isPiecePickable?.({kind:data.kind,id:data.pieceId,building:data.buildingId}) === false) continue;
+      const record = data.buildingId ? findPiece(getPlan(), data.pieceId, data.buildingId) : siteRecord(getPlan(), data.pieceId);
+      const piece = record?.piece, asset = (record?.kind === 'opening' ? piece.model : piece?.asset)?.replace(/^polyhaven:/, '');
+      if (!asset) continue;
+      return { kind:'model-part', pieceKind:record.kind, pieceId:piece.id, buildingId:record.building?.id || null,
+        asset, partKey:data.partKey, piece, building:record.building, record };
+    }
+    return null;
+  }
   let contextMaterialWarning = false;
   function contextSurfaceAt(event, target = null) {
     try { return readContextSurface(event, target); }
@@ -542,7 +587,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const surface = contextSurfaceForHit(getPlan(), hit);
       if (surface && matchesTarget(surface)) return surface;
     }
-    const fallback = surfaceAt(event);
+    const fallback = surfaceAt(event, { modelParts:false });
     return fallback && matchesTarget(fallback) ? fallback : null;
   }
   // In the floor cutaway the ceiling has no rendered slab to raycast. An
@@ -561,6 +606,35 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
     return { building, kind: 'room', piece: room, point: point.toArray(), room, role: room.kind === 'porch' ? 'porch_ceiling' : 'ceiling', surface: 'ceiling', level: room.level };
   }
   function dismiss() { chooser?.remove(); chooser = null; }
+  async function applyModelPart(surface, scope, material) {
+    if (scope === 'copy') {
+      await prepareModelParts(surface.asset, kit);
+      const record = surface.buildingId ? findPiece(getPlan(), surface.pieceId, surface.buildingId) : siteRecord(getPlan(), surface.pieceId);
+      if (!record) throw new Error('That copy is no longer in the house.');
+      if ((record.kind === 'opening' ? record.piece.model : record.piece.asset)?.replace(/^polyhaven:/, '') !== surface.asset)
+        throw new Error('That copy now uses a different model.');
+      return op(surfaceOperation({ ...surface, record, piece:record.piece }, scope, material));
+    }
+    return history.perform(async () => {
+      if (!canEdit()) return;
+      const current = await prepareModelParts(surface.asset, kit);
+      const before = { materials:structuredClone(current.materials || {}) };
+      const after = { materials:{ ...before.materials, [surface.partKey]:{ material:material.id } } };
+      let result;
+      try {
+        result = await request('models/' + encodeURIComponent(surface.asset), 'PATCH', { ...after, revision:current.revision }, '');
+      } catch (error) {
+        if (error.status === 409) {
+          await modelRecord(surface.asset, { refresh:true });
+          await refreshModels?.();
+        }
+        throw error;
+      }
+      rememberImport(result);
+      history.record({ kind:'model-record', asset:surface.asset, revision:result.revision, previousRevision:current.revision, before, after });
+      await refreshModels?.();
+    }, { step:() => null }); // Polling may adopt an outside round while this model-only work awaits.
+  }
   function choose(surface, material, event) {
     if (surface.target?.part) {
       if (!canEdit()) return;
@@ -578,7 +652,11 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       listen(button, 'click', () => {
         if (!scope) { dismiss(); return; }
         if (!canEdit()) return;
-        try { const operation = surfaceOperation(surface, scope, material); dismiss(); op(operation).catch(report); } catch (error) { report(error); }
+        try {
+          dismiss();
+          if (surface.kind === 'model-part') applyModelPart(surface, scope, material).catch(report);
+          else op(surfaceOperation(surface, scope, material)).catch(report);
+        } catch (error) { report(error); }
       }); chooser.append(button);
     }
     el('editor-scene').parentElement.append(chooser); chooser.querySelector('button').focus();
@@ -748,7 +826,7 @@ export function createLibrary({ view, kit, getPlan, tools, op, canEdit, signal, 
       const row = updateDragRow(event, asset(moved.entry, moved.material));
       if (row) { sendSlotDrag(row, 'drop', asset(moved.entry, moved.material)); return; }
       if (!canvas.contains(document.elementFromPoint(event.clientX, event.clientY))) return;
-      const surface = surfaceAt(event);
+      const surface = surfaceAt(event, { modelParts:moved.material });
       if (moved.material) { if (surface) choose(surface, moved.entry, event); return; }
       const at = ground(event); if (!surface && (!at || !contains(getPlan().site?.lot || [], at))) return;
       try { op(itemOperation(surface, moved.entry, at)).catch(report); } catch (error) { report(error); }

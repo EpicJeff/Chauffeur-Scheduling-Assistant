@@ -497,6 +497,14 @@ export async function boot() {
     // unreachable Home Assistant must not hold the editor's start, a poll or a save.
     tools?.refreshLink(changed).then(() => { devices?.refresh(); place?.refreshLink?.().catch(report); }).catch(report);
   }
+  async function refreshModels() {
+    // Model revisions participate in the building/yard keys even when the
+    // house plan is unchanged. Retain every unaffected group and part.
+    const plan = timeline?.preview() || previewPlan();
+    await view.rebuild(plan);
+    lastScene = JSON.stringify(plan);
+    await renderScene();
+  }
   function drawFloors() {
     tools?.drawFloors();
   }
@@ -844,7 +852,10 @@ export async function boot() {
         if ((error.refused || error.dropped) && !queue.pending()) return;
         setStatus(error.editorStatus || error.message || 'Could not save this change. Try again.');
       },
-      refresh: async () => { draw?.cancel(); await polling.refreshState(); await loadSheets(); await renderScene(); } });
+      refresh: async options => {
+        draw?.cancel(); await polling.refreshState(); await loadSheets();
+        if (options?.modelRecord) await refreshModels(); else await renderScene();
+      } });
     houses = mountHouses({ history, signal: lifecycle.signal, dialogs, createMenu: createContextMenu, onClose: syncBuildButton,
       canLoad: () => canEdit() && !active(currentBuild),
       async capture() {
@@ -870,13 +881,16 @@ export async function boot() {
       library: slotLibrary, onDrawFeature: kind => terrain?.startDrawing(kind),
       edit, op: applyOp, applyBatch, panel, canEdit, signal: lifecycle.signal, onInteract, api, addDormer: () => roofTools?.addDormer() });
     library = createLibrary({ dock, dialogs, createMenu: createContextMenu, view, kit, getPlan: () => timeline?.preview() || shownPlan(), tools,
-      op: applyOp, canEdit, signal: lifecycle.signal, onInteract });
+      op: applyOp, canEdit, signal: lifecycle.signal, onInteract, history, refreshModels });
     library.materialMenu = (...args) => slotLibrary.materialMenu?.(...args);
+    // Adding objects/devices still targets the wall or floor beneath a model.
+    // Part surfaces belong only to the material-drop path.
+    const placementLibrary = { ...library, surfaceAt:(event, options) => library.surfaceAt(event, { ...options, modelParts:false }) };
     flags = createFlags({ view, getModel: () => snapshot.model, getPlan: shownPlan,
       tools, panel, op: applyOp, canEdit, signal: lifecycle.signal, onInteract, managed: true,
       onReview: item => checks?.show(item) });
     draw = createDraw({ dock, cancelOtherDrawing: () => { terrain?.cancel(); lot?.cancel(); }, view, tools, getPlan: shownPlan, op: operation => applyOpNow(operation),
-      gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: (event, options) => library.surfaceAt(event, options), groundPoint: event => library.ground(event) });
+      gesture: history.perform, canEdit, panel, signal: lifecycle.signal, onInteract, surfaceAt: placementLibrary.surfaceAt, groundPoint: event => library.ground(event) });
     roofTools = createRoofTools({ dock, view, tools, getPlan: shownPlan,
       op: (operation, options) => history.perform(() => applyOpNow(operation, options)),
       canEdit, panel, signal: lifecycle.signal, onInteract, cancelDrawing: draw.cancel });
@@ -893,7 +907,7 @@ export async function boot() {
       // The lot card frees itself once the place rows are fresh; the scene
       // rebuild (seconds for a refitted house) follows on the poll's tick.
       reload: async () => { await loadSheets(); polling.pollNow(true).catch(report); } });
-    devices = createDevicePlacement({ dock, view, tools, library, getPlan: () => timeline?.preview() || shownPlan(),
+    devices = createDevicePlacement({ dock, view, tools, library:placementLibrary, getPlan: () => timeline?.preview() || shownPlan(),
       op: applyOp, canEdit, signal: lifecycle.signal,
       prepare() { onInteract(); roofTools.cancel(); draw.cancel(); } });
     el('rail-add-effect').addEventListener('click', () => {

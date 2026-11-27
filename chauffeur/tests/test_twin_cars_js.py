@@ -235,6 +235,132 @@ check('two modelled cars share GPU resources, keep transforms, align, tap and hi
   t.states['device_tracker.a'].state='home';await t.live.refresh();t.layer.update();assert.equal(t.layer.snapshot()[0].modelVisible,true);assert.equal(loads,1);
  }finally{t.layer.stop();t.cleanup();geometry.dispose();material.dispose();}
 });
+check('a cold car load promotes its cached record without loading or compiling twice',async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-cold-record';let revision=1,loads=0,compiles=0;
+ const t=await fixture(async id=>{
+  loads++;const record={id,revision,materials:{}};rememberImport(record);
+  return new THREE.Group();
+ });
+ try{
+  t.view.renderer3.compileAsync=async()=>{compiles++;};
+  t.view.energySources.cars[0].twin_model=asset;
+  t.layer.update();await wait(20);t.layer.draw();await wait(20);
+  assert.equal(loads,1);assert.equal(compiles,1);assert.equal(t.layer.snapshot()[0].model,true);
+  revision=2;rememberImport({id:asset,revision,materials:{Wood:{material:'oak'}}});
+  t.layer.update();await wait(20);t.layer.draw();await wait(20);
+  assert.equal(loads,2,'a later revision reloads exactly once');assert.equal(compiles,2);
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('cold pending and late cars keep their load until a newer revision supersedes it',async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-cold-late',callbacks=[];let revision=1,loads=0,compiles=0;
+ const t=await fixture(async(id,kit,onLate)=>{
+  loads++;const record={id,revision,materials:{}};rememberImport(record);
+  callbacks.push(()=>{const source=new THREE.Group();source.userData.modelRecord=record;onLate(source);});return null;
+ });
+ try{
+  t.view.renderer3.compileAsync=async()=>{compiles++;};
+  for(const car of t.view.energySources.cars)car.twin_model=asset;
+  t.layer.update();await wait(20);t.layer.update();await wait(20);
+  assert.equal(loads,1,'both cars share the cold load while its record arrives');
+  callbacks[0]();await wait(20);t.layer.draw();assert.equal(loads,1);assert.equal(compiles,2);
+  revision=2;rememberImport({id:asset,revision,materials:{}});t.layer.update();await wait(20);
+  assert.equal(loads,2);
+  revision=3;rememberImport({id:asset,revision,materials:{}});t.layer.update();await wait(20);
+  assert.equal(loads,3,'a newer revision restarts a pending decode exactly once');
+  callbacks[1]();await wait(20);assert.ok(t.layer.snapshot().every(r=>!r.model),'older late result cannot mount');
+  callbacks[2]();await wait(20);t.layer.draw();assert.ok(t.layer.snapshot().every(r=>r.model));
+  assert.equal(loads,3);assert.equal(compiles,4);
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('a resolved cold car cannot promote over a newer cached revision',async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-cold-superseded';let finish,loads=0,compiles=0;
+ const t=await fixture(async id=>{
+  loads++;const record={id,revision:loads,materials:{}};rememberImport(record);
+  const source=new THREE.Group();source.userData.modelRecord=record;
+  if(loads===1)await new Promise(resolve=>{finish=resolve;});return source;
+ });
+ try{
+  t.view.renderer3.compileAsync=async()=>{compiles++;};
+  t.view.energySources.cars[0].twin_model=asset;t.layer.update();await wait(0);
+  rememberImport({id:asset,revision:2,materials:{}});finish();await wait(20);t.layer.draw();await wait(20);
+  assert.equal(loads,2);assert.equal(compiles,1,'only the current revision compiles');
+  assert.equal(t.layer.snapshot()[0].model,true);
+ }finally{t.layer.stop();t.cleanup();}
+});
+for(const failure of ['onFailure','late onFailure','rejection'])check(`a cold car ${failure} retries on a new key without hammering unchanged ticks`,async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-failure-'+failure;let loads=0,fail;
+ const t=await fixture(async(id,kit,onLate,options)=>{
+  loads++;
+  if(loads===1){
+   if(failure==='rejection')throw new Error('offline');
+   if(failure==='late onFailure')fail=options.onFailure;
+   else options.onFailure?.();
+   return null;
+  }
+  return new THREE.Group();
+ });
+ try{
+  t.view.energySources.cars[0].twin_model=asset;t.layer.update();await wait(20);
+  if(failure==='late onFailure')fail?.();
+  for(let i=0;i<4;i++){t.layer.update();await wait(0);}
+  assert.equal(loads,1,'an unchanged failed key does not retry');
+  assert.equal(t.layer.snapshot()[0].model,false);
+  rememberImport({id:asset,revision:1,materials:{}});
+  t.view.energySources.cars[1].twin_model=asset;t.layer.update();await wait(20);t.layer.draw();
+  assert.equal(loads,2,'the fresh record starts one shared retry');
+  assert.ok(t.layer.snapshot().every(r=>r.model && r.modelVisible),'both cars mount the recovered load');
+  for(let i=0;i<4;i++){t.layer.update();await wait(0);}
+  assert.equal(loads,2);
+ }finally{t.layer.stop();t.cleanup();}
+});
+check('superseded car revisions leave one cached load without disposing shared resources',async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-pruned-revisions',NativeMap=globalThis.Map;
+ let modelMap,t,loads=0,disposals=0;
+ const geometry=new THREE.BoxGeometry(2,1,4),material=new THREE.MeshStandardMaterial();
+ geometry.addEventListener('dispose',()=>{disposals++;});material.addEventListener('dispose',()=>{disposals++;});
+ const sibling=new THREE.Mesh(geometry,material);
+ try{
+  globalThis.Map=class extends NativeMap {
+   set(key,value){if(value?.id===asset && typeof value.pending==='boolean')modelMap=this;return super.set(key,value);}
+  };
+  try{t=await fixture(async(id,kit,onLate,options)=>{
+   assert.equal(options.shared,true);loads++;
+   return new THREE.Group().add(sibling.clone(true));
+  });}finally{globalThis.Map=NativeMap;}
+  for(const car of t.view.energySources.cars)car.twin_model=asset;
+  for(const revision of [1,2,3]){
+   rememberImport({id:asset,revision,materials:{}});t.layer.update();await wait(20);t.layer.draw();
+   assert.equal(loads,revision);assert.ok(t.layer.snapshot().every(r=>r.model));
+   const retained=[...modelMap.values()].filter(load=>load.id===asset && load.tier===t.view.tier);
+   assert.equal(retained.length,1,'only the current revision remains cached');
+   assert.equal(retained[0].asset.revision,revision);assert.equal(disposals,0);
+   const meshes=[];t.view.scene.traverse(o=>{if(o.isMesh && o.userData.carModel)meshes.push(o);});
+   assert.equal(meshes.length,2);assert.ok(meshes.every(o=>o.geometry===sibling.geometry && o.material===sibling.material));
+  }
+ }finally{globalThis.Map=NativeMap;t?.layer.stop();t?.cleanup();geometry.dispose();material.dispose();}
+});
+check('car model retention follows record revisions and materials',async()=>{
+ const {rememberImport}=await import(file('static/twin/twin_library.js'));
+ const asset='import-car-record-refresh',loads=[];
+ rememberImport({id:asset,revision:1,materials:{}});
+ const t=await fixture(async(id)=>{loads.push(id);return new THREE.Group().add(new THREE.Mesh(new THREE.BoxGeometry(2,1,4),new THREE.MeshStandardMaterial()));});
+ try{
+  for(const car of t.view.energySources.cars)car.twin_model=asset;
+  t.layer.update();await wait(20);assert.equal(loads.length,1);
+  const models=()=>t.view.scene.children.find(o=>o.userData.twinCars).children.filter(o=>o.children.some(c=>c.isGroup));
+  const first=models();assert.equal(first.length,2);
+  rememberImport({id:asset,revision:2,materials:{Wood:{material:'oak'}}});
+  t.layer.update();await wait(20);
+  assert.equal(loads.length,2,'one shared reload at a new record revision');
+  assert.equal(models().length,2);assert.ok(models().every(o=>!first.includes(o)));
+  t.layer.update();await wait(20);assert.equal(loads.length,2,'unchanged record keeps both cars');
+ }finally{t.layer.stop();t.cleanup();}
+});
 check('a failed car model keeps its original tappable icon',async()=>{
  const t=await fixture(async()=>{throw new Error('offline');});try{
   t.view.energySources.cars[0].twin_model='import-missing';t.layer.update();await wait(20);t.layer.draw();

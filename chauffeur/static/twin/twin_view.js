@@ -1872,6 +1872,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         return matches.length === 1 ? target[matches[0]] : undefined;
       } }) };
       view.roomLights = twin.roomLights; view.plan = plan; syncStage(plan);
+      // Cars retain their own models outside the building/yard groups. Refresh
+      // their record keys on adoption, including a rebuild of the same plan.
+      view.cars?.update();
       // Register originals before unlit/viewing presentation swaps their materials.
       reflections.rebuild(plan, twin.root);
       const points = (plan.buildings || []).flatMap(b => {

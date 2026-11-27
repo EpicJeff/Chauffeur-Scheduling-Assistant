@@ -13,7 +13,7 @@ export function sendSlotDrag(row, phase, entry) {
 }
 
 // A DOM component only. The owner keeps the domain operation and undo step.
-export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, inherited, apply, clear, reset, tint, offset, library, materialSurface, readOnly = false }) {
+export function createSlotRow({ label, subject = `${label.toLowerCase()} material`, accepts, current, detail, inherited, apply, clear, reset, tint, offset, texture, library, materialSurface, readOnly = false }) {
   const element = document.createElement('section'), row = document.createElement('div');
   element.dataset.librarySlot = label; row.className = 'editor-material-line editor-slot-line'; element.append(row);
   const controller = new AbortController(), { signal } = controller;
@@ -111,6 +111,34 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
     offsetReset.setAttribute('aria-label', `${label} Reset offset`);
     listen(offsetReset, 'click', () => run(offset.clear)); element.append(offsetControls);
   }
+  let textureControls, textureInput, tilesInput, modelOption;
+  if (texture) {
+    textureControls = document.createElement('div'); textureControls.className = 'editor-slot-offset';
+    const field = (text, tag, key) => {
+      const caption = document.createElement('label'); caption.textContent = text;
+      const input = document.createElement(tag); input.dataset[key] = '';
+      input.setAttribute('aria-label', `${label} ${text}`); caption.append(input); textureControls.append(caption); return input;
+    };
+    textureInput = field('Texture', 'select', 'slotTexture');
+    for (const [value, text] of [['real', 'Real size'], ['model', "Model's own"]]) {
+      const option = document.createElement('option'); option.value = value; option.textContent = text; textureInput.append(option);
+      if (value === 'model') modelOption = option;
+    }
+    tilesInput = field('Tiles', 'input', 'slotTiles'); tilesInput.type = 'number'; tilesInput.min = '0'; tilesInput.max = '100'; tilesInput.step = 'any';
+    listen(textureInput, 'change', () => {
+      if (!texture.editable() || textureInput.value === 'model' && !texture.hasUv()) { refresh(); return; }
+      const value = textureInput.value; return run(() => texture.setField('texture', value));
+    });
+    listen(tilesInput, 'change', () => {
+      if (!texture.editable() || texture.value().texture !== 'model') { refresh(); return; }
+      const value = Number(tilesInput.value);
+      if (!tilesInput.value.trim() || !Number.isFinite(value) || value <= 0 || value > 100) {
+        report(new Error('Use a positive number of tiles, at most 100.')); refresh(); return;
+      }
+      return run(() => texture.setField('tiles', value));
+    });
+    element.append(textureControls);
+  }
   listen(element, 'chf-library-slot-drag', event => {
     const { phase, entry } = event.detail;
     const valid = !!entry && accepts(entry) && !busy && !disposed && !locked();
@@ -141,7 +169,7 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
       }
       remove.disabled = busy || locked();
     }
-    if (resetButton) resetButton.disabled = busy || locked();
+    if (resetButton) resetButton.disabled = busy || locked() || !!reset.enabled && !reset.enabled();
     if (tintInput) {
       tintInput.value = typeof tint.value === 'function' ? tint.value() : tint.value;
       tintInput.parentElement.hidden = !!tint.enabled && !tint.enabled();
@@ -151,6 +179,12 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
         tintClear.disabled = busy || locked();
         tintClear.hidden = tintInput.parentElement.hidden || !!tint.hasOverride && !tint.hasOverride();
       }
+    }
+    if (textureControls) {
+      const value = texture.value(), disabled = busy || locked() || !texture.editable();
+      textureInput.value = value.texture; textureInput.disabled = disabled; modelOption.disabled = !texture.hasUv();
+      tilesInput.value = String(value.tiles); tilesInput.parentElement.hidden = value.texture !== 'model';
+      tilesInput.disabled = disabled || tilesInput.parentElement.hidden;
     }
     if (offsetControls) {
       const value = offset.effective?.() || offset.value() || { u: 0, v: 0, rot: 0 };
@@ -172,7 +206,7 @@ export function createSlotRow({ label, subject = `${label.toLowerCase()} materia
   refresh();
   if (locked()) {
     // Read-only Properties retain their swatch and name, without edit controls.
-    actions.remove(); tintInput?.parentElement.remove(); offsetControls?.remove();
+    actions.remove(); tintInput?.parentElement.remove(); offsetControls?.remove(); textureControls?.remove();
   }
   return { element, refresh, dispose() { disposed = true; unsubscribe(); controller.abort(); element.classList.remove('editor-slot-dragover'); } };
 }

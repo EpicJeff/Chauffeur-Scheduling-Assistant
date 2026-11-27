@@ -145,8 +145,11 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
     if (roof && edgeIndex !== null) { drawEdge(next, record, roof); return; }
     const materials = record ? materialLines(record, getPlan(), getKit()) : [];
     // One catalogue read per session names household materials on the lines.
-    if ((materials.length && canEdit() || record?.kind === 'building') && loadMaterialNames && !namesAsked) {
-      loadNames(() => { layout = null; draw(); });
+    if ((materials.length && canEdit() || record?.kind === 'building' || record?.piece.asset || record?.piece.model) && loadMaterialNames && !namesAsked) {
+      loadNames(() => {
+        if (record?.piece.asset || record?.piece.model) slots.forEach(row => row.refresh());
+        else { layout = null; draw(); }
+      });
     }
     const flags = roofFlags(record);
     const roomFeatures = record?.kind === 'yard_rooms' ? yardRoomFeatures(getPlan(), record.piece) : [];
@@ -302,7 +305,7 @@ export function createCards({ getPlan, getModel = () => null, getKit = () => ({}
         layout = null; draw();
       }));
     }
-    if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { library, ownSlot, canEdit, queue, op, report,
+    if (isObject(record) || kind === 'opening') drawObjectShelf(host, record, { library, ownSlot, canEdit, queue, op, report, getKit,
       getRecord: () => findPiece(getPlan(), piece.id, building?.id), devices: haLink?.state()?.devices || [] });
     if (siteShapeKinds.includes(kind) || record.poolId) {
       for (const feature of roomFeatures) {

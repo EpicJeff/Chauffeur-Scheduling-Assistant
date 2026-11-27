@@ -1,7 +1,10 @@
 import { schema, propertyFields, objectOperation } from '../objects.js';
-import { libUrl } from '../twin_library.js';
+import { libUrl, modelRecord } from '../twin_library.js';
 import { request } from './api.js';
 import { createSlotRow, idleLibrary } from './slot_row.js';
+import { describeMaterial } from './material_catalog.js';
+import { prepareModelParts } from './model_records.js';
+import { resolvePart } from '../model_parts.js';
 
 const labels = { rotation: 'Yaw (degrees)', pitch: 'Pitch (degrees)', roll: 'Roll (degrees)', scale: 'Scale (factor)', scale_axes: 'X, Y, Z scale', mirror_x: 'Mirror left-right', mirror_y: 'Mirror front-back', casts_shadow: 'Casts shadow', visible_in: 'Visible in', tint: 'Material tint', elevation: 'Height above surface (ft)', emissive: 'Emissive', emissive_color: 'Glow colour', light_entity: 'Linked HA light (optional)', object_kind: 'Object kind' };
 export const isObject = record => record && (['item', 'planting', 'furniture'].includes(record.kind) || record.kind === 'anchor' && !record.piece.device);
@@ -24,7 +27,7 @@ export function linkEntityPicker(input, domains = ['light', 'switch', 'input_boo
   });
 }
 
-export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, devices = [], library = idleLibrary, ownSlot = () => {} }) {
+export function drawObjectShelf(host, record, { canEdit, queue, op, report, getRecord = () => record, getKit = () => ({}), devices = [], library = idleLibrary, ownSlot = () => {} }) {
   const { piece, kind } = record;
   const section = document.createElement('section'); section.setAttribute('aria-label', 'Object properties'); host.append(section);
   const advanced = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Advanced'; advanced.append(summary);
@@ -76,18 +79,21 @@ export function drawObjectShelf(host, record, { canEdit, queue, op, report, getR
     label.append(input); (spec.advanced ? advanced : section).append(label);
     if (field === 'light_entity') linkEntityPicker(input, ['light', 'switch']);
   }
-  if (kind !== 'opening') { section.append(advanced); return; }
+  if (kind !== 'opening') {
+    drawModelParts(section, record, { canEdit, queue, op, report, getRecord, getKit, library, ownSlot });
+    section.append(advanced); return;
+  }
   if (piece.kind === 'garage' && !record.building.devices?.some(placed => placed.host?.opening === piece.id
     && devices.some(device => device.device_id === placed.device && device.kind === 'garage' && device.entity_id?.startsWith('cover.')))) {
     const hint = document.createElement('p'); hint.textContent = 'Opens and closes with the garage door device placed on it.'; section.append(hint);
   }
-  drawOpeningModelSlot(section, record, { canEdit, queue, op, report, library, ownSlot });
+  drawOpeningModelSlot(section, record, { canEdit, queue, op, report, getRecord, getKit, library, ownSlot });
 }
 
 // Single and set Properties share the same Library acceptance/reveal path.
 // The set card supplies one assignment that batches all of its per-piece ops.
 export function drawOpeningModelSlot(host, record, { canEdit, queue, op, report,
-  library = idleLibrary, ownSlot = () => {}, records = [record], assign }) {
+  library = idleLibrary, ownSlot = () => {}, records = [record], assign, getRecord = () => record, getKit = () => ({}) }) {
   const expected = record.piece.kind === 'window' ? 'window' : 'door';
   let entries = [], currentId = record.piece.model || null, disposed = false;
   let mixed = records.some(row => (row.piece.model || null) !== currentId);
@@ -118,5 +124,74 @@ export function drawOpeningModelSlot(host, record, { canEdit, queue, op, report,
     if (disposed) return;
     entries = [...imports.filter(entry => !entry.archived && !entries.some(row => row.id === entry.id)), ...entries]; row.refresh();
   }).catch(report);
+  if (records.length === 1) drawModelParts(host, record, { canEdit, queue, op, report, getRecord, getKit, library, ownSlot });
   return row;
+}
+
+// The same rows own hosted objects, yard copies and opening models. Keep the
+// part map out of the schema's generic fields; each save reads the latest copy.
+function drawModelParts(host, record, { canEdit, queue, op, report, getRecord = () => record, getKit, library, ownSlot }) {
+  const asset = (record.kind === 'opening' ? record.piece.model : record.piece.asset)?.replace(/^polyhaven:/, '');
+  if (!asset) return;
+  let disposed = false, reported = false, model = null, materials = record.piece.model_materials || {}, signature = null;
+  const rows = [], section = document.createElement('section');
+  const readModel = () => canEdit() ? prepareModelParts(asset, getKit()) : modelRecord(asset);
+  const readFailed = error => { if (!disposed && !reported) { reported = true; report(error); } };
+  const catalogueChanged = () => { if (!disposed) rows.forEach(row => row.refresh()); };
+  document.addEventListener('chf-material-catalogue', catalogueChanged);
+  section.setAttribute('aria-label', 'Parts');
+  ownSlot({ refresh() {
+    materials = getRecord()?.piece.model_materials || {};
+    readModel().then(showParts).catch(readFailed);
+  }, dispose() { disposed = true; document.removeEventListener('chf-material-catalogue', catalogueChanged); rows.forEach(row => row.dispose()); } });
+  function showParts(nextModel) {
+    if (disposed) return;
+    model = nextModel;
+    const nextSignature = JSON.stringify((model.parts || []).map(part => [part.key,part.name,part.has_uv]));
+    if (nextSignature === signature) { rows.forEach(row => row.refresh()); return; }
+    signature = nextSignature;
+    rows.forEach(row => row.dispose()); rows.length = 0; section.replaceChildren();
+    if (!model.parts?.length) { section.remove(); return; }
+    const heading = document.createElement('h3'); heading.textContent = 'Parts'; section.append(heading); host.append(section);
+    const save = (key, value) => queue(async () => {
+      if (!canEdit()) return;
+      const current = getRecord(); if (!current) return;
+      if ((current.kind === 'opening' ? current.piece.model : current.piece.asset)?.replace(/^polyhaven:/, '') !== asset)
+        throw new Error('That copy now uses a different model.');
+      const next = { ...(current.piece.model_materials || materials) };
+      const entry = typeof value === 'function' ? value(next[key]) : value;
+      if (entry) next[key] = entry; else delete next[key];
+      await op(objectOperation(current, { model_materials:next }));
+      materials = next;
+    });
+    for (const part of model.parts) {
+      const ref = () => materials[part.key] || model.materials?.[part.key];
+      const original = () => ref()?.material === 'original';
+      const ownMaterial = () => !!materials[part.key]?.material && materials[part.key].material !== 'original';
+      const label = part.key !== part.name ? part.key : part.name;
+      const current = () => !ref() || original() ? { name:label } : { ...describeMaterial({id:ref().material}, getKit()), kind:'material' };
+      const row = createSlotRow({ label, subject:`${label} part material`, library,
+        readOnly:() => !canEdit(), accepts:entry => entry.kind === 'material', current,
+        inherited:() => !materials[part.key],
+        detail:() => {
+          const provenance = original() ? 'original (this copy)' : materials[part.key] ? current().name
+            : model.materials?.[part.key] ? `${current().name}, from the model` : 'original';
+          return ownMaterial() || original() ? provenance : `${provenance}; texture is set on the model in the Library`;
+        },
+        texture:{ value:() => resolvePart(part, model.materials, materials), editable:ownMaterial, hasUv:() => !!part.has_uv,
+          setField:(field, value) => save(part.key, entry => {
+            if (!entry?.material || entry.material === 'original') throw new Error('Choose a material for this copy before changing its texture.');
+            const next = { ...entry, texture:entry.texture || 'real', [field]:value };
+            if (next.texture === 'model') next.tiles ??= 1;
+            else delete next.tiles;
+            return next;
+          }) },
+        apply:entry => save(part.key, {material:entry.id}),
+        clear:{ enabled:() => !!materials[part.key], run:() => save(part.key, null) },
+        reset:{label:'Use original',enabled:() => !!ref()?.material && !original(),run:() => save(part.key, {material:'original'})} });
+      row.element.dataset.modelPart = part.key;
+      section.append(row.element); rows.push(row);
+    }
+  }
+  readModel().then(showParts).catch(readFailed);
 }

@@ -8,6 +8,9 @@ DRIVER = r"""
 const objects = await import(file('static/twin/objects.js'));
 window.twinObjectSchema = JSON.parse(readFileSync(root + '/static/twin/object_schema.json'));
 const {drawObjectShelf} = await import(file('static/twin/editor/object_shelf.js'));
+// This synthetic model has no parts; the later transport double owns rounds.
+const {rememberImport}=await import(file('static/twin/twin_library.js'));
+rememberImport({id:'import-chair',revision:1,parts:[]});
 const host=document.createElement('div');document.body.append(host);
 const record={piece:{id:'chair',at:[1,2]},kind:'furniture',index:0,building:null};
 const saved=[];let pending=Promise.resolve();
