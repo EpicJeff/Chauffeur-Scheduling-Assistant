@@ -9,6 +9,8 @@ Opt-in shots (pass --shot <name>; twin-lit-models needs --timeout 240):
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-awning-garden --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-downspout-hand --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-room-focus --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot library-models --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-post-card --timeout 240 --out "<dir>"
 
 All service imports live in the isolated worker. The supervisor owns its data
 directory and process tree, including a browser that fails during launch.
@@ -34,15 +36,17 @@ SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-g
 # Adding twin-eave-streams pushes the full default run over 145 s, and
 # twin-lit-models (lighting bake + model warmup) needs --timeout 240 on its own,
 # so both new shots are opt-in by name (--shot <name>) rather than in SHOTS.
-OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus')
+OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card')
 ALL_SHOTS = SHOTS + OPT_IN_SHOTS
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
 TWIN_READY_TIMEOUT = 25000
 BAKE_TIMEOUT = 90000
+MODEL_READY_TIMEOUT = 60000
 SURFACE_LABELS = dict(zip(ALL_SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters',
                                       'awning editor', 'awning ends and ceiling', 'patio posts',
-                                      'eave streams', 'lit models', 'awning garden', 'hand downspout', 'room focus')))
+                                      'eave streams', 'lit models', 'awning garden', 'hand downspout', 'room focus',
+                                      'model library', 'patio post card')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -69,6 +73,9 @@ DOWNSPOUT_HAND_CAMERA = dict(position=[12.6, 3.3, 5.2], target=[8.4, 1.7, 0.2])
 # Elevated three-quarter framing of Demo cottage Living room in Focus room so
 # the highlighted room and the ghosted roof, porch and hip wing read clearly.
 ROOM_FOCUS_CAMERA = dict(position=[-6.5, 11.2, 13.0], target=[7.2, 1.0, -2.5])
+# Garden-side close-up of Post 1 at (6.5, -7.5, 0.5) plan feet.
+# Scene axes are (x, elevation, -y), in metres; look up the post from outside.
+POST_CARD_CAMERA = dict(position=[-0.6, 2.4, 5.2], target=[2.15, 1.15, 2.286])
 
 # Evaluated both in Chromium and in the no-browser DOM regression. A ready
 # scene alone says nothing about an authentication overlay covering its canvas.
@@ -136,6 +143,49 @@ SURFACE_STATE = r"""({shot, final = false}) => {
       && [...document.querySelectorAll('#piece-card button')]
         .some(button => visible(button) && button.textContent === 'Leave room');
   }
+  if (shot === 'twin-post-card') {
+    ready = path.endsWith('/house/editor') && twin && window.__editor?.ready === true;
+    if (final) {
+      const selection = window.__twinEditor?.selection?.();
+      ready = ready && seen('#piece-card')
+        && (document.querySelector('#piece-card h3')?.textContent || '').includes('Post 1')
+        && selection?.kind === 'porch_post' && selection.id === 'post:front-porch:0'
+        && seen('[data-scene-id="post:front-porch:1"]');
+    }
+  }
+  if (shot === 'library-models') {
+    ready = path.endsWith('/house/library')
+      && seen('[data-library-tab="models"][aria-selected="true"]')
+      && seen('canvas[aria-label="Orbit model preview with 6 ft scale figure"]');
+    if (final) {
+      const seat = document.querySelector('[data-model-part="Seat"]');
+      const progress = document.querySelector('[data-model-progress]');
+      const inFrame = el => {
+        if (!visible(el)) return false;
+        const rect = el.getBoundingClientRect();
+        const nav = document.getElementById('top-nav-bar')?.getBoundingClientRect();
+        if (rect.top < Math.max(0, nav?.bottom || 0) || rect.bottom > window.innerHeight
+            || rect.left < 0 || rect.right > window.innerWidth) return false;
+        for (let parent = el.parentElement; parent && parent !== document.scrollingElement; parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          if (!/(auto|scroll|hidden|clip)/.test(style.overflowY)) continue;
+          const box = parent.getBoundingClientRect();
+          if (rect.top < box.top || rect.bottom > box.bottom || rect.left < box.left || rect.right > box.right) return false;
+        }
+        return true;
+      };
+      // Enabled derived levels exclude the initial empty progress output,
+      // before select() has finished loading the original preview and begun building.
+      ready = ready && inFrame(seat) && seat.textContent.includes('Demo teak')
+        && inFrame(document.querySelector('[data-model-parts] h3'))
+        && ['Frame', 'Cushion', 'Glass'].every(key => inFrame(document.querySelector(`[data-model-part="${key}"]`)))
+        && !!progress && progress.textContent.trim() === ''
+        && [1, 2].every(level => {
+          const button = document.querySelector(`[data-model-level="${level}"]`);
+          return visible(button) && !button.disabled;
+        });
+    }
+  }
   return {blocked, ready: !!ready};
 }"""
 
@@ -163,7 +213,7 @@ def _assert_surface(page, name, final=False):
 
 
 def _wait_surface(page, name):
-    timeout = TWIN_READY_TIMEOUT if name.startswith('twin-') else READY_TIMEOUT
+    timeout = MODEL_READY_TIMEOUT if name == 'library-models' else TWIN_READY_TIMEOUT if name.startswith('twin-') else READY_TIMEOUT
     with _shot_stage(name, SURFACE_LABELS[name], timeout=timeout):
         page.wait_for_function(
             '(spec) => { const s = (' + SURFACE_STATE + ')(spec); return s.blocked || s.ready; }',
@@ -477,6 +527,84 @@ def _restrict_browser(context, served, guard):
     context.route_web_socket('**/*', websocket)
 
 
+def _select_demo_post(page):
+    """Use Scene disclosures and selection, including its virtual-row mounting path."""
+    def frames():
+        _ready_evaluate(page, 'new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+
+    page.locator('#dock-tab-scene').click()
+    host = page.locator('#scene-tree')
+
+    def mount(row):
+        if not row.count():
+            host.get_by_role('treeitem').first.press('Home')
+            for _ in range(160):
+                frames()
+                if row.count():
+                    break
+                box = host.bounding_box()
+                if not box:
+                    raise RuntimeError('Scene tree has no viewport')
+                page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                page.mouse.wheel(0, max(36, box['height'] * .65))
+        if row.count() != 1:
+            raise RuntimeError('Scene row is missing or ambiguous')
+        row.scroll_into_view_if_needed()
+        return row
+
+    for parent in (
+        host.locator('[data-scene-id="synth-house"]'),
+        host.locator('[data-floor="synth-house:L1"]').locator('..'),
+        host.locator('[data-scene-id="front-porch"]'),
+    ):
+        disclosure = mount(parent).locator('[data-row-disclosure][aria-expanded="false"]')
+        if disclosure.count():
+            disclosure.click()
+            frames()
+    first = mount(host.locator('[data-scene-id="post:front-porch:0"]'))
+    first.locator('[data-scene-select]').click()
+    frames()
+    mount(host.locator('[data-scene-id="post:front-porch:1"]'))
+    page.wait_for_selector('#piece-card', state='visible')
+    page.evaluate("""() => {
+      document.getElementById('editor-sidebar').scrollTop = 0;
+    }""")
+
+
+def _show_demo_post_rows(page):
+    # Selection can leave the rows under the pane's top edge; show
+    # the patio and both posts the way a person would scroll to them.
+    page.evaluate("""() => document.querySelector('[data-scene-id="post:front-porch:1"]')
+      ?.scrollIntoView({ block: 'center', behavior: 'instant' })""")
+    page.wait_for_function("""() => {
+      const pane = document.getElementById('dock-pane-scene').getBoundingClientRect();
+      return [0, 1].every(i => {
+        const row = document.querySelector(`[data-scene-id="post:front-porch:${i}"]`);
+        const rect = row?.getBoundingClientRect();
+        return rect && rect.top >= pane.top && rect.bottom <= pane.bottom;
+      });
+    }""", timeout=READY_TIMEOUT)
+
+
+LIBRARY_PARTS_FRAME = r"""() => {
+  const parts = document.querySelector('[data-model-parts]');
+  const heading = parts.querySelector('h3');
+  // library-properties has no overflow rule: today this is the document.
+  // Find the actual scrolling ancestor so the same hand-scroll works if a
+  // containing panel supplies scrolling in a different shell.
+  let scroller = parts.parentElement;
+  while (scroller && scroller !== document.scrollingElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+        && scroller.scrollHeight > scroller.clientHeight) break;
+    scroller = scroller.parentElement;
+  }
+  scroller ||= document.scrollingElement;
+  const navBottom = document.getElementById('top-nav-bar')?.getBoundingClientRect().bottom || 0;
+  const top = scroller === document.scrollingElement ? 0 : scroller.getBoundingClientRect().top;
+  scroller.scrollTop += heading.getBoundingClientRect().top - Math.max(top, navBottom) - 16;
+}"""
+
+
 def _capture_pages(served, data, token, out, shots):
     from datetime import datetime, timezone
     import house_editor_model_harness as H
@@ -609,7 +737,7 @@ def _capture_pages(served, data, token, out, shots):
                         delete window.__demoOrigPerfNow;
                       }
                     }""")
-        editor_shots = [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts', 'twin-room-focus') if name in shots]
+        editor_shots = [name for name in ('twin-editor', 'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts', 'twin-room-focus', 'twin-post-card') if name in shots]
         if editor_shots or 'twin-downspout-hand' in shots:
             # The panel shell latches its flags in session storage. Keep the
             # editor's adult session separate while reusing the same browser
@@ -657,7 +785,16 @@ def _capture_pages(served, data, token, out, shots):
                         editor.wait_for_function(
                             "() => !window.__editor?.selected?.() && !window.__twinEditor?.selection?.()?.room",
                             timeout=READY_TIMEOUT)
-                        if shot == 'twin-room-focus':
+                        if shot == 'twin-post-card':
+                            _select_demo_post(editor)
+                            _ready_evaluate(editor, 'window.__twin.selectionReady')
+                            editor.evaluate("""(pose) => {
+                              window.__twin.setCameraState(pose);
+                              window.__twin.render();
+                            }""", POST_CARD_CAMERA)
+                            editor.wait_for_selector('.editor-handle-porch_post', state='visible')
+                            _show_demo_post_rows(editor)
+                        elif shot == 'twin-room-focus':
                             editor.locator('#dock-tab-scene').click(timeout=READY_TIMEOUT)
                             room_row = editor.locator('#scene-tree [data-scene-id="rm1"] [data-scene-select]')
                             if not room_row.is_visible():
@@ -791,6 +928,26 @@ def _capture_pages(served, data, token, out, shots):
                               const r = b?.roofs?.find(x => x.id === 'r1');
                               return !r?.edges?.[0]?.downspouts;
                             }""", timeout=READY_TIMEOUT)
+        if 'library-models' in shots:
+            from tools.demo_seed import seed_library_model
+            with _shot_stage('library-models', 'model seed'):
+                asset_id = seed_library_model()
+            with desktop.context.browser.new_context(viewport=dict(width=1600, height=900),
+                    device_scale_factor=1, reduced_motion='reduce', timezone_id=DEMO_TIMEZONE,
+                    service_workers='block') as library_context:
+                page = library_context.new_page()
+                prepare(page)
+                navigate(page, 'library-models', 'house/library?model=' + asset_id)
+                with _shot_stage('library-models', 'lighter versions', timeout=MODEL_READY_TIMEOUT):
+                    page.wait_for_selector('[data-model-part="Glass"]', state='visible', timeout=MODEL_READY_TIMEOUT)
+                    page.evaluate(LIBRARY_PARTS_FRAME)
+                    page.wait_for_function(
+                        '(spec) => { const s = (' + SURFACE_STATE + ')(spec); return s.blocked || s.ready; }',
+                        arg=dict(shot='library-models', final=True), timeout=MODEL_READY_TIMEOUT)
+                    _assert_surface(page, 'library-models', final=True)
+                # The Library preview has its own RAF loop, not window.__twin.
+                # Non-twin settle waits for fonts, spinners and two rendered frames.
+                save(page, 'library-models', False)
         if 'twin-lit-models' in shots:
             from tools.demo_seed import DEMO_LAMP_ENTITY, furnish_demo_room
             browser = desktop.context.browser

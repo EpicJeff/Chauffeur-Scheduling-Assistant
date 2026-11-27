@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'tools' / 'demo_capture.py'
 NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters',
          'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts',
-         'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus']
+         'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus',
+         'library-models', 'twin-post-card']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -25,11 +26,13 @@ class DemoCaptureTests(unittest.TestCase):
         from twin_editor_dom import PRELUDE, run_node
         driver = PRELUDE + r'''
 const check = new Function('return (' + input.guard + ')')();
-const node = {getClientRects: () => [{}]};
+const node = {getClientRects: () => [{}], getBoundingClientRect:()=>({top:100,bottom:140,left:1000,right:1300})};
 const nodes = new Map();
 document.querySelector = selector => nodes.get(selector) || null;
 document.querySelectorAll = selectors => selectors.split(',').map(s=>nodes.get(s.trim())).filter(Boolean);
-globalThis.getComputedStyle = () => ({visibility:'visible', display:'block'});
+document.getElementById = id => nodes.get('#'+id) || null;
+globalThis.getComputedStyle = el => ({visibility:'visible', display:'block', overflowY:el.overflowY || 'visible'});
+window.innerHeight=900; window.innerWidth=1600;
 window.Alpine = {$data: () => ({board:{tiles:[{}]}})};
 window.__editor = {ready:true, selected:()=>({pieceId:'r1',buildingId:'synth-house'})};
 window.__twinEditor = {selection:()=>({room:null})};
@@ -45,10 +48,11 @@ window.__demoGutterFrame = {run:'demo-run', spout:'demo-spout'};
 for (const shot of input.shots) {
   window.__twin.state.time = shot === 'twin-lit-models' ? 'night' : 'auto';
   window.__editor.selected = () => ({pieceId:shot.startsWith('twin-awning-')?'demo-awning':shot==='twin-posts'?'front-porch':shot==='twin-room-focus'?'rm1':'r1',buildingId:'synth-house'});
-  window.__twinEditor.selection = () => ({room: shot === 'twin-room-focus' ? 'rm1' : null});
+  window.__twinEditor.selection = () => ({room: shot === 'twin-room-focus' ? 'rm1' : null,
+    kind:'porch_post', id:'post:front-porch:0'});
   nodes.clear();
-  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts','twin-downspout-hand','twin-room-focus'].includes(shot)?'editor':'twin')
-     : shot==='wall-board'?'/home':'/app'};
+  globalThis.location = {pathname: shot.startsWith('twin') ? '/house/' + (['twin-editor','twin-awning-editor','twin-awning-box-editor','twin-posts','twin-downspout-hand','twin-room-focus','twin-post-card'].includes(shot)?'editor':'twin')
+     : shot==='library-models'?'/house/library':shot==='wall-board'?'/home':'/app'};
   for(const selector of ['.pwa-brief-greet','.pwa-brief-day [data-kind]',
      '#plan-head .pwa-plan-title','.pwa-tl .pwa-ev','[x-data="homeBoard()"]',
      '#piece-card','canvas']) nodes.set(selector,node);
@@ -61,7 +65,86 @@ for (const shot of input.shots) {
     nodes.set('#piece-card .editor-downspout-note', placedNote);
     nodes.set('.editor-handle-downspout', node);
   }
+  const modelTab = '[data-library-tab="models"][aria-selected="true"]';
+  const preview = 'canvas[aria-label="Orbit model preview with 6 ft scale figure"]';
+  const properties = {...node, overflowY:'auto', getBoundingClientRect:()=>({top:80,bottom:850,left:950,right:1550})};
+  const seat = {...node, textContent:'Seat Demo teak Real size', parentElement:properties,
+    getBoundingClientRect:()=>({top:130,bottom:280,left:1000,right:1500})};
+  if(shot==='library-models') {
+    nodes.set(modelTab,node);
+    nodes.set(preview,node);
+    nodes.set('[data-model-part="Seat"]',seat);
+    nodes.set('[data-model-parts] h3',node);
+    for(const [i,key] of ['Frame','Cushion','Glass'].entries()) nodes.set(`[data-model-part="${key}"]`,{
+      ...node, parentElement:properties,
+      getBoundingClientRect:()=>({top:290+i*160,bottom:440+i*160,left:1000,right:1500}),
+    });
+    nodes.set('[data-model-progress]',{...node,textContent:''});
+    nodes.set('[data-model-level="1"]',{...node,disabled:false});
+    nodes.set('[data-model-level="2"]',{...node,disabled:false});
+  }
+  if(shot==='twin-post-card') {
+    nodes.set('#piece-card h3',{...node,textContent:'Post 1'});
+    nodes.set('[data-scene-id="post:front-porch:1"]',node);
+  }
   assert.equal(check({shot,final:true}).ready, true, shot);
+  if(shot==='library-models') {
+    for(const selector of [modelTab, preview, '[data-model-part="Seat"]', '[data-model-progress]']) {
+      const value=nodes.get(selector);
+      nodes.delete(selector);
+      assert.equal(check({shot,final:true}).ready,false,selector+' is required');
+      nodes.set(selector,{...value,getClientRects:()=>[]});
+      if(selector!=='[data-model-progress]') assert.equal(check({shot,final:true}).ready,false,selector+' must be visible');
+      nodes.set(selector,value);
+    }
+    nodes.set('[data-model-progress]',{...node,textContent:'Preparing lighter versions…'});
+    assert.equal(check({shot,final:true}).ready,false,'wait for lighter versions to finish');
+    nodes.set('[data-model-progress]',{...node,textContent:''});
+    nodes.set('[data-model-part="Seat"]',{...node,textContent:'Seat from the original'});
+    assert.equal(check({shot,final:true}).ready,false,'Seat must show the actual Demo teak name');
+    nodes.set('[data-model-part="Seat"]',seat);
+    nodes.set('[data-model-part="Seat"]',{...seat,
+      getBoundingClientRect:()=>({top:950,bottom:1100,left:1000,right:1500})});
+    assert.equal(check({shot,final:true}).ready,false,'Seat below the fold is not ready');
+    nodes.set('[data-model-part="Seat"]',{...seat,
+      getBoundingClientRect:()=>({top:800,bottom:880,left:1000,right:1500})});
+    assert.equal(check({shot,final:true}).ready,false,'Seat must fit fully inside its scroll container');
+    nodes.set('[data-model-part="Seat"]',{...seat,
+      getBoundingClientRect:()=>({top:-10,bottom:140,left:1000,right:1500})});
+    assert.equal(check({shot,final:true}).ready,false,'Seat above viewport is not ready');
+    nodes.set('[data-model-part="Seat"]',seat);
+    for(const selector of ['[data-model-parts] h3','[data-model-part="Glass"]']) {
+      const value=nodes.get(selector);
+      nodes.set(selector,{...value,getBoundingClientRect:()=>({top:850,bottom:1000,left:1000,right:1500})});
+      assert.equal(check({shot,final:true}).ready,false,'all four rows and Parts heading must be framed');
+      nodes.set(selector,value);
+    }
+    for(const level of [1,2]) {
+      const selector=`[data-model-level="${level}"]`;
+      nodes.set(selector,{...node,disabled:true});
+      assert.equal(check({shot,final:true}).ready,false,'initial empty progress is not finished levels');
+      nodes.set(selector,{...node,disabled:false});
+    }
+  }
+  if(shot==='twin-post-card') {
+    for(const selection of [{kind:'porch',id:'post:front-porch:0'},
+        {kind:'porch_post',id:'post:front-porch:1'},null]) {
+      window.__twinEditor.selection=()=>selection;
+      assert.equal(check({shot,final:true}).ready,false,'must select the first porch post');
+    }
+    window.__twinEditor.selection=()=>({kind:'porch_post',id:'post:front-porch:0'});
+    nodes.set('#piece-card h3',{...node,textContent:'Post 2'});
+    assert.equal(check({shot,final:true}).ready,false,'card must name Post 1');
+    nodes.set('#piece-card h3',{...node,textContent:'Post 1'});
+    nodes.delete('[data-scene-id="post:front-porch:1"]');
+    assert.equal(check({shot,final:true}).ready,false,'sibling Post 2 row must exist');
+    nodes.set('[data-scene-id="post:front-porch:1"]',{getClientRects:()=>[]});
+    assert.equal(check({shot,final:true}).ready,false,'sibling Post 2 row must be visible');
+    nodes.set('[data-scene-id="post:front-porch:1"]',node);
+    nodes.delete('#piece-card');
+    assert.equal(check({shot,final:true}).ready,false,'selected post must have a visible card');
+    nodes.set('#piece-card',node);
+  }
   if(shot==='twin-posts') {
     nodes.delete('#piece-card button');
     assert.equal(check({shot,final:true}).ready,false,'posts shot requires the actual action');
@@ -127,9 +210,58 @@ for (const shot of input.shots) {
   location.pathname='/account/login';
   assert.equal(check({shot,final:true}).ready,false,shot+' wrong route');
 }
-console.log('all fourteen surfaces reject visible pairing/sign-in overlays and wrong routes');
+console.log('all sixteen surfaces reject visible pairing/sign-in overlays and wrong routes');
 '''
         code, output = run_node(driver, {'root': ROOT.as_posix(), 'guard': SURFACE_STATE, 'shots': NAMES})
+        self.assertEqual(code, 0, output)
+
+    def test_library_parts_frame_scrolls_actual_container(self):
+        sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
+        from tools.demo_capture import LIBRARY_PARTS_FRAME, SURFACE_STATE
+        from twin_editor_dom import PRELUDE, run_node
+        driver = PRELUDE + r'''
+const frame = new Function('return ('+input.frame+')')();
+const check = new Function('return ('+input.guard+')')();
+window.innerWidth=1600; window.innerHeight=900;
+globalThis.location={pathname:'/house/library'};
+const root={scrollTop:0,parentElement:null}; document.scrollingElement=root;
+const right={parentElement:root,overflowY:'visible',scrollTop:0,scrollHeight:2200,clientHeight:760,
+  getBoundingClientRect:()=>({top:100,bottom:860,left:950,right:1550})};
+const node={getClientRects:()=>[{}]};
+const contentNode=(top,height)=>({...node,parentElement:right,
+  getBoundingClientRect:()=>({top:top-root.scrollTop-right.scrollTop,
+    bottom:top+height-root.scrollTop-right.scrollTop,left:1000,right:1500})});
+const heading=contentNode(1000,24);
+const parts={parentElement:right,querySelector:s=>s==='h3'?heading:null};
+const nodes=new Map([
+  ['[data-model-parts]',parts],['[data-model-parts] h3',heading],
+  ['[data-library-tab="models"][aria-selected="true"]',node],
+  ['canvas[aria-label="Orbit model preview with 6 ft scale figure"]',node],
+  ['[data-model-progress]',{...node,textContent:''}],
+  ['[data-model-level="1"]',{...node,disabled:false}],
+  ['[data-model-level="2"]',{...node,disabled:false}],
+]);
+for(const [i,key] of ['Seat','Frame','Cushion','Glass'].entries()) nodes.set(`[data-model-part="${key}"]`,{
+  ...contentNode(1040+i*160,140),textContent:key==='Seat'?'Seat Demo teak':'original',
+});
+document.querySelector=s=>nodes.get(s)||null; document.querySelectorAll=()=>[];
+document.getElementById=id=>id==='top-nav-bar'?{getBoundingClientRect:()=>({bottom:64})}:null;
+globalThis.getComputedStyle=e=>({visibility:'visible',display:'block',overflowY:e.overflowY||'visible'});
+const spec={shot:'library-models',final:true};
+assert.equal(check(spec).ready,false,'parts initially below fold');
+frame();
+assert.equal(root.scrollTop,920,'current Library CSS scrolls the document, not the unbounded aside');
+assert.equal(right.scrollTop,0);
+assert.equal(check(spec).ready,true,'heading and all rows must fit after scrolling');
+root.scrollTop=0; right.overflowY='auto';
+assert.equal(check(spec).ready,false,'nested-container case starts clipped');
+frame();
+assert.equal(root.scrollTop,0,'nested scrollbar must not scroll the document');
+assert.equal(right.scrollTop,884);
+assert.equal(check(spec).ready,true,'rows must also fit a real containing scroll panel');
+console.log('actual Parts framing script scrolls the document or nearest scroll panel');
+'''
+        code, output = run_node(driver, dict(root=ROOT.as_posix(), frame=LIBRARY_PARTS_FRAME, guard=SURFACE_STATE))
         self.assertEqual(code, 0, output)
 
     def test_readiness_timeout_names_shot(self):
@@ -141,6 +273,9 @@ console.log('all fourteen surfaces reject visible pairing/sign-in overlays and w
         page.wait_for_function.side_effect = BrowserTimeout('timeout')
         with self.assertRaisesRegex(RuntimeError, r'wall-board: board never became ready \(12000 ms\)'):
             _wait_surface(page, 'wall-board')
+        with self.assertRaisesRegex(RuntimeError, r'library-models: model library never became ready \(60000 ms\)'):
+            _wait_surface(page, 'library-models')
+        self.assertEqual(page.wait_for_function.call_args.kwargs['timeout'], 60000)
         page.wait_for_function.side_effect = None
         page.evaluate.return_value = {'blocked': True, 'ready': True}
         with self.assertRaisesRegex(RuntimeError, 'twin-overview: sign-in or pairing screen'):
@@ -219,6 +354,9 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
     def test_list(self):
         sys.path.insert(0, str(ROOT))
         from tools import demo_capture as demo
+        self.assertEqual(list(demo.SURFACE_LABELS), NAMES)
+        self.assertEqual(demo.SURFACE_LABELS['library-models'], 'model library')
+        self.assertEqual(demo.SURFACE_LABELS['twin-post-card'], 'patio post card')
         expected = [*demo.SHOTS, *(f'{name} (opt-in)' for name in demo.OPT_IN_SHOTS)]
         result = self.cli('--list')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -228,7 +366,7 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
     def test_opt_in_shots_excluded_from_default(self):
         sys.path.insert(0, str(ROOT))
         from tools import demo_capture as demo
-        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus')
+        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card')
         for name in opt_in:
             self.assertNotIn(name, demo.SHOTS)
             self.assertIn(name, demo.OPT_IN_SHOTS)
@@ -496,6 +634,36 @@ for(const shot of ['my-day','plan','wall-board']) {
                 self.assertEqual(result.returncode,2)
                 self.assertTrue(all((Path(out)/(name+'.png')).read_bytes()==b'preexisting' for name in NAMES))
 
+    def test_library_capture_uses_isolated_context_and_non_twin_settle(self):
+        sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
+        from tools import demo_capture as demo, demo_seed
+        import live_app
+        now = demo_seed.demo_morning()
+        data = dict(demo_seed.household(now.date()), capture_time=now.isoformat(),
+                    panel_token='PLANTED_DEMO_TOKEN', _isolation=Mock())
+        desktop, page, context = Mock(), Mock(), Mock()
+        page.locator.return_value.is_visible.return_value = False
+        context.new_page.return_value = page
+        desktop.context.browser.new_context.return_value = nullcontext(context)
+        served = Mock(port=12345)
+        served.browser.return_value = nullcontext(desktop)
+        with patch.object(demo_seed, 'seed_library_model', return_value='import-demo') as seed, \
+             patch.object(live_app, 'goto_retry') as navigate, \
+             patch.object(demo, '_wait_surface'), patch.object(demo, '_assert_surface'), \
+             patch.object(demo, '_save_still') as save:
+            demo._capture_pages(served, data, 'PLANTED_DEMO_TOKEN', Path('unused'), ['library-models'])
+        seed.assert_called_once_with()
+        self.assertEqual(desktop.context.browser.new_context.call_args.kwargs['viewport'],
+                         dict(width=1600, height=900))
+        served.url.assert_called_with('house/library?model=import-demo')
+        self.assertIs(navigate.call_args.args[0], page)
+        self.assertEqual(page.wait_for_function.call_args.kwargs['arg'], dict(shot='library-models', final=True))
+        self.assertGreaterEqual(page.wait_for_function.call_args.kwargs['timeout'], 60000)
+        self.assertIn(((demo.LIBRARY_PARTS_FRAME,), {}), page.evaluate.call_args_list)
+        save.assert_called_once_with(page, 'library-models', Path('unused'), data, False, before_shot=None)
+        page.context.route.assert_called_once()
+        page.context.route_web_socket.assert_called_once()
+
     def test_served_seed_without_browser(self):
         # Exercise the actual worker startup and HTTP routes; replace only the
         # browser capture so the no-browser suite also catches swallowed errors.
@@ -633,6 +801,222 @@ except SystemExit:
                                     text=True, capture_output=True, timeout=180)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+
+    def test_sofa_glb_bytes_unchanged(self):
+        import hashlib
+        sys.path.insert(0, str(ROOT))
+        from tools.demo_seed import demo_sofa_glb
+        # Captured from the unmodified seed before adding optional UV buffers.
+        payload = demo_sofa_glb()
+        self.assertEqual(len(payload), 124888)
+        self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                         '3b9d5fab14ba54b256602eb861ac8bbdf82b9c7fee88605697de512c8d4fb262')
+
+    def test_library_model_seed_and_browser_parts_stamp(self):
+        code = r'''
+import base64, json, os, pathlib, struct, sys, tempfile
+from unittest.mock import patch
+sys.path[:0] = [str(pathlib.Path.cwd()), str(pathlib.Path.cwd() / 'tests')]
+from tools.demo_capture import isolated_data
+from tools.demo_seed import seed_library_model, INVENTED_TEXT
+
+# Refuse missing/non-demo paths before importing services or writing anything.
+os.environ.pop('CHAUFFEUR_DATA_DIR', None)
+try:
+    seed_library_model()
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('missing demo path accepted')
+with tempfile.TemporaryDirectory(prefix='normal_data_') as real_dir:
+    os.environ['CHAUFFEUR_DATA_DIR'] = real_dir
+    try:
+        seed_library_model()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('non-demo path accepted')
+    assert not list(pathlib.Path(real_dir).iterdir())
+    assert 'services.storage' not in sys.modules
+
+with isolated_data() as data:
+    from services import storage, twin_imports, twin_library, twin_materials, twin_model_records, twin_store
+    # Even a valid demo folder must refuse service paths pointing elsewhere.
+    with patch.object(storage, 'DB_PATH', str(pathlib.Path(data).parent / 'db.json')):
+        try:
+            seed_library_model()
+        except RuntimeError as exc:
+            assert 'storage' in str(exc)
+        else:
+            raise AssertionError('non-demo storage accepted')
+    with patch.object(twin_store, 'DATA_DIR', str(pathlib.Path(data).parent)):
+        try:
+            seed_library_model()
+        except RuntimeError as exc:
+            assert 'twin store' in str(exc)
+        else:
+            raise AssertionError('non-demo twin store accepted')
+    with patch.object(twin_imports, 'create', wraps=twin_imports.create) as create, \
+         patch.object(twin_model_records, 'update', wraps=twin_model_records.update) as update, \
+         patch.object(twin_materials, 'create', wraps=twin_materials.create) as create_material, \
+         patch.object(twin_library, '_urlopen', side_effect=AssertionError('demo material must not download')):
+        asset_id = seed_library_model()
+    files, label, kind = create.call_args.args
+    assert list(files) == ['demo_garden_bench.glb']
+    assert label == 'Demo garden bench' and label in INVENTED_TEXT and kind == 'furniture'
+    record = twin_model_records.get(asset_id)
+    parts = record['parts']
+    assert [p['key'] for p in parts] == ['Seat', 'Frame', 'Cushion', 'Glass']
+    assert [p['name'] for p in parts] == [p['key'] for p in parts]
+    assert [p['has_uv'] for p in parts] == [True, False, True, True]
+    assert [p['opaque'] for p in parts] == [True, True, True, False]
+    assert record['parts_version'] == 1 and record['revision'] == 3
+    create_material.assert_called_once_with({'name': 'Demo teak', 'params': {'tint': '#9a5b2e', 'roughness': 0.6}}, 'avery')
+    teak_id = record['materials']['Seat']['material']
+    teak = twin_materials.get(teak_id)
+    assert teak['name'] == 'Demo teak' and teak['name'] in INVENTED_TEXT
+    assert teak['source'] == 'user' and teak['maps'] == {} and teak['created_by'] == 'avery'
+    assert teak['params']['tint'] == '#9a5b2e' and teak['params']['roughness'] == 0.6
+    assert record['materials'] == {'Seat': {'material': teak_id, 'texture': 'real'}}
+    assert update.call_count == 2
+    assert update.call_args_list[0].args == (asset_id, {'parts': parts, 'parts_version': 1}, 1)
+    assert update.call_args_list[1].args == (asset_id, {'materials': record['materials']}, 2)
+    assert twin_imports.get(asset_id)['name'] == label
+    payload = files['demo_garden_bench.glb']
+    doc = json.loads(payload[20:20 + struct.unpack_from('<I', payload, 12)[0]])
+    primitives = doc['meshes'][0]['primitives']
+    assert len(primitives) == 4
+    assert [m['name'] for m in doc['materials']] == [p['key'] for p in parts]
+    assert doc['materials'][0]['pbrMetallicRoughness']['baseColorFactor'] == [0.78, 0.78, 0.76, 1.0]
+    assert doc['materials'][3]['alphaMode'] == 'BLEND'
+    assert doc['materials'][3]['pbrMetallicRoughness']['baseColorFactor'][3] == 0.35
+    bin_start = 28 + struct.unpack_from('<I', payload, 12)[0]
+    for primitive, part in zip(primitives, parts):
+        attrs = primitive['attributes']
+        assert ('TEXCOORD_0' in attrs) == part['has_uv']
+        assert doc['accessors'][primitive['indices']]['count'] // 3 == part['triangles'] > 0
+        if part['has_uv']:
+            uv = doc['accessors'][attrs['TEXCOORD_0']]
+            assert uv['type'] == 'VEC2' and uv['count'] == doc['accessors'][attrs['POSITION']]['count']
+            offset = bin_start + doc['bufferViews'][uv['bufferView']]['byteOffset']
+            values = struct.unpack_from('<' + str(uv['count'] * 2) + 'f', payload, offset)
+            assert min(values) == 0 and max(values) == 1
+            # Each beveled-box face owns a 6x6 vertex grid spanning the UV square.
+            for start in range(0, len(values), 72):
+                face = values[start:start + 72]
+                assert min(face[::2]) == min(face[1::2]) == 0
+                assert max(face[::2]) == max(face[1::2]) == 1
+    positions = [doc['accessors'][p['attributes']['POSITION']] for p in primitives]
+    width = max(p['max'][0] for p in positions) - min(p['min'][0] for p in positions)
+    height = max(p['max'][1] for p in positions) - min(p['min'][1] for p in positions)
+    assert 1.4 < width < 1.7 and .85 < height < 1
+
+# Decode the actual GLB in the browser's loader and execute its real stampParts.
+from twin_editor_dom import PRELUDE, run_node
+driver = PRELUDE + r"""
+const {GLTFLoader} = await import('three/addons/loaders/GLTFLoader.js');
+const {stampParts} = await import(file('static/twin/model_levels.js'));
+const bytes = Uint8Array.from(Buffer.from(input.glb,'base64'));
+const parsed = await new GLTFLoader().parseAsync(bytes.buffer,'');
+assert.deepEqual(stampParts(parsed.scene), input.parts);
+console.log('actual browser loader and stampParts agree with the seeded record');
+"""
+status, output = run_node(driver, {'root':pathlib.Path.cwd().as_posix(),
+                                 'glb':base64.b64encode(payload).decode(), 'parts':parts})
+assert status == 0, output
+print('library import, revisions, defaults, guards, GLB geometry and browser parts stamp passed')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
+                                text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_post_selection_uses_scene_disclosures(self):
+        sys.path.insert(0, str(ROOT))
+        from tools.demo_capture import _select_demo_post, _show_demo_post_rows
+        events = []
+        expanded = set()
+        selected = []
+
+        class Row:
+            def __init__(self, key):
+                self.key = key
+
+            def locator(self, selector):
+                if selector == '..':
+                    return self
+                if selector.startswith('[data-row-disclosure]'):
+                    return Disclosure(self.key)
+                self.assert_select(selector)
+                return self
+
+            def assert_select(self, selector):
+                self_outer.assertEqual(selector, '[data-scene-select]')
+
+            def count(self):
+                if 'post:front-porch:' in self.key:
+                    return int(len(expanded) == 3)
+                return 1
+
+            def scroll_into_view_if_needed(self):
+                events.append(('scroll', self.key))
+
+            def click(self):
+                selected.append(self.key)
+
+        class Disclosure(Row):
+            def count(self):
+                return int(self.key not in expanded)
+
+            def click(self):
+                expanded.add(self.key)
+                events.append(('expand', self.key))
+
+        self_outer = self
+        page = Mock()
+        host = Mock()
+        page.locator.side_effect = lambda selector: host if selector == '#scene-tree' else Mock()
+        host.locator.side_effect = Row
+        _select_demo_post(page)
+        self.assertEqual(selected, ['[data-scene-id="post:front-porch:0"]'])
+        self.assertEqual([key for action, key in events if action == 'expand'], [
+            '[data-scene-id="synth-house"]', '[data-floor="synth-house:L1"]', '[data-scene-id="front-porch"]'])
+        self.assertIn(('scroll', '[data-scene-id="post:front-porch:1"]'), events)
+        # A repeated shot leaves already-open ancestors alone.
+        _select_demo_post(page)
+        self.assertEqual(sum(action == 'expand' for action, key in events), 3)
+        page.wait_for_selector.assert_called_with('#piece-card', state='visible')
+
+        # Execute Claude's real post-selection scroll and readiness scripts,
+        # with the browser-reported regression coordinates. Removing the scroll
+        # leaves the first row above pane.top and makes this readiness fail.
+        actions = []
+        framed_page = Mock()
+        framed_page.evaluate.side_effect = lambda script: actions.append(('evaluate', script))
+        framed_page.wait_for_function.side_effect = lambda script, **kw: actions.append(('wait', script))
+        _show_demo_post_rows(framed_page)
+        from twin_editor_dom import PRELUDE, run_node
+        driver = PRELUDE + r'''
+let top=123, scrolled=false;
+document.getElementById=id=>({getBoundingClientRect:()=>({top:160,bottom:490})});
+document.querySelector=selector=>({
+  getBoundingClientRect:()=>selector.includes(':0')?{top,bottom:top+36}:{top:top+36,bottom:top+72},
+  scrollIntoView:options=>{
+    assert.ok(selector.includes('post:front-porch:1'));
+    assert.equal(options.block,'center'); top=270; scrolled=true;
+  },
+});
+for(const [kind,script] of input.actions) {
+  const fn=new Function('return ('+script+')')();
+  if(kind==='wait') {
+    assert.equal(scrolled,true,'the row must be centered before checking readiness');
+    assert.equal(fn(),true,'both rows must now be fully inside Scene');
+  } else fn();
+}
+assert.equal(scrolled,true);
+console.log('post rows above Scene are centered before readiness');
+'''
+        code, output = run_node(driver, dict(root=ROOT.as_posix(), actions=actions))
+        self.assertEqual(code, 0, output)
 
     def test_demo_furniture_glbs_and_furnish_refuses_real_data(self):
         code = r'''

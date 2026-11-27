@@ -20,7 +20,8 @@ INVENTED_TEXT = frozenset((
     'Moonkite team practice', 'Cloud orchestra', 'Paper comet workshop', 'Pretend Meadow',
     'Imaginary music loft', 'Make-believe craft studio', 'Moonbeam lantern', 'Starlight floor lamp',
     'Cloud room temperature', 'Cloud room', 'Demo ground', 'Demo cottage', 'Demo hip wing', 'Garden awning',
-    'Demo sofa', 'Demo coffee table', 'Demo armchair', 'Demo floor lamp',
+    'Demo sofa', 'Demo coffee table', 'Demo armchair', 'Demo floor lamp', 'Demo garden bench', 'Demo teak',
+    'Seat', 'Frame', 'Cushion', 'Glass',
     'Ground', 'Living', 'Storage', 'Demo patio', 'Return moonkite books', 'Collect craft paper',
     'Pick up starfruit', 'Pretend market', 'Demo pantry', 'Oat clouds', 'Starfruit',
     'Rainbow pasta', 'Paper napkins', 'Water the moonflowers', 'Sort the craft shelf', 'Moonkite demo panel'))
@@ -409,12 +410,13 @@ def _rotate_xyz(p, rx=0.0, ry=0.0, rz=0.0):
 
 
 class _MeshPart:
-    def __init__(self, material_index):
+    def __init__(self, material_index, uvs=None):
         self.material = material_index
         self.positions = []
         self.normals = []
         self.colors = []
         self.indices = []
+        self.uvs = uvs
 
     def add_beveled_box(self, cx, cy, cz, sx, sy, sz, bevel=0.03, steps=2, rx=0.0, ry=0.0, rz=0.0, color=(1.0, 1.0, 1.0)):
         """Watertight rounded/beveled box with outward CCW winding and smooth bevel normals."""
@@ -467,6 +469,8 @@ class _MeshPart:
                     self.positions.append((pr[0] + cx, pr[1] + cy, pr[2] + cz))
                     self.normals.append(nr)
                     self.colors.append(color)
+                    if self.uvs is not None:
+                        self.uvs.append(((u + 1) / 2, (v + 1) / 2))
             for j in range(nv - 1):
                 for i in range(nu - 1):
                     a = base + j * nu + i
@@ -618,6 +622,13 @@ def _pack_glb(materials, parts):
         accessors.append({'bufferView': idx_bv, 'componentType': idx_type, 'count': len(part.indices), 'type': 'SCALAR'})
         primitives.append({'attributes': {'POSITION': pos_acc, 'NORMAL': nrm_acc, 'COLOR_0': col_acc},
                            'indices': idx_acc, 'material': part.material})
+        if part.uvs is not None:
+            if len(part.uvs) != len(part.positions):
+                raise ValueError('Each UV part needs one UV per vertex')
+            uv_data = struct.pack(f'<{len(part.uvs) * 2}f', *(c for uv in part.uvs for c in uv))
+            uv_bv = append_bytes(uv_data, 34962)
+            primitives[-1]['attributes']['TEXCOORD_0'] = len(accessors)
+            accessors.append({'bufferView': uv_bv, 'componentType': 5126, 'count': len(part.uvs), 'type': 'VEC2'})
 
     while len(blob) % 4:
         blob.append(0)
@@ -746,6 +757,70 @@ def demo_furniture_glbs():
         'armchair': ('Demo armchair', 'demo_armchair.glb', demo_armchair_glb()),
         'floor_lamp': ('Demo floor lamp', 'demo_floor_lamp.glb', demo_floor_lamp_glb()),
     }
+
+
+def _garden_bench_parts():
+    """Four original materials, each kept as one glTF primitive (metres, faces +Z)."""
+    materials = [
+        dict(_pbr((0.78, 0.78, 0.76)), name='Seat'),
+        dict(_pbr((0.12, 0.20, 0.19), roughness=0.4, metallic=0.6), name='Frame'),
+        dict(_pbr((0.24, 0.46, 0.52), roughness=0.9), name='Cushion'),
+        dict(_pbr((0.65, 0.87, 0.91), roughness=0.15), name='Glass', alphaMode='BLEND'),
+    ]
+    materials[3]['pbrMetallicRoughness']['baseColorFactor'][3] = 0.35
+    seat, frame, cushion, glass = parts = [_MeshPart(i, uvs=[] if i != 1 else None) for i in range(4)]
+    # Slatted seat and back leave the wood override easy to see around the cushion.
+    for z in (-0.22, -0.07, 0.08, 0.23):
+        seat.add_beveled_box(-0.15, 0.43, z, 1.12, 0.055, 0.12, bevel=0.012)
+    for y in (0.62, 0.75, 0.88):
+        seat.add_beveled_box(-0.15, y, -0.28, 1.12, 0.10, 0.05, bevel=0.012)
+    for x in (-0.75, 0.45):
+        for z in (-0.25, 0.25):
+            frame.add_beveled_box(x, 0.21, z, 0.055, 0.42, 0.055, bevel=0.009)
+        frame.add_beveled_box(x, 0.64, 0, 0.065, 0.055, 0.62, bevel=0.012)
+        frame.add_beveled_box(x, 0.65, -0.28, 0.055, 0.50, 0.055, bevel=0.009)
+    # Small side table shares the frame material; the top is its own translucent part.
+    frame.add_beveled_box(0.63, 0.27, 0.04, 0.045, 0.54, 0.045, bevel=0.008)
+    cushion.add_beveled_box(-0.15, 0.50, 0.06, 0.78, 0.09, 0.39, bevel=0.03)
+    glass.add_beveled_box(0.63, 0.56, 0.04, 0.29, 0.018, 0.38, bevel=0.004)
+    return materials, parts
+
+
+def seed_library_model():
+    """Import an invented four-part model and set one model-wide material default."""
+    from pathlib import Path
+    import os
+
+    data_dir = os.environ.get('CHAUFFEUR_DATA_DIR')
+    if not data_dir:
+        raise RuntimeError('demo model seed requires a chauffeur_demo_ folder')
+    root = Path(data_dir).resolve()
+    if not root.name.startswith('chauffeur_demo_') or not root.is_dir():
+        raise RuntimeError('demo model seed refused non-demo folder')
+    from services import storage, twin_imports, twin_materials, twin_model_records, twin_store
+    if not Path(storage.DB_PATH).resolve().is_relative_to(root):
+        raise RuntimeError('demo model seed refused non-demo storage')
+    if not Path(twin_store.DATA_DIR).resolve().is_relative_to(root):
+        raise RuntimeError('demo model seed refused non-demo twin store')
+
+    label = 'Demo garden bench'
+    materials, parts = _garden_bench_parts()
+    if not {label, *(mat['name'] for mat in materials)} <= INVENTED_TEXT:
+        raise RuntimeError('demo model text outside invented vocabulary')
+    entry = twin_imports.create({'demo_garden_bench.glb': _pack_glb(materials, parts)}, label, 'furniture')
+    # Mirrors model_levels.stampParts: one unique named material per primitive,
+    # indexed triangles, authored UV presence, and BLEND is non-opaque.
+    stamped = twin_model_records.update(entry['id'], {
+        'parts': [dict(key=mat['name'], name=mat['name'], triangles=len(part.indices) // 3,
+                       has_uv=part.uvs is not None, opaque=mat.get('alphaMode', 'OPAQUE') == 'OPAQUE')
+                  for mat, part in zip(materials, parts)],
+        'parts_version': 1,
+    }, entry['revision'])
+    teak = twin_materials.create({'name': 'Demo teak', 'params': {'tint': '#9a5b2e', 'roughness': 0.6}}, 'avery')
+    twin_model_records.update(entry['id'], {
+        'materials': {'Seat': {'material': teak['id'], 'texture': 'real'}},
+    }, stamped['revision'])
+    return entry['id']
 
 
 def furnish_demo_room():
