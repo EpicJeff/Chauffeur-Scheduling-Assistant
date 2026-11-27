@@ -1654,6 +1654,8 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
     },
     async settle(nextPlan, { buildingId = null, levelId = null, touched = null, selection = null, timing = null } = {}) {
       const beforePlan = plan, same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const copyPartMaterials = b => ['items', 'openings'].map(list => (b[list] || [])
+        .filter(p => Object.keys(p.model_materials || {}).length).map(p => [p.id, p.model_materials]));
       const columnKey = rows => JSON.stringify(rows.map(p => [p.id,(p.columns || []).map((c,i) => [postRef(p,i),c.at,c.size])]));
       const previous = new Map((beforePlan.buildings || []).map(b => [b.id, b]));
       const onLevel = (b, list, id) => (b[list] || []).filter(p =>
@@ -1698,6 +1700,9 @@ export async function mountTwin(el, { plan, kit, tier, preserveCamera = false, r
         const withoutPosts = ({columns,src,...porch}) => porch;
         const fixed = b => Object.fromEntries(Object.entries(b).filter(([k]) => !['walls', 'rooms', 'openings', 'anchors', 'items', 'joints'].includes(k)).map(([k,v])=>[k,['porches','porches_detail'].includes(k) ? v.map(withoutPosts) : k==='porch' && v ? withoutPosts(v) : v]));
         if (!same(fixed(before), fixed(after))) rebuild = true;
+        // Deformation only moves hosted geometry; part finishes and UVs must
+        // go through the generator's selective building/material keys.
+        if (!same(copyPartMaterials(before), copyPartMaterials(after))) rebuild = true;
         for (const level of after.levels || []) {
           for (const list of ['walls', 'rooms', 'openings'])
             if (!same(ids(onLevel(before, list, level.id)), ids(onLevel(after, list, level.id)))) rebuild = true;

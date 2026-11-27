@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1011 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1012 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1012 (2026-11-27, NOT device-verified): Models mode browser proof and three fixes.**
+
+Models mode Task 7, first slice. Each spec line was checked in Chromium on the owner's house export (isolated store), and the run found three defects, fixed here.
+
+- **A per-copy override redraws at once** (`static/twin/twin_view.js` `settle`). The editor adopts a server round through `view.settle`, which treated item and opening changes as hosted-geometry deformation. A "This copy" drop or a part row therefore saved, but drew only after a reload. A changed non-empty `model_materials` map now routes through the existing selective building rebuild. Empty and missing maps are equal. Test: `tests/test_twin_model_copy_render_js.py` (items, openings, yard furniture, Clear, `{material:'original'}` over a model default).
+- **Glass-like built-in looks stale nearby lamps** (`static/twin/model_parts.js`). `glass`, `screen`, `water` and `chain_link` are code-side looks, absent from the page material manifest, so `materialCastsShadow(undefined)` read "casts" and an opaque-to-glass override changed no lamp key, while the occluder walk did drop the part. `materialCastsShadow(record, id)` now resolves a missing record by id (`SHADOWLESS_BUILTIN_LOOKS`, pinned to `surface_kinds.js` by test).
+- **No empty parts stamp** (`static/twin/model_levels.js` `buildLevels`). A model with no meshes made the Library PATCH `parts: []` and show the server's refusal on every open. A built-in now stays unstamped, as the editor's first-use path already left it. An import says it has no surfaces.
+- **Proof results:**
+  - Measured on the owner house: 39 lamps, one copy in the pool lounge, 32 lamps in its reach.
+  - Opaque-to-glass and a size fix each staled exactly those 32 lamps; the 7 out of reach stayed fresh, and the atlas key was unchanged.
+  - A colour-only override staled 0 lamps. A rebake cleared the stale lamps.
+  - Import took 3 s and a Mid rebuild 1-2 s. The model default showed on every copy, and a library material edit propagated to the part.
+  - Real size worked on parts with and without UVs, and a real built-in stamped its parts.
+- **Cost, same camera, baked store:** programs 173 to 173, with no cache key added or removed. Draws 214 to 214, triangles 1.22M to 1.22M, materials 177 to 177. Textures rose 87 to 93: the two library materials' maps, new to that scene. A 300k-triangle import built its levels in 14.5 s, and a Mid rebuild took 5.8 s. The 1M case was not measured: the test harness's upload proxy drops a 28 MB upload.
 
 **v2.499.1011 (2026-11-26, NOT device-verified): the editor edits a placed model's parts.**
 

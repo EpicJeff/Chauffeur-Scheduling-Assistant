@@ -99,6 +99,12 @@ export async function buildLevels(record, source, { signal, progress = () => {},
   check(signal);
   const regenerate = !record.parts_version;
   const parts = stampParts(source);
+  // The server refuses an empty stamp. A built-in stays unstamped, as the
+  // editor's first-use path leaves it; an import without surfaces says so.
+  if (regenerate && !parts.length) {
+    if (record.builtin) return record;
+    throw new Error('This model has no surfaces, so it has no parts or lighter versions.');
+  }
   if (regenerate) {
     const changes = { parts, parts_version: 1 };
     if (!patch) patch = async changes => {
