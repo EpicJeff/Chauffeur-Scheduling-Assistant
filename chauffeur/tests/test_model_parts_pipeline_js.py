@@ -61,6 +61,11 @@ assert.deepEqual(snapshot,JSON.parse(readFileSync(config.golden)),'untouched_ren
 console.log('ok untouched_render_identical: loadModel and two copies in the household equal pre-change main');
 
 const levels=await import(file('static/twin/model_levels.js'));
+{const refuse=async()=>{throw new Error('an empty stamp must never be sent');};
+ const builtin={id:'planter_box_01',builtin:true,revision:3};
+ assert.equal(await levels.buildLevels(builtin,new THREE.Group(),{patch:refuse,upload:refuse}),builtin,'empty built-in stays unstamped');
+ await assert.rejects(levels.buildLevels({...entry,revision:2},new THREE.Group(),{patch:refuse,upload:refuse}),/no surfaces/,'empty import says so');
+ console.log('ok empty_model_never_stamps_empty_parts');}
 const parts=levels.stampParts(source);assert.deepEqual(parts.map(p=>p.key),['Wood','unnamed','Wood~2','Glass']);
 assert.equal(parts[1].has_uv,false);assert.equal(parts[3].opaque,false);
 const uploads=[],patches=[];let revision=7;

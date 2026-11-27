@@ -67,9 +67,12 @@ export function boxUvFeet(position, normal, scale = 1) {
 
 // Library-record form of the occluder walk's opaque test
 // (bake/model_occluder_meshes.js): blend and cutout records, and glass or
-// fixture roles, cast no baked shadow.
-export function materialCastsShadow(record) {
-  if (!record) return true;
+// fixture roles, cast no baked shadow. The code-side looks (surface_kinds.js
+// BUILTIN_LOOKS) are absent from the page's material manifest, so they resolve
+// by id: every one of them that is not opaque casts none.
+export const SHADOWLESS_BUILTIN_LOOKS = Object.freeze(['glass', 'screen', 'water', 'chain_link']);
+export function materialCastsShadow(record, id = record?.id) {
+  if (!record) return !SHADOWLESS_BUILTIN_LOOKS.includes(id);
   if (['glass', 'fixture'].includes(record.id) || ['glass', 'fixture'].includes(record.role)) return false;
   return (record.params?.alpha_mode || 'opaque') === 'opaque';
 }
@@ -90,7 +93,7 @@ export function occluderInputs(record, copyMaterials = {}, materialsById = {}) {
   let differs = false;
   const shadow = parts.map(part => {
     const resolved = resolvePart(part, record.materials, copyMaterials);
-    const casts = resolved.material == null ? part.opaque !== false : materialCastsShadow(materialsById[resolved.material]);
+    const casts = resolved.material == null ? part.opaque !== false : materialCastsShadow(materialsById[resolved.material], resolved.material);
     if (casts !== (part.opaque !== false)) differs = true;
     return casts ? '1' : '0';
   }).join('');

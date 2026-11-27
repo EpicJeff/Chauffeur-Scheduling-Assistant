@@ -87,6 +87,25 @@ const same = {
   fullAndFar: r => { r.lod_percent = [60, 25, 2]; },
 };
 for (const [name, change] of Object.entries(same)) { const r = base(); change(r); assert.equal(inputsKey(r), k0, name); }
+// The real page manifest has no entries for the code-side looks (glass,
+// screen, water, chain_link); an override to one still stales the lamp.
+{
+  const pageLib = { oak: { id: 'oak', params: {} }, walnut: { id: 'walnut', params: {} } };
+  const pageKey = (r, copy = {}) => m.occluderInputs(r, copy, pageLib);
+  const p0 = pageKey(base());
+  for (const look of ['glass', 'screen', 'water', 'chain_link']) {
+    const r = base(); r.materials.Wood.material = look;
+    assert.notEqual(pageKey(r), p0, `override to built-in ${look} changes the shadow input`);
+    assert.notEqual(pageKey(base(), { Wood: { material: look } }), p0, `per-copy ${look} changes the shadow input`);
+  }
+  const metal = base(); metal.materials.Wood.material = 'black_metal';
+  assert.equal(pageKey(metal), p0, 'opaque built-in look keeps the key');
+  const kinds = await import(file('static/twin/surface_kinds.js'));
+  assert.deepEqual([...m.SHADOWLESS_BUILTIN_LOOKS].sort(),
+    Object.keys(kinds.BUILTIN_LOOKS).filter(id => kinds.builtinAlphaMode(id) !== 'opaque').sort(),
+    'shadowless list matches surface_kinds');
+  console.log('ok builtin_looks_resolve_without_manifest');
+}
 assert.notEqual(inputsKey(base(), { Wood: { material: 'glass' } }), k0, 'copy glass override');
 assert.equal(inputsKey(base(), { Wood: { material: 'original' } }), k0, 'copy original (opaque) override');
 console.log('ok occluder_inputs_change_only_on_three');
