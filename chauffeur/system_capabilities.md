@@ -1,6 +1,40 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1010 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1011 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1011 (2026-11-26, NOT device-verified): the editor edits a placed model's parts.**
+
+Models mode Task 6. A placed model's parts can now be re-skinned in the house editor, per copy or for the whole model. The model change can be undone with Ctrl+Z.
+
+- **Part rows** (`static/twin/editor/object_shelf.js`):
+  - Items, yard furniture, yard planting and opening models list one shared slot row per part.
+  - A row reads "from the model", "original" or "original (this copy)".
+  - Use selected and Clear are there. Clear removes only this copy's key.
+  - "Use original" is offered only when it changes something.
+  - Duplicate material names show their key (`Wood`, `unnamed`, `Wood~2`).
+  - Material names load on selection, and rows refresh on `chf-material-catalogue`.
+  - A failed read or stamp alerts once per card, and the rest of the card stays usable.
+- **Per-copy texture:** Real size / Model's own and Tiles live in the shared `createSlotRow` (new optional `texture` controls, plus a `reset.enabled` predicate; callers that pass neither are unchanged). They are editable only when the copy has its own material, because `resolvePart` takes the whole copy entry. On an inherited row they show read-only, with a note that the texture is set on the model in the Library.
+- **Drop scopes** (`static/twin/editor/library.js`):
+  - A material dropped on a placed model's triangle resolves to its part, through the snap range's `partKey`.
+  - The menu offers "This copy" (`set_object` with `model_materials`, keeping the copy's other parts) and "The model (all copies)" (a revision-checked PATCH).
+  - Walls, rooms, roofs, porch columns and pool water keep today's choices.
+  - Object, drawing and device placement still target structural surfaces.
+  - Model actions gain "Edit in Library", linking `house/library?model=<id>` in a new tab.
+- **Undo of model changes** (`static/twin/editor/history.js`):
+  - A `model-record` step shares the stack with round steps, in order, with the 50-step cap and redo invalidation.
+  - It pins the revision it expects. Undo and redo send that revision, and a success advances the adjacent steps for the same asset. A 409 alerts once and leaves both stacks unchanged, so another tab's edit is never overwritten, even after a cache refresh.
+  - Model-only work records no house round, so a round arriving during the PATCH never becomes a local undo step.
+- **First use of a built-in** (`static/twin/editor/model_records.js`) stamps its parts once per asset, before rows or drops need them. It retries a non-parts 409 once, and keeps a 30 s failure cooldown.
+- **Rebuilds:**
+  - A model change rebuilds only the buildings and the yard furniture part that use it, with an ordinary `view.rebuild`. No forced rebuild.
+  - Cars now key retention on the model record. A cold start loads and compiles once. A failed load retries only on a new key. Superseded revisions are pruned from the car cache, and shared resources are never disposed.
+  - `modelAssetKey` adds `kind` for imports only, so changing a heavy import's kind updates its Low-tier stand-in. Built-in keys are byte-identical, and the bake golden is unchanged.
+- **Fixed:** the v2.499.1009 regression in `test_twin_yard_reuse_js.py`. A built-in's manifest `kind` is not a build input, so the walk now skips exactly that leaf.
+
+**Tests:**
+- New: `test_twin_model_part_drops_js.py` (21 scenarios), `test_twin_model_copy_texture_js.py`, `test_twin_model_record_reuse_js.py`, and car recovery and pruning cases in `test_twin_cars_js.py`.
+- In the browser, `test_car_models_live.py` and `test_twin_objects_live.py` pass. `test_twin_objects_live.py` timed out once in a 20-file parallel run and passed alone.
 
 **v2.499.1010 (2026-11-26, NOT device-verified): the Library page has a Models tab.**
 
