@@ -24,7 +24,23 @@ INVENTED_TEXT = frozenset((
     'Seat', 'Frame', 'Cushion', 'Glass',
     'Ground', 'Living', 'Storage', 'Demo patio', 'Return moonkite books', 'Collect craft paper',
     'Pick up starfruit', 'Pretend market', 'Demo pantry', 'Oat clouds', 'Starfruit',
-    'Rainbow pasta', 'Paper napkins', 'Water the moonflowers', 'Sort the craft shelf', 'Moonkite demo panel'))
+    'Rainbow pasta', 'Paper napkins', 'Water the moonflowers', 'Sort the craft shelf', 'Moonkite demo panel',
+    # Presentation board demo seed (Task 7)
+    'Demo concert outfit', 'Demo outfit ideas for an evening band concert', 'Pick one demo look', 'looks',
+    'Dress or top', 'Skirt or layer', 'Tights', 'Heels',
+    'Look 1', 'Look 2', 'Look 3',
+    'Velvet midi dress, knit cardigan, opaque tights, block heel',
+    'Pleated blouse, satin A-line skirt, sheer tights, strap heel',
+    'Wrap midi dress, cropped jacket, ribbed tights, low pump',
+    'Demo Atelier', 'Demo Loom', 'Demo Hosiery', 'Demo Footwear', 'Demo Studio',
+    'Velvet midi dress', 'Knit stage cardigan', 'Opaque black tights', 'Block heel pump',
+    'Pleated black blouse', 'Satin A-line skirt', 'Sheer concert tights', 'Ankle strap heel',
+    'Wrap concert dress', 'Cropped crepe jacket', 'Fleece-lined tights', 'Low pointed pump',
+    'MIDI DRESS', 'CARDIGAN', 'OPAQUE TIGHTS', 'BLOCK HEEL',
+    'BLOUSE', 'A-LINE SKIRT', 'SHEER TIGHTS', 'STRAP HEEL',
+    'WRAP DRESS', 'JACKET', 'WARM TIGHTS', 'LOW PUMP',
+    'Length', 'Midi', 'Knee', 'Sleeve', 'Long', 'Pack', '2 pairs', 'Heel', '2 in', '1.5 in', 'Width', 'Regular',
+    'Here are three concert outfit looks to compare.', 'I put together three concert outfit looks.'))
 
 
 def visible_strings(value):
@@ -894,5 +910,230 @@ def furnish_demo_room():
 
     twin_store.update_model(place, 'edit', note='demo living room furniture and floor lamp')
     return assets
+
+
+def _render_board_tile(shape, bg_rgb, label):
+    """Render a crisp flat silhouette product tile as RGB JPEG bytes (offline, Pillow-only)."""
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+
+    size = 480
+    img = Image.new('RGB', (size, size), bg_rgb)
+    draw = ImageDraw.Draw(img)
+    # Keep silhouette and label inside the central y=[86..394] safe band so both
+    # 1:1 thumbnails and ~1.45:1 hero collage tiles (object-fit: cover) show them unclipped.
+    accent = tuple(max(0, c - 18) for c in bg_rgb)
+    fg = (238, 242, 248)
+    label_fg = (212, 220, 234)
+
+    if shape == 'dress':
+        # Sweetheart/V-neck bodice + flared A-line midi dress silhouette
+        draw.polygon([
+            (208, 108), (224, 108), (240, 130), (256, 108), (272, 108),
+            (288, 140), (270, 190), (318, 326), (162, 326), (210, 190), (192, 140),
+        ], fill=fg)
+        draw.line([(208, 192), (272, 192)], fill=accent, width=4)
+    elif shape == 'top':
+        # Tailored long-sleeve cardigan / blouse / cropped jacket silhouette
+        draw.polygon([
+            (196, 120), (222, 120), (240, 144), (258, 120), (284, 120),
+            (352, 174), (334, 286), (302, 280), (300, 196), (290, 320),
+            (190, 320), (180, 196), (178, 280), (146, 286), (128, 174),
+        ], fill=fg)
+        draw.line([(240, 144), (240, 320)], fill=accent, width=4)
+    elif shape == 'skirt':
+        # High-waist pleated A-line skirt silhouette
+        draw.rounded_rectangle((190, 132, 290, 156), radius=6, fill=fg)
+        draw.polygon([(192, 154), (288, 154), (334, 324), (146, 324)], fill=fg)
+        for top_x, bot_x in ((218, 198), (240, 240), (262, 282)):
+            draw.line([(top_x, 162), (bot_x, 316)], fill=accent, width=4)
+    elif shape == 'tights':
+        # Waistband + two sleek tapered legs
+        draw.rounded_rectangle((184, 114, 296, 158), radius=10, fill=fg)
+        draw.rounded_rectangle((184, 150, 228, 326), radius=14, fill=fg)
+        draw.rounded_rectangle((252, 150, 296, 326), radius=14, fill=fg)
+        draw.line([(190, 136), (290, 136)], fill=accent, width=4)
+    elif shape == 'heels':
+        # Side-profile 2-inch block heel pump silhouette
+        draw.polygon([
+            (132, 214), (174, 214), (200, 258), (266, 274), (350, 274),
+            (358, 294), (338, 304), (248, 304), (184, 272), (166, 272),
+            (166, 304), (138, 304), (138, 246), (128, 228),
+        ], fill=fg)
+    else:
+        raise ValueError(f'unknown demo board tile shape: {shape}')
+
+    try:
+        font = ImageFont.load_default(size=22)
+    except TypeError:
+        font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), label, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size - tw) / 2, 362 - th / 2), label, fill=label_fg, font=font)
+
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=86)
+    return buf.getvalue()
+
+
+def seed_board():
+    """Seed an invented concert-outfit options board, lookups, cached tiles and Argyle DM card."""
+    from pathlib import Path
+    import os
+    import time
+
+    data_dir = os.environ.get('CHAUFFEUR_DATA_DIR')
+    if not data_dir:
+        raise RuntimeError('demo board seed requires a chauffeur_demo_ folder')
+    root = Path(data_dir).resolve()
+    if not root.name.startswith('chauffeur_demo_') or not root.is_dir():
+        raise RuntimeError('demo board seed refused non-demo folder')
+    from models.schemas import ChatMessage
+    from services import boards, projects, storage
+    if not Path(storage.DB_PATH).resolve().is_relative_to(root):
+        raise RuntimeError('demo board seed refused non-demo storage')
+
+    project_title = 'Demo concert outfit'
+    goal = 'Demo outfit ideas for an evening band concert'
+    done_when = 'Pick one demo look'
+    noun = 'looks'
+    slots = [
+        {'role': 'Dress or top'},
+        {'role': 'Skirt or layer'},
+        {'role': 'Tights'},
+        {'role': 'Heels'},
+    ]
+    dm_intro = 'Here are three concert outfit looks to compare.'
+    dm_card_body = 'I put together three concert outfit looks.'
+
+    # 3 looks x 4 slots = 12 invented lookups; Look 1 ($148) is lowest so summary is "3 looks · from $148".
+    spec = [
+        ('Look 1', 'Velvet midi dress, knit cardigan, opaque tights, block heel', [
+            ('lk_0000000001', 0, 'Velvet midi dress', 'Demo Atelier', 74, 'dress', (34, 46, 66), 'MIDI DRESS',
+             [{'label': 'Length', 'value': 'Midi'}]),
+            ('lk_0000000002', 1, 'Knit stage cardigan', 'Demo Loom', 36, 'top', (52, 62, 74), 'CARDIGAN',
+             [{'label': 'Sleeve', 'value': 'Long'}]),
+            ('lk_0000000003', 2, 'Opaque black tights', 'Demo Hosiery', 12, 'tights', (49, 46, 112), 'OPAQUE TIGHTS',
+             [{'label': 'Pack', 'value': '2 pairs'}]),
+            ('lk_0000000004', 3, 'Block heel pump', 'Demo Footwear', 26, 'heels', (64, 62, 66), 'BLOCK HEEL',
+             [{'label': 'Heel', 'value': '2 in'}, {'label': 'Width', 'value': 'Regular'}]),
+        ]),
+        ('Look 2', 'Pleated blouse, satin A-line skirt, sheer tights, strap heel', [
+            ('lk_0000000005', 0, 'Pleated black blouse', 'Demo Studio', 38, 'top', (42, 58, 72), 'BLOUSE', []),
+            ('lk_0000000006', 1, 'Satin A-line skirt', 'Demo Atelier', 54, 'skirt', (68, 44, 66), 'A-LINE SKIRT',
+             [{'label': 'Length', 'value': 'Knee'}]),
+            ('lk_0000000007', 2, 'Sheer concert tights', 'Demo Hosiery', 10, 'tights', (56, 48, 96), 'SHEER TIGHTS', []),
+            ('lk_0000000008', 3, 'Ankle strap heel', 'Demo Footwear', 52, 'heels', (58, 56, 62), 'STRAP HEEL',
+             [{'label': 'Heel', 'value': '2 in'}]),
+        ]),
+        ('Look 3', 'Wrap midi dress, cropped jacket, ribbed tights, low pump', [
+            ('lk_0000000009', 0, 'Wrap concert dress', 'Demo Atelier', 82, 'dress', (38, 54, 58), 'WRAP DRESS', []),
+            ('lk_000000000a', 1, 'Cropped crepe jacket', 'Demo Loom', 44, 'top', (46, 52, 68), 'JACKET', []),
+            ('lk_000000000b', 2, 'Fleece-lined tights', 'Demo Hosiery', 14, 'tights', (44, 52, 92), 'WARM TIGHTS', []),
+            ('lk_000000000c', 3, 'Low pointed pump', 'Demo Footwear', 32, 'heels', (54, 54, 58), 'LOW PUMP',
+             [{'label': 'Heel', 'value': '1.5 in'}]),
+        ]),
+    ]
+
+    words = {project_title, goal, done_when, noun, dm_intro, dm_card_body}
+    words.update(s['role'] for s in slots)
+    for opt_title, opt_note, items in spec:
+        words.update((opt_title, opt_note))
+        for _lid, _slot, title, store, _price, _shape, _bg, tile_label, facts in items:
+            words.update((title, store, tile_label))
+            for fact in facts:
+                words.update((fact['label'], fact['value']))
+    if not words <= INVENTED_TEXT:
+        raise RuntimeError(f'demo board text outside invented vocabulary: {sorted(words - INVENTED_TEXT)}')
+
+    actor = storage.get_member('avery') or {'id': 'avery', 'name': 'Avery', 'role': 'parent'}
+    created = projects.create({
+        'title': project_title,
+        'goal': goal,
+        'done_when': done_when,
+        'owner_member_id': actor['id'],
+        'audience': 'household',
+    }, actor)
+    if created.get('status') != 'success':
+        raise RuntimeError(f'demo board project create failed: {created}')
+    project = created['project']
+
+    now = time.time()
+    mission_id = storage.add_mission({
+        'goal': goal,
+        'origin_kind': 'manual',
+        'created_by': actor['id'],
+        'project_id': project['id'],
+        'status': 'done',
+        'summary': dm_card_body,
+        'finished_at': now,
+    })
+    if not mission_id:
+        raise RuntimeError('demo board mission create failed')
+
+    tiles = []
+    options_action = []
+    for opt_title, opt_note, items in spec:
+        action_items = []
+        for lid, slot_idx, title, store, price, shape, bg, tile_label, facts in items:
+            slug = store.lower().replace(' ', '-')
+            url = f'https://demo.invalid/{slug}/{lid}'
+            record = {
+                'id': lid,
+                'mission_id': mission_id,
+                'url': url,
+                'final_url': url,
+                'title': title,
+                'store': store,
+                'image_url': f'https://demo.invalid/images/{lid}.jpg',
+                'price': float(price),
+                'currency': 'USD',
+                'available': True,
+                'fetched_at': now,
+            }
+            with storage.db_lock:
+                storage.lookups_table.insert(record)
+            action_items.append({'slot': slot_idx, 'lookup': lid, 'facts': facts})
+            tiles.append((lid, shape, bg, tile_label))
+        options_action.append({'title': opt_title, 'note': opt_note, 'items': action_items})
+
+    action = {
+        'action': 'present',
+        'title': project_title,
+        'layout': 'options',
+        'noun': noun,
+        'slots': slots,
+        'options': options_action,
+        'commit': 'buy',
+        'summary': dm_card_body,
+    }
+    fields, note = boards.build_from_present(action, storage.get_mission(mission_id))
+    if note or not fields:
+        raise RuntimeError(f'demo board build failed: {note}')
+    board = boards.create(fields)
+
+    img_dir = Path(boards.image_dir(board['id'])).resolve()
+    if not img_dir.is_relative_to(root):
+        raise RuntimeError('demo board image cache outside demo folder')
+    img_dir.mkdir(parents=True, exist_ok=True)
+    for lid, shape, bg, tile_label in tiles:
+        (img_dir / f'{lid}.jpg').write_bytes(_render_board_tile(shape, bg, tile_label))
+
+    # Post into Avery's Argyle DM without inserting a 5th member row (assert_household enforces the 4 demo humans).
+    dm = storage.get_or_create_dm(storage.ARGYLE_MEMBER_ID, actor['id'])
+    card = boards.card(board)
+    for offset, (body, payload) in enumerate(((dm_intro, None), (dm_card_body, card))):
+        msg = ChatMessage(
+            channel_id=dm['id'],
+            sender_member_id=storage.ARGYLE_MEMBER_ID,
+            ts=now - 10 + offset,
+            body=body,
+            card=payload,
+            refs=[{'kind': 'project', 'id': project['id']}, {'kind': 'mission', 'id': mission_id}],
+        ).model_dump()
+        storage.add_chat_message(msg)
+
+    return {'project_id': project['id'], 'board_id': board['id']}
+
 
 

@@ -15,7 +15,7 @@ SCRIPT = ROOT / 'tools' / 'demo_capture.py'
 NAMES = ['my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-gutters',
          'twin-awning-editor', 'twin-awning-box-editor', 'twin-posts',
          'twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus',
-         'library-models', 'twin-post-card']
+         'library-models', 'twin-post-card', 'board']
 
 
 class DemoCaptureTests(unittest.TestCase):
@@ -87,6 +87,14 @@ for (const shot of input.shots) {
     nodes.set('#piece-card h3',{...node,textContent:'Post 1'});
     nodes.set('[data-scene-id="post:front-porch:1"]',node);
   }
+  if(shot==='board') {
+    const sheet = {...node, hidden:false, getAttribute:a=>a==='data-active-index'?'0':null};
+    const screen = {...node, hidden:false};
+    const heroImg = {...node, complete:true, naturalWidth:480};
+    nodes.set('[data-board-sheet]', sheet);
+    nodes.set('[data-board-screen="0"]', screen);
+    nodes.set('[data-board-screen="0"] .chf-board-hero img', heroImg);
+  }
   assert.equal(check({shot,final:true}).ready, true, shot);
   if(shot==='library-models') {
     for(const selector of [modelTab, preview, '[data-model-part="Seat"]', '[data-model-progress]']) {
@@ -144,6 +152,27 @@ for (const shot of input.shots) {
     nodes.delete('#piece-card');
     assert.equal(check({shot,final:true}).ready,false,'selected post must have a visible card');
     nodes.set('#piece-card',node);
+  }
+  if(shot==='board') {
+    const sheet = nodes.get('[data-board-sheet]');
+    const screen = nodes.get('[data-board-screen="0"]');
+    const heroImg = nodes.get('[data-board-screen="0"] .chf-board-hero img');
+    nodes.set('[data-board-sheet]', {...sheet, hidden:true});
+    assert.equal(check({shot,final:true}).ready,false,'hidden board sheet is not ready');
+    nodes.set('[data-board-sheet]', {...sheet, getAttribute:()=>'1'});
+    assert.equal(check({shot,final:true}).ready,false,'look 1 must be the active screen');
+    nodes.set('[data-board-sheet]', sheet);
+    nodes.set('[data-board-screen="0"]', {...screen, hidden:true});
+    assert.equal(check({shot,final:true}).ready,false,'look 1 screen must be visible');
+    nodes.set('[data-board-screen="0"]', screen);
+    nodes.set('[data-board-screen="0"] .chf-board-hero img', {...heroImg, complete:false});
+    assert.equal(check({shot,final:true}).ready,false,'hero image must finish loading');
+    nodes.set('[data-board-screen="0"] .chf-board-hero img', {...heroImg, naturalWidth:0});
+    assert.equal(check({shot,final:true}).ready,false,'hero image must have naturalWidth > 0');
+    nodes.set('[data-board-screen="0"] .chf-board-hero img', heroImg);
+    nodes.set('[data-board-screen="0"] [data-board-img-placeholder]', node);
+    assert.equal(check({shot,final:true}).ready,false,'broken image placeholder is not ready');
+    nodes.delete('[data-board-screen="0"] [data-board-img-placeholder]');
   }
   if(shot==='twin-posts') {
     nodes.delete('#piece-card button');
@@ -357,6 +386,7 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
         self.assertEqual(list(demo.SURFACE_LABELS), NAMES)
         self.assertEqual(demo.SURFACE_LABELS['library-models'], 'model library')
         self.assertEqual(demo.SURFACE_LABELS['twin-post-card'], 'patio post card')
+        self.assertEqual(demo.SURFACE_LABELS['board'], 'presentation board')
         expected = [*demo.SHOTS, *(f'{name} (opt-in)' for name in demo.OPT_IN_SHOTS)]
         result = self.cli('--list')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -366,7 +396,7 @@ console.log('actual font/scene/shader readiness scripts settle, enforce 2% toler
     def test_opt_in_shots_excluded_from_default(self):
         sys.path.insert(0, str(ROOT))
         from tools import demo_capture as demo
-        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card')
+        opt_in = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card', 'board')
         for name in opt_in:
             self.assertNotIn(name, demo.SHOTS)
             self.assertIn(name, demo.OPT_IN_SHOTS)
@@ -1068,6 +1098,105 @@ with demo.isolated_data() as data:
     assert DEMO_LAMP_ENTITY in (model.get('light_fixtures') or {}), model.get('light_fixtures')
     assert len(model['light_fixtures'][DEMO_LAMP_ENTITY]) == 1
 print('furniture GLBs, gutters-off variant and furnish isolation passed')
+'''
+        result = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
+                                text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_board_capture_uses_phone_context(self):
+        sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
+        from tools import demo_capture as demo, demo_seed
+        import live_app
+        now = demo_seed.demo_morning()
+        data = dict(demo_seed.household(now.date()), capture_time=now.isoformat(),
+                    panel_token='PLANTED_DEMO_TOKEN', _isolation=Mock())
+        desktop, page, context = Mock(), Mock(), Mock()
+        page.locator.return_value.is_visible.return_value = False
+        context.new_page.return_value = page
+        desktop.context.browser.new_context.return_value = nullcontext(context)
+        served = Mock(port=12345)
+        served.browser.return_value = nullcontext(desktop)
+        with patch.object(demo_seed, 'seed_board', return_value={'project_id': 'aa11', 'board_id': 'bb22'}) as seed, \
+             patch.object(live_app, 'goto_retry') as navigate, \
+             patch.object(demo, '_wait_surface'), patch.object(demo, '_assert_surface'), \
+             patch.object(demo, '_save_still') as save:
+            demo._capture_pages(served, data, 'PLANTED_DEMO_TOKEN', Path('unused'), ['board'])
+        seed.assert_called_once_with()
+        kwargs = desktop.context.browser.new_context.call_args.kwargs
+        self.assertEqual(kwargs['viewport'], dict(width=390, height=844))
+        self.assertEqual(kwargs['device_scale_factor'], 2)
+        self.assertTrue(kwargs['is_mobile'])
+        served.url.assert_called_with('app#board-aa11-bb22')
+        self.assertIs(navigate.call_args.args[0], page)
+        save.assert_called_once_with(page, 'board', Path('unused'), data, False, before_shot=None)
+
+    def test_board_seed_guards_and_contents(self):
+        code = r'''
+import io, os, pathlib, re, sys, tempfile
+from unittest.mock import patch
+from PIL import Image
+sys.path[:0] = [str(pathlib.Path.cwd()), str(pathlib.Path.cwd() / 'tests')]
+from tools.demo_capture import isolated_data
+from tools.demo_isolation import assert_household
+from tools.demo_seed import seed, seed_board, INVENTED_TEXT
+
+os.environ.pop('CHAUFFEUR_DATA_DIR', None)
+try:
+    seed_board()
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('missing demo path accepted')
+with tempfile.TemporaryDirectory(prefix='normal_data_') as real_dir:
+    os.environ['CHAUFFEUR_DATA_DIR'] = real_dir
+    try:
+        seed_board()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('non-demo path accepted')
+    assert not list(pathlib.Path(real_dir).iterdir())
+    assert 'services.storage' not in sys.modules
+
+with isolated_data() as data:
+    seed()
+    from services import boards, boards_contract as C, page_lookup, storage
+    with patch.object(storage, 'DB_PATH', str(pathlib.Path(data).parent / 'db.json')):
+        try:
+            seed_board()
+        except RuntimeError as exc:
+            assert 'storage' in str(exc)
+        else:
+            raise AssertionError('non-demo storage accepted')
+    ids = seed_board()
+    assert set(ids) == {'project_id', 'board_id'}, ids
+    project = storage.get_project(ids['project_id'])
+    assert project and project['title'] == 'Demo concert outfit' and project['audience'] == 'household'
+    board = boards.get(ids['board_id'])
+    assert board and board['layout'] == 'options' and board['noun'] == 'looks'
+    assert len(board['slots']) == 4 and len(board['options']) == 3
+    lookups = storage.lookups_table.all()
+    assert len(lookups) == 12, len(lookups)
+    assert all(re.fullmatch(r'lk_[0-9a-f]{10}', r['id']) for r in lookups)
+    assert all(r['url'].startswith('https://demo.invalid/') for r in lookups)
+    assert all(r['store'] in INVENTED_TEXT and r['title'] in INVENTED_TEXT for r in lookups)
+    img_dir = pathlib.Path(boards.image_dir(board['id']))
+    for lid in boards.lookup_ids(board):
+        p = img_dir / f'{lid}.jpg'
+        assert p.is_file(), p
+        with Image.open(p) as im:
+            assert im.format == 'JPEG' and im.size == (480, 480)
+    with patch.object(page_lookup, 'fetch', side_effect=AssertionError('must serve from cache')):
+        for lid in boards.lookup_ids(board):
+            assert len(boards.image_bytes(board, lid)) > 1000
+    view = boards.view(board, storage.get_member('avery'))
+    assert set(view) == C.VIEW_KEYS and view['summary_line'] == f'3 looks{C.SEPARATOR}from $148'
+    dm = storage.get_or_create_dm(storage.ARGYLE_MEMBER_ID, 'avery')
+    msgs = storage.get_channel_messages(dm['id'], limit=10)
+    assert len(msgs) == 2 and msgs[0]['card'] is None and msgs[1]['card']['kind'] == 'board'
+    assert msgs[1]['card']['board_id'] == board['id']
+    assert_household(storage, data)
+print('board seed guards, lookups, cached tiles, view and Argyle DM passed')
 '''
         result = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
                                 text=True, capture_output=True, timeout=60)

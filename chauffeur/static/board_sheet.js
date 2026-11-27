@@ -125,7 +125,7 @@ function boardStoreLinkHtml(item) {
     }
     return '<a href="' + boardEscape(href) + '" target="_blank" rel="noopener noreferrer" class="chf-board-store-link">'
         + '<span>' + boardEscape(store) + '</span>'
-        + '<span aria-hidden="true" class="chf-board-ext">&#8599;</span>'
+        + '<span aria-hidden="true" class="chf-board-ext">&#8599;&#xFE0E;</span>'
         + '</a>';
 }
 
@@ -246,7 +246,7 @@ function boardCompareHtml(view) {
         const titleHtml = href
             ? '<a href="' + boardEscape(href) + '" target="_blank" rel="noopener noreferrer" class="chf-board-cmp-link">'
               + '<span>' + boardEscape(title) + '</span>'
-              + '<span aria-hidden="true" class="chf-board-ext">&#8599;</span>'
+              + '<span aria-hidden="true" class="chf-board-ext">&#8599;&#xFE0E;</span>'
               + '</a>'
             : '<span class="chf-board-cmp-title">' + boardEscape(title) + '</span>';
         return '<th scope="col" class="chf-board-cmp-col">' + thumb + titleHtml + '</th>';

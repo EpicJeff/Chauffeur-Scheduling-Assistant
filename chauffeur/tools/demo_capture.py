@@ -11,6 +11,7 @@ Opt-in shots (pass --shot <name>; twin-lit-models needs --timeout 240):
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-room-focus --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot library-models --timeout 240 --out "<dir>"
     venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot twin-post-card --timeout 240 --out "<dir>"
+    venv\Scripts\python.exe chauffeur/tools/demo_capture.py --shot board --timeout 240 --out "<dir>"
 
 All service imports live in the isolated worker. The supervisor owns its data
 directory and process tree, including a browser that fails during launch.
@@ -36,7 +37,7 @@ SHOTS = ('my-day', 'plan', 'wall-board', 'twin-overview', 'twin-editor', 'twin-g
 # Adding twin-eave-streams pushes the full default run over 145 s, and
 # twin-lit-models (lighting bake + model warmup) needs --timeout 240 on its own,
 # so both new shots are opt-in by name (--shot <name>) rather than in SHOTS.
-OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card')
+OPT_IN_SHOTS = ('twin-eave-streams', 'twin-lit-models', 'twin-awning-garden', 'twin-downspout-hand', 'twin-room-focus', 'library-models', 'twin-post-card', 'board')
 ALL_SHOTS = SHOTS + OPT_IN_SHOTS
 sys.path[:0] = [str(ROOT), str(ROOT / 'tests')]
 READY_TIMEOUT = 12000
@@ -46,7 +47,7 @@ MODEL_READY_TIMEOUT = 60000
 SURFACE_LABELS = dict(zip(ALL_SHOTS, ('brief', 'plan', 'board', 'twin', 'editor', 'gutters',
                                       'awning editor', 'awning ends and ceiling', 'patio posts',
                                       'eave streams', 'lit models', 'awning garden', 'hand downspout', 'room focus',
-                                      'model library', 'patio post card')))
+                                      'model library', 'patio post card', 'presentation board')))
 # Demo-only three-quarter hero pose, in scene metres. The viewer's default
 # floor-outline fit excludes the porch/overhangs and the panel's bottom shelf.
 # The served-model projection test reserves 15% around the complete buildings
@@ -185,6 +186,18 @@ SURFACE_STATE = r"""({shot, final = false}) => {
           return visible(button) && !button.disabled;
         });
     }
+  }
+  if (shot === 'board') {
+    const sheet = document.querySelector('[data-board-sheet]');
+    const screen = document.querySelector('[data-board-screen="0"]');
+    const imgs = [...document.querySelectorAll('[data-board-screen="0"] .chf-board-hero img')];
+    const placeholders = [...document.querySelectorAll('[data-board-screen="0"] [data-board-img-placeholder]')];
+    ready = path.endsWith('/app')
+      && visible(sheet) && !sheet.hidden
+      && visible(screen) && !screen.hidden
+      && sheet.getAttribute?.('data-active-index') === '0'
+      && imgs.length > 0 && placeholders.length === 0
+      && imgs.every(img => img.complete && img.naturalWidth > 0);
   }
   return {blocked, ready: !!ready};
 }"""
@@ -948,6 +961,18 @@ def _capture_pages(served, data, token, out, shots):
                 # The Library preview has its own RAF loop, not window.__twin.
                 # Non-twin settle waits for fonts, spinners and two rendered frames.
                 save(page, 'library-models', False)
+        if 'board' in shots:
+            from tools.demo_seed import seed_board
+            with _shot_stage('board', 'board seed'):
+                seeded = seed_board()
+            with desktop.context.browser.new_context(viewport=dict(width=390, height=844),
+                    device_scale_factor=2, is_mobile=True, has_touch=True,
+                    reduced_motion='reduce', timezone_id=DEMO_TIMEZONE, service_workers='block') as phone:
+                page = phone.new_page()
+                prepare(page)
+                navigate(page, 'board', f"app#board-{seeded['project_id']}-{seeded['board_id']}")
+                _assert_surface(page, 'board', final=True)
+                save(page, 'board')
         if 'twin-lit-models' in shots:
             from tools.demo_seed import DEMO_LAMP_ENTITY, furnish_demo_room
             browser = desktop.context.browser
