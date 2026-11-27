@@ -3,7 +3,7 @@ import re
 from services import storage, scope, access
 from services.voice_identity import VoiceContext, _revision, voice_names
 
-TOOLS = frozenset({'get_calendar_events', 'get_travel_time', 'get_weather', 'assign_driver_to_event_fuzzy',
+TOOLS = frozenset({'board_view', 'get_calendar_events', 'get_travel_time', 'get_weather', 'assign_driver_to_event_fuzzy',
                    'remove_override_for_event_fuzzy', 'get_shopping_list_items',
                    'add_shopping_items', 'check_off_shopping_item', 'send_family_message', 'send_direct_message',
                    'find_in_chauffeur', 'start_project', 'prepare_voice_approval', 'house', 'music', 'memory',
@@ -18,6 +18,7 @@ MUTATIONS = frozenset({'assign_driver_to_event_fuzzy', 'remove_override_for_even
 # rows too. Reads with unchecked calendar/program titles stay private, and
 # house locate is checked per action.
 SPEAKABLE = frozenset({
+    'board_view',
     'get_calendar_events', 'get_travel_time', 'get_weather', 'get_shopping_list_items',
     'assign_driver_to_event_fuzzy', 'remove_override_for_event_fuzzy',
     'house', 'music', 'memory', 'style', 'report_gap', 'prepare_voice_approval',
@@ -90,6 +91,12 @@ def row_checks_before(name, args, member):
 
 
 def row_checks_after(name, result, *, check_drive_digest=True):
+    if name == 'board_view':
+        from services import boards
+        board = boards.get(result.get('board_id')) if isinstance(result, dict) else None
+        project = storage.get_project(board['project_id']) if board else None
+        return bool(project and project.get('id') == result.get('project_id')
+                    and project.get('audience') == 'household' and boards.can_see(board, access.HOUSE))
     if name == 'get_calendar_events' and isinstance(result, dict):
         # Match the audible HOUSE projection, including hashed Busy ids.
         sources = {r.get('id'): r for r in access.cached_schedule().get('events', [])}
@@ -195,7 +202,9 @@ def dispatch(name, args, ctx: VoiceContext, focus_key=None):
     if name == 'prepare_voice_approval':
         from services.voice_approval import prepare
         return prepare(ctx, args.get('mission_ref') or '', args.get('kind') or 'submit')
-    if name == 'get_calendar_events':
+    if name == 'board_view':
+        result = tools.board_view(args.get('board_id'), acting_member=principal or ctx.member(), focus_key=focus_key)
+    elif name == 'get_calendar_events':
         result = tools.get_calendar_events(args.get('start_date'), args.get('end_date'), spoken=True,
                                            member_name=args.get('member_name') or '')
     elif name == 'get_travel_time':

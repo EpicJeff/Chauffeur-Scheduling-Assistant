@@ -155,22 +155,8 @@ def _check_url(url, source):
 
 
 def _check_public(url):
-    """Refuse a host that resolves to loopback, private, link-local or other non-public space."""
-    parts = urlsplit(url)
-    try:
-        infos = _resolve(parts.hostname, parts.port or 443, proto=socket.IPPROTO_TCP)
-    except OSError as exc:
-        raise OSError(f'Could not resolve {parts.hostname}') from exc
-    if not infos:
-        raise OSError(f'Could not resolve {parts.hostname}')
-    for info in infos:
-        address = ipaddress.ip_address(str(info[4][0]).split('%')[0])
-        mapped = getattr(address, 'ipv4_mapped', None)
-        for ip in (address, mapped) if mapped else (address,):
-            if (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved
-                    or ip.is_multicast or ip.is_unspecified):
-                raise DownloadError('That address is not a public one.')
-    return url
+    from services import net_guard
+    return net_guard.check_public(url, error=DownloadError, resolver=_resolve)
 
 
 class _GuardedRedirect(HTTPRedirectHandler):

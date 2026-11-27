@@ -181,6 +181,8 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         '{"action":"subject","kind":"<kind>","id":"<id from find_in_chauffeur>"}\n'
         '{"action":"propose","tool":"<PROPOSE tool>","args":{...},'
         '"summary":"<one line a parent reads>","why":"<reason>"}\n'
+        '{"action":"look_up","url":"<a product or listing page you found>"}\n'
+        '{"action":"present","title":"<title>","layout":"options|compare|list","noun":"<plural, e.g. looks>","slots":[{"role":"<slot>"}],"options":[{"title":"<title>","note":"<one line>","items":[{"slot":0,"lookup":"<lookup id>","facts":[{"label":"<label>","value":"<value>"}]}]}],"commit":"buy|book|contact|none","summary":"<one line>","next_action":"<optional>"}\n'
         '{"action":"research","question":"<web question>"}\n'
         '{"action":"browse","goal":"<what to learn or do on the site, in words>","site":"<the site, e.g. bodewell.com>",'
         '"start_url":"<optional: to RESUME a capped browse, its stopped_at>"}\n'
@@ -191,6 +193,12 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         'approval>","next_action":"<the one thing the person should do next, '
         'short, imperative; optional>","next_action_at":"<YYYY-MM-DD, optional>"}\n'
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
+        "When the goal is to find, choose or compare things, end with present, not finish. "
+        "Look up every item you will show. Never type a URL or price you did not get from a tool. "
+        "options: alternatives a person chooses among; with several slots an option is a set that goes together and the total shows; with one slot each option is one thing. "
+        "compare: a few things judged on the same attributes, as a table with an item per column. "
+        "list: things to gather or do, not to choose among, as a checklist. "
+        "A running work stage may end with present in place of stage_done; omit stage_id for a mission final action.\n"
         "Prefer finishing with a small set of strong proposals over endless "
         "research.\n"
         "For a goal needing a plan, interview first (at most two rounds of five), record answers on the mission, then propose stages for approval. "
@@ -289,13 +297,24 @@ def _user_prompt(mission: dict) -> str:
                   'attempt': {'outcome': (rj.get('attempt') or {}).get('outcome')} if rj.get('attempt') else None}
         lines.append(f"[{s['idx']}] {s['kind']} {s.get('name') or ''} "
                      f"args={_compact(s.get('args_json'), 200)} "
-                     f"result={_compact(rj)}")
+                     f"result={json.dumps(rj, ensure_ascii=False) if s.get('name') == 'look_up' else _compact(rj)}")
     if not steps:
         lines.append("(none yet — plan your first move)")
     lookup = _last_lookups.pop(mission['id'], None)
     if lookup is not None:
         lines.append("LAST LOOKUP (shown once, not kept):")
         lines.append(json.dumps(lookup, ensure_ascii=False))
+    from services import page_lookup
+    lookups = page_lookup.for_mission(mission['id'])
+    if lookups:
+        cap = (storage.get_settings() or {}).get('mission_cap_lookups', 30)
+        cap = 30 if cap is None else max(0, int(cap))
+        lines.append('LOOKUPS:')
+        for record in sorted(lookups, key=lambda r: r.get('fetched_at') or 0)[:cap]:
+            title = ' '.join(str(record.get('title') or '').split())[:60]
+            store = ' '.join(str(record.get('store') or '').split())
+            price = f"{record['price']:g} {record.get('currency') or ''}" if record.get('price') is not None else 'no price'
+            lines.append(f"{record['id']} | {title} | {store} | {price}")
     lines.append("Reply with your ONE next action as JSON.")
     return '\n'.join(lines)
 
@@ -493,7 +512,7 @@ def about_block(mission: dict) -> str:
 
 
 def _done_card(mission: dict) -> dict:
-    from services import occasions
+    from services import occasions, boards
     kind, sid, _ = subject_of(mission)
     drafts = []
     checks = []
@@ -506,12 +525,15 @@ def _done_card(mission: dict) -> dict:
                 drafts.append({'to': result.get('to', (row.get('args') or {}).get('to')),
                                'words': result.get('words', (row.get('args') or {}).get('words'))})
     return {'kind': 'mission_done', 'mission_id': mission['id'],
+            'boards': [{'board_id': b['id'], 'project_id': b['project_id'], 'title': b['title']}
+                       for s in storage.get_mission_steps(mission['id'])
+                       if s.get('name') == 'present' and (b := boards.get((s.get('result_json') or {}).get('board_id')))],
             'summary': mission.get('summary') or '', 'drafts': drafts,
             'open': checks + ([str(g['label']) for g in occasions.gap_report(sid).get('gaps', [])]
                               if kind == 'occasion' else [])}
 
 
-def _dm_person(mission: dict, text: str) -> None:
+def _dm_person(mission: dict, text: str, card=None) -> None:
     """One message to whoever started the mission (the parents when nobody
     did), in their Argyle DM. Never raises."""
     refs = [{'kind': 'mission', 'id': mission['id']}]
@@ -540,8 +562,9 @@ def _dm_person(mission: dict, text: str) -> None:
             if any(((storage.get_chat_message(i) or {}).get('card') or {}).get('state') == 'open'
                    for i in step.get('chat_message_ids') or []):
                 settle_ask_cards(mission['id'], step['id'], 'Moved on')
-        card = (_done_card(mission) if mission.get('status') == 'done' and mission.get('plan')
-                else ask_card(mission))
+        if card is None:
+            card = (_done_card(mission) if mission.get('status') == 'done' and mission.get('plan')
+                    else ask_card(mission))
         if card and card.get('kind') == 'work':
             # Chat rendering and settlement share the mission-ask envelope.
             card = {**card, 'kind': 'mission_ask', 'stage_kind': 'work'}
@@ -1457,7 +1480,7 @@ def _finish_too_early(mission: dict, res: dict):
             "scheduling or pricing page you know, or ask the person. Finish only after that.")
 
 
-def _land_finish(mission: dict, res: dict, *, next_action_rev=None) -> None:
+def _land_finish(mission: dict, res: dict, *, next_action_rev=None, card=None) -> None:
     """A finish reaches the thread (a `mission` history entry and a
     pre-filled next step) and the person (a DM). A `submitted` note is said
     outright ("Booked: {facts}, confirmation {n}"); otherwise "Nothing is
@@ -1503,7 +1526,7 @@ def _land_finish(mission: dict, res: dict, *, next_action_rev=None) -> None:
                 message = f"{summary} (The thread \"{thread.get('title')}\" was closed, so I left it closed.){tail}"
             storage.append_thread_history(tid, {'kind': 'mission', 'text': summary + tail, 'next_action': entry_next,
                                                 'next_action_at': entry_when, 'mission_id': mission['id'], 'who': 'argyle'})
-    _dm_person(mission, message)
+    _dm_person(mission, message, card=card)
     if thread:
         _sit.touched('thread', tid)
 
@@ -1583,7 +1606,7 @@ def _step_once(mission: dict) -> dict:
     try:
         # The planner was charged above. Only its chosen work action is guarded;
         # browse starts its own thread and retains its independent caps.
-        with budget_guard.guard() if work and action in ('tool', 'research') else nullcontext():
+        with budget_guard.guard() if work and action in ('tool', 'research', 'look_up') else nullcontext():
             return _run_planner_action(mission, res, settings, action)
     except budget_guard.BudgetExhausted:
         with storage.db_lock:
@@ -1599,7 +1622,7 @@ def _run_planner_action(mission, res, settings, action):
     with storage.db_lock:
         if not planned.work_is_current(mission['id'], stage_id, int(mission.get('project_pause_rev') or 0)):
             return storage.get_mission(mission['id'])
-        if action not in ('research', 'browse', 'tool'):
+        if action not in ('research', 'browse', 'tool', 'look_up'):
             # These transitions can emit asks or write proposals. Apply them
             # atomically with the cancellation check; never hold the lock over
             # an external research/browser/read call.
@@ -1743,6 +1766,17 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         _sit.touched('mission', mid)
         return storage.get_mission(mid)
 
+    if action == 'look_up':
+        from services import page_lookup
+        url = res.get('url') or ''
+        out = page_lookup.look_up_page(url, mid)
+        with storage.db_lock:
+            if not planned.work_is_current(mid, stage_id, int(mission.get('project_pause_rev') or 0)):
+                return storage.get_mission(mid)
+            storage.add_mission_step(mid, {'kind': 'tool', 'name': 'look_up',
+                                           'args_json': {'url': url}, 'result_json': out})
+        return storage.get_mission(mid)
+
     if action == 'research':
         from services import web
         question = (res.get('question') or '').strip()
@@ -1819,6 +1853,53 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
         _dm_person(mission, f"{q} (mission: {mission.get('goal')}). Reply here, or on the thread card.")
         return row
 
+    if action == 'present':
+        from services import boards
+        mission = storage.get_mission(mid)
+        work = planned.running_work(mission)
+        plan = mission.get('plan')
+        if plan and not work and any(s.get('state') in ('proposed', 'running')
+                or (s.get('kind') == 'work' and s.get('state') == 'pending') for s in plan.get('stages', [])):
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused',
+                'result_json': {'note': 'Finish the open stages before finishing the plan.'}})
+            return storage.get_mission(mid)
+        fields, note = boards.build_from_present(res, mission)
+        present_stage_id = work['id'] if work else None
+        if note:
+            steps = storage.get_mission_steps(mid)
+            boundary = max((i for i, s in enumerate(steps) if s.get('name') == 'present'
+                and (s.get('result_json') or {}).get('stage_id') == present_stage_id), default=-1)
+            failed_before = any(s.get('name') == 'present_refused'
+                and (s.get('result_json') or {}).get('stage_id') == present_stage_id for s in steps[boundary + 1:])
+            storage.add_mission_step(mid, {'kind': 'note', 'name': 'present_refused',
+                'result_json': {'note': note, 'stage_id': present_stage_id}})
+            if not failed_before:
+                return storage.get_mission(mid)
+            if work:
+                result = planned.finish_work(mid, {**res, 'stage_id': work['id']})
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'stage_done' if result.get('status') == 'success' else 'refused',
+                    'result_json': {'note': result.get('message')}})
+                return storage.get_mission(mid)
+            storage.add_mission_step(mid, {'kind': 'llm', 'name': 'finish', 'result_json': res})
+            if plan: plan['state'] = 'done'
+            _close(mid, 'done', summary=(res.get('summary') or '').strip(), **({'plan': plan} if plan else {}))
+            return _finish_tail(mission, res)
+        board = boards.create(fields)
+        if work:
+            result = planned.planner_action(mid, {**res, 'stage_id': work['id'], 'board_id': board['id']})
+            if result.get('status') != 'success':
+                boards.discard(board['id'])
+                storage.add_mission_step(mid, {'kind': 'note', 'name': 'refused', 'result_json': {'note': result.get('message')}})
+                return storage.get_mission(mid)
+            storage.add_mission_step(mid, {'kind': 'llm', 'name': 'present', 'result_json': {**res, 'stage_id': present_stage_id, 'board_id': board['id']}})
+            missions_row = storage.get_mission(mid)
+            _dm_person(missions_row, (res.get('summary') or '').strip(), card=boards.card(board))
+            return missions_row
+        storage.add_mission_step(mid, {'kind': 'llm', 'name': 'present', 'result_json': {**res, 'stage_id': present_stage_id, 'board_id': board['id']}})
+        if plan: plan['state'] = 'done'
+        _close(mid, 'done', summary=(res.get('summary') or '').strip(), **({'plan': plan} if plan else {}))
+        return _finish_tail(mission, res, card=None if plan else boards.card(board))
+
     if action == 'finish':
         with storage.db_lock:
             mission = storage.get_mission(mid)
@@ -1842,28 +1923,7 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
                 plan['state'] = 'done'
             row = _close(mid, 'done', summary=(res.get('summary') or '').strip(),
                          **({'plan': plan} if plan else {}))
-        mission = storage.get_mission(mid)
-        # The draft and finish are separate scheduler steps; use the captured
-        # revision saved with the draft, never a new read at finish time.
-        drafts = [(s.get('ts') or 0, s.get('result_json') or {}) for s in storage.get_mission_steps(mid)
-                  if s.get('kind') == 'draft'
-                  and (s.get('args_json') or {}).get('thread_id') == mission.get('origin_ref')
-                  and (s.get('result_json') or {}).get('status') == 'ok']
-        # Planned thread drafts reach draft_message through the approved tool
-        # wrapper. Plain draft_message stage rows only save supplied words and
-        # have no thread revision, so they fall back to the launch revision.
-        drafts.extend((row.get('done_at') or 0, row.get('result') or {})
-                      for stage in (mission.get('plan') or {}).get('stages', [])
-                      for row in stage.get('rows', [])
-                      if row.get('tool') == 'draft_thread_message' and row.get('state') == 'done'
-                      and (row.get('result') or {}).get('thread_id') == mission.get('origin_ref'))
-        draft = max(drafts, key=lambda item: item[0])[1] if drafts else {}
-        # No drafted revision (research, browse, a plain draft row): the
-        # thread's revision captured at launch. A legacy row without one is None.
-        rev = draft.get('next_action_rev')
-        if rev is None and mission.get('origin_kind') == 'thread':
-            rev = mission.get('origin_rev')
-        _land_finish(mission, res, next_action_rev=rev)
+        _finish_tail(mission, res)
         return row
 
     if action == 'give_up':
@@ -1873,6 +1933,33 @@ def _apply_planner_action(mission, res, settings, action, stage_id):
 
     storage.add_mission_step(mid, {'kind': 'note', 'name': 'unparsed',
                                    'result_json': {'got': _compact(res, 300)}})
+    return storage.get_mission(mid)
+
+
+def _finish_tail(mission, res, card=None):
+    mid = mission['id']
+    mission = storage.get_mission(mid)
+    # The draft and finish are separate scheduler steps; use the captured
+    # revision saved with the draft, never a new read at finish time.
+    drafts = [(s.get('ts') or 0, s.get('result_json') or {}) for s in storage.get_mission_steps(mid)
+              if s.get('kind') == 'draft'
+              and (s.get('args_json') or {}).get('thread_id') == mission.get('origin_ref')
+              and (s.get('result_json') or {}).get('status') == 'ok']
+    # Planned thread drafts reach draft_message through the approved tool
+    # wrapper. Plain draft_message stage rows only save supplied words and
+    # have no thread revision, so they fall back to the launch revision.
+    drafts.extend((row.get('done_at') or 0, row.get('result') or {})
+                  for stage in (mission.get('plan') or {}).get('stages', [])
+                  for row in stage.get('rows', [])
+                  if row.get('tool') == 'draft_thread_message' and row.get('state') == 'done'
+                  and (row.get('result') or {}).get('thread_id') == mission.get('origin_ref'))
+    draft = max(drafts, key=lambda item: item[0])[1] if drafts else {}
+    # No drafted revision (research, browse, a plain draft row): the
+    # thread's revision captured at launch. A legacy row without one is None.
+    rev = draft.get('next_action_rev')
+    if rev is None and mission.get('origin_kind') == 'thread':
+        rev = mission.get('origin_rev')
+    _land_finish(mission, res, next_action_rev=rev, card=card)
     return storage.get_mission(mid)
 
 

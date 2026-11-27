@@ -1419,6 +1419,10 @@ async def slow_request_logger(request, call_next):
 @app.middleware("http")
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
+    if (re.fullmatch(r'/api/projects/[^/]+/boards/[^/]+/image/lk_[0-9a-f]{10}', request.url.path)
+            and response.status_code == 200
+            and response.headers.get('Cache-Control') == 'private, max-age=86400'):
+        return response
     if (request.url.path.startswith('/api/house/twin/materials/')
             and response.status_code == 200 and 'immutable' in response.headers.get('Cache-Control', '')):
         return response
@@ -6833,6 +6837,40 @@ def project_tick(project_id: str, body: Any = Body(default={}), request: Request
         out = {'status': 'success', 'result': result, 'rows': projects.rows(storage.get_project(project_id), actor)}
         _tick_remember(project_id, key, 200, out, actor['id'])
     return out
+
+
+def _board_for_actor(project_id, board_id, actor):
+    from services import boards
+    try:
+        _project_for_actor(project_id, actor)
+    except HTTPException as exc:
+        if exc.status_code != 404: raise
+        raise HTTPException(status_code=404, detail="This board is no longer available.")
+    board = boards.get(board_id)
+    if not board or board['project_id'] != project_id or not boards.can_see(board, actor):
+        raise HTTPException(status_code=404, detail="This board is no longer available.")
+    return board
+
+
+@app.get("/api/projects/{project_id}/boards/{board_id}")
+def project_board(project_id: str, board_id: str, request: Request = None):
+    from services import boards, access
+    with access.batch():
+        actor = _piece_viewer(request)
+        return boards.view(_board_for_actor(project_id, board_id, actor), actor)
+
+
+@app.get("/api/projects/{project_id}/boards/{board_id}/image/{lookup_id}")
+def project_board_image(project_id: str, board_id: str, lookup_id: str, request: Request = None):
+    from services import boards, deletion, access
+    from fastapi.responses import Response
+    with access.batch(), deletion.acting_for('project', project_id):
+        board = _board_for_actor(project_id, board_id, _piece_viewer(request))
+        try:
+            data = boards.image_bytes(board, lookup_id)
+            return Response(data, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=86400'})
+        except Exception:
+            raise HTTPException(status_code=404, detail="This image is no longer available.")
 
 
 @app.get("/api/projects/{project_id}")

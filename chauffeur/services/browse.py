@@ -11,6 +11,9 @@ import json
 import logging
 import os
 import re
+import signal
+import subprocess
+import threading
 import time
 import urllib.request
 from typing import Optional
@@ -368,6 +371,57 @@ def _headless() -> bool:
     return not os.environ.get('DISPLAY')
 
 
+RENDER_TIMEOUT_MARGIN_S = 10
+_render_worker = threading.local()
+
+
+def _remember_render_driver(pw):
+    state = getattr(_render_worker, 'state', None)
+    if state is None:
+        return
+    # The driver owns the Chromium child process. Capture it before launch can hang.
+    try:
+        state['process'] = pw._impl_obj._connection._transport._proc
+    except AttributeError:
+        return  # Offline fake launches have no driver.
+    if state['cancelled'].is_set():
+        threading.Thread(target=_kill_render_driver, args=(state,), daemon=True).start()
+
+
+def _kill_render_driver(state):
+    """Emergency OS teardown, never a cross-thread Playwright sync call."""
+    proc = state.get('process')
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        if os.name == 'nt':
+            subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], timeout=2,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            # The add-on runs Linux. Kill descendants before their driver so a
+            # stuck Chromium cannot survive a closed Playwright connection.
+            parents = {}
+            for name in os.listdir('/proc'):
+                if name.isdigit():
+                    try:
+                        with open(f'/proc/{name}/stat') as f:
+                            parents[int(name)] = int(f.read().rsplit(')', 1)[1].split()[1])
+                    except (OSError, ValueError, IndexError):
+                        pass
+            tree = [proc.pid]
+            for parent in tree:
+                tree.extend(pid for pid, ppid in parents.items() if ppid == parent and pid not in tree)
+            for pid in reversed(tree):
+                try: os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError: pass
+    except Exception:
+        logger.exception('Could not kill rendered-page process tree')
+    finally:
+        try: proc.kill()
+        except (OSError, ProcessLookupError): pass
+
+
 def _launch(headless: bool = None):
     """Test seam: tests replace this to simulate a missing binary."""
     from playwright.sync_api import sync_playwright
@@ -377,6 +431,25 @@ def _launch(headless: bool = None):
     try:
         system = _system_chromium(pw.chromium.executable_path)
         kw = {'headless': headless, 'args': [f'--window-size={W},{H}']}
+        if system:
+            kw['executable_path'] = system
+        browser = pw.chromium.launch(**kw)
+    except Exception:
+        pw.stop()
+        raise
+    return pw, browser
+
+
+def _render_launch():
+    """Render-only startup: expose the driver before Chromium launch can block."""
+    from playwright.sync_api import sync_playwright
+    pw = sync_playwright().start()
+    _remember_render_driver(pw)
+    try:
+        if _render_worker.state['cancelled'].is_set():
+            raise RuntimeError('Page render timed out during startup.')
+        system = _system_chromium(pw.chromium.executable_path)
+        kw = {'headless': _headless(), 'args': [f'--window-size={W},{H}']}
         if system:
             kw['executable_path'] = system
         browser = pw.chromium.launch(**kw)
@@ -407,6 +480,74 @@ def _domain(url: str) -> str:
 MODEL = 'gemini-3.8-flash'
 # Thinking per turn, bounded: turns ran 11-37 s of thinking on the device (2026-10-11).
 THINK_BUDGET = 2048
+
+
+def render_page(url: str, timeout_s: float = 20) -> Optional[tuple[str, str]]:
+    """Guarded load, including startup and cleanup, bounded by timeout_s + 10."""
+    state = {'cancelled': threading.Event(), 'process': None}
+    done = threading.Event()
+    result = []
+    def work():
+        _render_worker.state = state
+        try:
+            result.append(_render_page(url, timeout_s))
+        finally:
+            del _render_worker.state
+            done.set()
+    threading.Thread(target=work, daemon=True).start()
+    if done.wait(max(0, timeout_s) + RENDER_TIMEOUT_MARGIN_S):
+        return result[0] if result else None
+    state['cancelled'].set()
+    # OS teardown and even a stuck finally must never delay the mission thread.
+    threading.Thread(target=_kill_render_driver, args=(state,), daemon=True).start()
+    return None
+
+
+def _render_page(url: str, timeout_s: float) -> Optional[tuple[str, str]]:
+    from services import net_guard
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    pw = browser = context = None
+    refused = []
+    try:
+        net_guard.check_public(url)
+        if _render_worker.state['cancelled'].is_set(): return None
+        pw, browser = _render_launch()
+        if _render_worker.state['cancelled'].is_set(): return None
+        context = browser.new_context(service_workers='block')
+        # Never connect to the server or call sync close inside the dispatcher.
+        # Playwright keeps an unconnected routed socket entirely mocked.
+        context.route_web_socket(re.compile('.*'), lambda ws: None)
+        page = context.new_page()
+        session = context.new_cdp_session(page)
+        main_frame_id = session.send('Page.getFrameTree')['frameTree']['frame']['id']
+        def guard(event):
+            # Playwright route handlers skip subsequent server redirect hops.
+            # CDP Fetch pauses redirected requests too, before they leave.
+            try:
+                net_guard.check_public(event['request']['url'])
+            except Exception:
+                if event.get('resourceType') == 'Document' and event.get('frameId') == main_frame_id:
+                    refused.append(event['request']['url'])
+                session.send('Fetch.failRequest', {'requestId': event['requestId'], 'errorReason': 'BlockedByClient'})
+                return
+            session.send('Fetch.continueRequest', {'requestId': event['requestId']})
+        session.on('Fetch.requestPaused', guard)
+        session.send('Fetch.enable', {'patterns': [{'urlPattern': '*', 'requestStage': 'Request'}]})
+        page.goto(url, timeout=timeout_s * 1000, wait_until='load')
+        try:
+            page.wait_for_load_state('networkidle', timeout=1500)
+        except PlaywrightTimeoutError:
+            pass  # Trackers may stay busy after the useful document has loaded.
+        net_guard.check_public(page.url)
+        if refused: return None
+        return page.url, page.content()
+    except Exception:
+        return None
+    finally:
+        for obj, method in ((context, 'close'), (browser, 'close'), (pw, 'stop')):
+            if obj:
+                try: getattr(obj, method)()
+                except Exception: pass
 
 
 def _client(api_key: str):

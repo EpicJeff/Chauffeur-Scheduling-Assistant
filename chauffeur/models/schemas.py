@@ -1620,6 +1620,8 @@ class Settings(BaseModel):
     model_pool_lite: Optional[str] = ''
     model_pool_flash: Optional[str] = ''
     model_pool_gemma: Optional[str] = ''
+    # Page look-ups one mission may use for a presentation board.
+    mission_cap_lookups: Optional[int] = 30
     # Missions that may be launched per day.
     mission_cap_launch: Optional[int] = 3
     # LLM calls one mission may spend before it must stop.

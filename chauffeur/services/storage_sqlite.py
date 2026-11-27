@@ -28,6 +28,8 @@ _VALID_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # produced by _translate() use the identical expression text, which is what
 # lets SQLite match them to these indexes.
 INDEX_SPEC = {
+    "lookups": [["id"], ["mission_id"]],
+    "boards": [["id"], ["project_id"]],
     "distance_cache": [["origin", "destination"]],
     "geocode_cache": [["address"]],
     "event_configs": [["google_id"]],

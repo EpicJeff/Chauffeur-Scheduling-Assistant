@@ -538,6 +538,8 @@ with db_lock:
     asks_table = db.table('asks')
     mind_noticings_table = db.table('mind_noticings')
     mind_insights_table = db.table('mind_insights')
+    lookups_table = db.table('lookups')
+    boards_table = db.table('boards')
     missions_table = db.table('missions')
     mission_steps_table = db.table('mission_steps')
     # Per-member music (favorites + recently chosen). OURS on purpose: Music

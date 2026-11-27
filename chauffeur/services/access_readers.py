@@ -9,6 +9,15 @@ CLASSES = ('4.1-signed-in', '4.2-conversation', '4.3-channel', '4.4-engine', '4.
 R, P, T, F = 'route', 'route-prefix', 'tool', 'reader'
 
 READERS = [
+    ((R, 'GET', '/api/projects/{project_id}/boards/{board_id}'), '4.1-signed-in', ('thread', 'mission', 'program'), 'projects.can_see'),
+    ((R, 'GET', '/api/projects/{project_id}/boards/{board_id}/image/{lookup_id}'), '4.1-signed-in', ('thread', 'mission', 'program'), 'projects.can_see'),
+    ((T, 'board_view'), '4.2-conversation', ('thread', 'mission', 'program'), 'projects.can_see; _project_readable'),
+    ((F, 'services.agent_tools_v2.board_view'), '4.2-conversation', ('thread', 'mission', 'program'), 'projects.can_see; _project_readable'),
+    ((F, 'services.missions._finish_tail'), '4.4-engine', ('thread', 'mission'), '_land_finish; _dm_person'),
+    ((F, 'services.missions._done_card'), '4.4-engine', ('thread', 'mission'), '_dm_person applies recipient visibility'),
+    ((F, 'services.boards.view'), 'INTERNAL', ('mission',), 'caller applies projects.can_see'),
+    ((F, 'services.boards.can_see'), '4.1-signed-in', ('mission',), 'project_visible / projects.can_see; source mission record_visible; keeper card suppression'),
+    ((F, 'services.boards.for_project'), 'INTERNAL', ('mission',), 'caller applies projects.can_see'),
     *[((R, method, path), '4.1-signed-in', ('program',), 'public curriculum; library.runners applies project_visible and record_view')
       for method, path in [
           ('GET', '/api/library'), ('POST', '/api/library'),
