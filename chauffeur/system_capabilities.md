@@ -1,6 +1,29 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1008 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1009 (2026-11-26).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1009 (2026-11-26, NOT device-verified): models load with their fix, their part materials and levels at chosen percents.**
+
+Models mode Task 4, the client half. Nothing new is visible yet: the Library Models tab (Task 5) and the editor's controls (Task 6) are the hand paths that set these values. This release makes every consumer honour them.
+
+- **`loadModel` applies the record** (`static/twin/twin_library.js`). The size and turn fix, the model's default part materials, and each copy's `model_materials` (including `{material: 'original'}`) are applied at load. That covers placed copies, openings, yard furniture and planting, cars and Library thumbnails. Records come from `modelRecord(id)`: one shared fetch per id, seeded by import and PATCH replies, and failed reads cached for 30 s. Meshes carry `userData.partKey`, and merged snap ranges add `partKey` beside their existing owner fields. Retained LOD meshes add no ranges, so weather clipping and the fixtures filter behave as before.
+- **Overrides are cheap.** A part resolves through the scene's own wall and yard slot cache, using only the untinted instance. Copies with the same UV choice share one geometry whose position, normal and index buffers are the original's; only `uv` differs. Authored UVs sit behind a hidden getter, so JSON and `clone()` skip them. There is no per-frame work and no new shader or sampler. Disposing one copy keeps the scene's borrowed materials. Hosts must never dispose one `clone(true)` copy while a sibling still renders.
+- **Levels at chosen percents** (`static/twin/model_levels.js`). `buildLevels` stamps parts first, then generates and uploads Full (when below 100%), mid and far at the record's `lod_percent`. Each upload carries `percent`. `pendingLevels` treats a level below revision 1 as pending, so an interrupted legacy regeneration resumes. A fully regenerated model is never queued again. Generated files carry a `modelLevelAnchor` on the authored original, so mid and far stay aligned with Full, and a Full change regenerates only Full. Low loads of far never fetch the original. Level URLs add `?v=<revision>` only for revisions above 0, with one auth token. Uploads keep the 413 halving on non-JSON replies. `source: true` loads stay out of the model cache.
+- **Cars:** yaw is `spot.rotation + (fix.turn ? fixTurnRadians(fix) : longest-side auto turn)`. A turn of 0, which the server writes on every fix, keeps the auto turn.
+- **Low tier:** an import over 300k triangles with no stored size still gets the measured-size stand-in. When a generated Full exists, the triangle count comes from lod0.
+
+**Untouched houses are unchanged:**
+- r187 program keys and the material owners stay the same across a stamp and regeneration;
+- revision-0 URLs and snap ranges are byte-identical to before;
+- UV offsets on untouched model meshes match the previous builder byte for byte;
+- bake keys still match the 33-lamp golden.
+
+`modelAssetKey`'s new shape rebuilds each building once after the upgrade; it needs no rebake.
+
+**Tests:**
+- `test_model_parts_pipeline_js.py` runs the pipeline and three rounds of review regressions (`tests/model_pipeline_fix{1,2,3}_checks.py`), against pinned-main builders where the old behaviour is the contract;
+- `test_model_lod_import_js.py` follows the stamp protocol;
+- in the browser, `test_twin_objects_live.py` (no program compiles on a second orbit after import, undo and reload) and `test_car_models_live.py` pass.
 
 **v2.499.1008 (2026-11-26, NOT device-verified): the bake follows model changes that alter a shadow.**
 

@@ -218,9 +218,10 @@ material library the single source of every look.
   is kept only as the source for regenerating levels. Triangle counts that drive the over-300k Low
   stand-in and the import warnings read the effective full level.
 - **The fix and model-default overrides apply inside `loadModel`**, so every consumer gets them: placed
-  copies, openings, cars and Library thumbnails. On a car, a set turn fix replaces the longest-side
-  auto-turn; with no fix the auto-turn stays. Per-copy overrides apply per placement. Cars stay outside
-  the bake.
+  copies, openings, cars and Library thumbnails. A parked car's yaw is
+  `spot.rotation + (fix.turn ? fixTurnRadians(fix) : longest-side auto-turn)`: the parking spot's rotation
+  always applies, and a turn of 0 (the server writes one on every fix, a height-only fix included) keeps the
+  auto-turn. Per-copy overrides apply per placement. Cars stay outside the bake.
 - **A copy can return a part to the original material** while the model default overrides it: the
   per-copy entry `{material: 'original'}` is valid and the server accepts it. The editor row then reads
   "original (this copy)", and Clear returns it to "from the model".
