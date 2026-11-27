@@ -166,7 +166,7 @@
                 loaded: false, paidKeySet: false, paidKeyDraft: '',
                 s: {
                     missions_enabled: false,
-                    model_pool_pro: '', mission_cap_launch: 3,
+                    model_pool_pro: '', mission_cap_launch: 3, mission_cap_lookups: 30,
                     mission_step_cap: 40, mission_cap_pro_calls: 120,
                     thread_cap_photo_reads: 20,
                     contact_first_name: '', contact_last_name: '', contact_email: '', contact_phone: '',
@@ -209,6 +209,7 @@
                                 missions_enabled: !!this.s.missions_enabled,
                                 model_pool_pro: this.s.model_pool_pro || '',
                                 mission_cap_launch: Math.max(0, parseInt(this.s.mission_cap_launch, 10) || 0),
+                                mission_cap_lookups: Math.max(0, parseInt(this.s.mission_cap_lookups, 10) || 0),
                                 mission_step_cap: Math.max(0, parseInt(this.s.mission_step_cap, 10) || 0),
                                 mission_cap_pro_calls: Math.max(0, parseInt(this.s.mission_cap_pro_calls, 10) || 0),
                                 thread_cap_photo_reads: Math.max(0, parseInt(this.s.thread_cap_photo_reads, 10) || 0),

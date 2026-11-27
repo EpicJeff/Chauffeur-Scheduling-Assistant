@@ -457,6 +457,12 @@ def _cleanup(row):
                                                             | set(snapshot.get('commitments') or {})))
         storage.delete_program_lessons(pid)
     # 5: Resolve legacy shared-archive photos BEFORE losing their history.
+    from services import boards, page_lookup
+    for pid in ids['project']:
+        boards.delete_for_project(pid)
+    keep_lookups = boards.surviving_lookup_ids()
+    for mid in ids['mission']:
+        page_lookup.delete_for_mission(mid, keep_lookups)
     data_dir = os.path.dirname(storage.DB_PATH)
     for mid in ids['mission']:
         _remove_folder(os.path.join(data_dir, 'browse', mid))

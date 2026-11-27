@@ -679,6 +679,8 @@ def planner_action(mid, action):
         name = action['action']
         if mission['status'] not in missions.RUNNABLE:
             return _refused()
+        if name == 'present':
+            return finish_work(mid, {**action, 'found': {'board_id': action['board_id']}})
         if name == 'interview':
             if plan:
                 return _refused()

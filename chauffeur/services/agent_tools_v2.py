@@ -4162,6 +4162,27 @@ def get_project(project_id, acting_member=None, focus_key=None, spoken=False):
     return {'status': 'success', 'message': '\n'.join(lines), 'project': view}
 
 
+def board_view(board_id: str = None, acting_member=None, focus_key=None):
+    """Read an existing board, or the newest board on the focused thread."""
+    from services import boards, subjects, triage, storage
+    actor = acting_member or access.HOUSE
+    board = boards.get(board_id) if board_id else None
+    if not board_id:
+        focus = triage.get_focus(focus_key, viewer=actor)
+        tid = focus['id'] if focus and focus.get('kind') == 'thread' else None
+        if tid:
+            thread = storage.get_thread(tid)
+            candidates = boards.for_project((thread or {}).get('project_id'))
+            board = next((b for b in candidates if b.get('thread_id') == tid), None)
+    project = storage.get_project(board['project_id']) if board else None
+    humans = subjects.channel_humans(focus_key)
+    if (not boards.can_see(board, actor) or not _project_readable(project, actor, focus_key)
+            or (humans is not None and not all(boards.can_see(board, m) for m in humans))):
+        return {'status': 'error', 'message': 'This board is no longer available.'}
+    return dict(status='success', spoken=boards.spoken(board), title=board['title'],
+                summary_line=boards.summary_line(board), project_id=board['project_id'], board_id=board['id'])
+
+
 def _project_write_refusal(project_id, focus_key):
     from services import projects, storage, subjects
     humans = subjects.channel_humans(focus_key)
@@ -4970,6 +4991,7 @@ def get_available_tools() -> List[Dict]:
         _flat_tool("find_in_chauffeur"),
         _flat_tool("list_projects"),
         _flat_tool("get_project"),
+        _flat_tool("board_view"),
         _flat_tool("add_project_step"),
         _flat_tool("add_to_project"),
         _flat_tool("set_project_state"),
@@ -7132,6 +7154,11 @@ class ListProjectsTool(BaseModel):
     """List visible projects with their state and next step."""
 
 
+class BoardViewTool(BaseModel):
+    """Read a presentation board; omit the id for the newest board on the thread in focus."""
+    board_id: Optional[str] = None
+
+
 class GetProjectTool(BaseModel):
     """Read a project's goal, done-when, steps with ids and visible pieces."""
     project_id: str
@@ -7852,6 +7879,7 @@ TOOL_SCHEMAS = {
     "list_situations": ListSituationsTool.model_json_schema(),
     "list_projects": ListProjectsTool.model_json_schema(),
     "get_project": GetProjectTool.model_json_schema(),
+    "board_view": BoardViewTool.model_json_schema(),
     "add_project_step": AddProjectStepTool.model_json_schema(),
     "add_to_project": AddToProjectTool.model_json_schema(),
     "set_project_state": SetProjectStateTool.model_json_schema(),
@@ -9210,6 +9238,10 @@ def handle_get_project(args: dict, actor=None, focus_key=None) -> dict:
     return get_project(args.get('project_id'), acting_member=actor, focus_key=focus_key)
 
 
+def handle_board_view(args: dict, actor=None, focus_key=None) -> dict:
+    return board_view(args.get('board_id'), acting_member=actor, focus_key=focus_key)
+
+
 def handle_add_project_step(args: dict, actor=None, focus_key=None) -> dict:
     return add_project_step(args.get('project_id'), args.get('title'),
                             owner=args.get('owner'), needs=args.get('needs'),
@@ -10127,6 +10159,7 @@ TOOL_HANDLERS = {
     "list_situations": handle_list_situations,
     "list_projects": handle_list_projects,
     "get_project": handle_get_project,
+    "board_view": handle_board_view,
     "add_project_step": handle_add_project_step,
     "add_to_project": handle_add_to_project,
     "set_project_state": handle_set_project_state,

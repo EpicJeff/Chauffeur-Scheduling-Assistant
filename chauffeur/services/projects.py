@@ -1661,7 +1661,10 @@ def rows(project, viewer):
         for r in out:
             r['group'] = _group_of(r, iso)
             r.pop('_hint', None)
-        return _stable_grouped(out)
+        from services import boards
+        grouped = _stable_grouped(out)
+        at = next((i for i, r in enumerate(grouped) if r['group'] != 'now'), len(grouped))
+        return grouped[:at] + [boards.row(b) for b in boards.for_project(project['id']) if boards.can_see(b, viewer)] + grouped[at:]
 
 
 def _stable_grouped(rows_):
