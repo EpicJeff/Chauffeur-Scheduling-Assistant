@@ -331,7 +331,7 @@ Behaviour:
   - deep link: on load and on `hashchange`, `#board-<pid>-<bid>` dispatches `chf-board-open`.
 - Modify: `chauffeur/templates/components/projects_page.html` `openRow` (`~:541`): `r.kind === 'board'` dispatches `chf-board-open` with `r.sheet.project_id` and `r.sheet.id`. Modify `templates/components/projects_admin.html` to include `components/board_sheet.html`.
 - Run `python tools/build_tailwind.py`.
-- Test: `chauffeur/tests/test_board_render.py`, a node run using the chunk technique of `tests/test_mission_chat_card_render.py:38-45` for `renderBoardCard` and the done-card line, plus a jsdom run of the sheet's render functions over every fixture board.
+- Test: `chauffeur/tests/test_board_sheet_render.py` (`test_board_render.py` already exists as the wall home-board test), a node run using the chunk technique of `tests/test_mission_chat_card_render.py:38-45` for `renderBoardCard` and the done-card line, plus a jsdom run of the sheet's render functions over every fixture board.
 
 **Interfaces:**
 - Consumes: only `tests/fixtures/board_view_v1.json` (Task 1). Stub `fetch` with the fixture; do not wait for Codex's routes.
@@ -343,10 +343,10 @@ Behaviour:
   - `scenario_sheet_draws_no_controls_when_can_false`: no element carries a `data-board-react`, `data-board-keep`, `data-board-more`, `data-board-copy` or `data-board-commit` attribute.
   - `scenario_done_card_board_line`.
   - `scenario_deep_link_parses`: the hash `#board-abc-def` yields `{projectId:'abc', boardId:'def'}`, and a malformed hash yields nothing.
-- [ ] **Step 2: Run** `python tests/test_board_render.py`. Expected: FAIL.
+- [ ] **Step 2: Run** `python tests/test_board_sheet_render.py`. Expected: FAIL.
 - [ ] **Step 3: Implement**, following `docs/ui_design_guide.md` (Adult PWA presentation and vocabulary sections) and the shared builders it names.
 - [ ] **Step 4: Visual pass in Chromium.** Serve the page with the fixture stubbed and capture at 390×844 (phone) and 1280×800 (admin): an options board on screens 1 and 3, compare, list, the card in a chat thread, and the 404 state. Save the captures to `docs/superpowers/reports/boards-ui/`. Revise against mockup version 2 for up to 3 rounds.
-- [ ] **Step 5: Run** these files in parallel: `tests/test_board_render.py`, `tests/test_board_contract.py`, `tests/test_mission_chat_card_render.py`, `tests/test_planned_mission_cards.py`, `tests/test_template_js.py`, `tests/test_pwa_argyle.py`, `tests/test_projects_detail_live.py`. Expected: all PASS.
+- [ ] **Step 5: Run** these files in parallel: `tests/test_board_sheet_render.py`, `tests/test_board_contract.py`, `tests/test_mission_chat_card_render.py`, `tests/test_planned_mission_cards.py`, `tests/test_template_js.py`, `tests/test_pwa_argyle.py`, `tests/test_projects_detail_live.py`. Expected: all PASS.
 
 ---
 
@@ -371,7 +371,7 @@ Behaviour:
 
 - [ ] **Step 1:** Review both reports and diffs (independent review agent per half: diff file, brief, report). Fix rounds go back to the implementers and end with a scoped re-review.
 - [ ] **Step 2:** Merge `boards-server` and `boards-ui` into `presentation-boards`. Rebuild Tailwind if both touched it.
-- [ ] **Step 3: Gate**, in parallel, one process each: `test_board_contract.py`, `test_page_lookup.py`, `test_boards.py`, `test_mission_present.py`, `test_board_routes.py`, `test_board_render.py`, `test_access_register.py`, `test_missions_engine.py`, `test_planned_mission_cards.py`, `test_mission_chat_card_render.py`, `test_template_js.py`, `test_projects.py`, `test_deletion_cleanup.py`, `test_twin_material_sources.py`.
+- [ ] **Step 3: Gate**, in parallel, one process each: `test_board_contract.py`, `test_page_lookup.py`, `test_boards.py`, `test_mission_present.py`, `test_board_routes.py`, `test_board_sheet_render.py`, `test_access_register.py`, `test_missions_engine.py`, `test_planned_mission_cards.py`, `test_mission_chat_card_render.py`, `test_template_js.py`, `test_projects.py`, `test_deletion_cleanup.py`, `test_twin_material_sources.py`.
 - [ ] **Step 4: Browser check on the real app with demo data.**
   - Run the end-to-end mission with faked web, then confirm the card shows in the Argyle DM.
   - Open it and check the sheet on phone width; check the project row in Projects on admin and phone.
