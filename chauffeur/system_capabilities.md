@@ -1,6 +1,21 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1012 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1013 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1013 (2026-11-27): two demo shots, Models mode and patio posts.**
+
+Models mode Task 7, final slice, plus the Product Hub request `chauffeur-porch-post-shot-1`. Both shots are opt-in (`python tools/demo_capture.py --shot <name> --timeout 240`).
+
+- **`library-models`** (`tools/demo_capture.py`, `tools/demo_seed.py` `seed_library_model()`):
+  - The Library Models tab with an invented `Demo garden bench`. Its four parts: Seat with UVs, Frame without, Cushion, and a blended Glass top.
+  - It is imported through `twin_imports.create`, and its parts are stamped to match `stampParts`.
+  - Its model default puts the household material `Demo teak` on the Seat. That is a seeded solid tint: the demo isolation stubs built-in downloads, so a textured built-in would draw untextured.
+  - The capture scrolls the page so the Parts heading and all four rows show. Readiness requires the levels built, the progress empty and the Seat row reading `Demo teak` fully in view.
+  - `_pack_glb` gained optional per-part UVs; the existing furniture bytes are unchanged (pinned by SHA-256).
+- **`twin-post-card`:**
+  - The editor with Demo patio's Post 1 selected through the Scene tree, the way a person does it.
+  - The capture centres the Post rows in the Scene pane, so Post 1 and Post 2 show above the post card.
+  - Readiness requires a `porch_post` selection with id `post:front-porch:0`, the card title `Post 1`, a visible sibling row and the post handle.
 
 **v2.499.1012 (2026-11-27, NOT device-verified): Models mode browser proof and three fixes.**
 
