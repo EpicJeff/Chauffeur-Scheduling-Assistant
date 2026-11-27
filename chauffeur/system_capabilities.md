@@ -1,6 +1,18 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1013 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1014 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1014 (2026-11-27): links in chat bubbles are clickable.**
+
+Presentation boards slice 0 (spec `docs/superpowers/specs/2026-11-27-presentation-boards-design.md` section 8).
+
+- **One shared helper, `linkifyText(text, linkClass)`** (`static/chat_links.js`, loaded before `pwa_shell.js` in `templates/app.html`):
+  - It escapes the text (including `'`), then wraps each `http://` or `https://` run as a link that opens in a new tab with `rel="noopener noreferrer"`.
+  - Trailing `.,;:!?)]}` stays outside the link; a `)` that closes a `(` inside the URL stays in. A bare `https://` stays text. No other scheme ever links.
+  - It matches on the raw text and escapes each piece, so a quote or `<` ends a URL and can never open markup.
+- **Every chat bubble** (people and Argyle) renders its body through `linkifyText(m.body)`. No markdown; the planner's plain-text rule is unchanged.
+- **The school task sheet** uses the same helper (`linkifyText(t.description, 'text-indigo-300 underline break-all')`). `schoolLinkify` is gone.
+- Tests: `tests/test_chat_links.py` runs the helper and the real bubble expression under node.
 
 **v2.499.1013 (2026-11-27): two demo shots, Models mode and patio posts.**
 

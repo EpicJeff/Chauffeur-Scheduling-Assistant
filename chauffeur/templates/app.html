@@ -111,6 +111,7 @@
     </style>
     <link rel="stylesheet" href="{{ 'static/tailwind-app.css'|ver }}">
     <link rel="stylesheet" href="{{ 'static/pwa_shell.css'|ver }}">
+    <script defer src="{{ 'static/chat_links.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_shell.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_nav.js'|ver }}"></script>
     <script defer src="{{ 'static/pwa_clock.js'|ver }}"></script>
@@ -5178,7 +5179,7 @@
                     }
                 }
                 const bubble = m.body
-                    ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${mfEscape(m.body)}</div>`
+                    ? `<div class="px-3.5 py-2 rounded-2xl ${mine ? 'bg-blue-600 text-white rounded-br-sm' : 'bg-gray-800 text-gray-100 rounded-bl-sm'} text-[15px] leading-snug break-words whitespace-pre-wrap">${linkifyText(m.body)}</div>`
                     : '';
                 return `${divider}<div id="msg-${m.id}" class="max-w-[80%] ${mine ? 'self-end' : 'self-start'}">
                     ${!mine ? `<div class="pwa-who text-xs font-bold mb-0.5" style="color:${sender.color_code || '#9ca3af'}">${mfEscape(sender.name || '?')}</div>` : ''}

@@ -112,11 +112,6 @@ function schoolTaskMeta(t) {
     return bits.length ? `<span class="flex flex-wrap items-center gap-1.5 min-w-0">${bits.join('')}</span>` : '';
 }
 
-function schoolLinkify(text) {
-    return mfEscape(text).replace(/https?:\/\/[^\s<]+/g,
-        u => `<a href="${u}" target="_blank" rel="noopener noreferrer" class="text-indigo-300 underline break-all">${u}</a>`);
-}
-
 function schoolRemember(t) { pwaSchoolTasks[t.id] = t; return t; }
 
 // One task's whole story, from any row that has its id.
@@ -146,7 +141,7 @@ function openKidTaskDetail(id) {
         <div class="text-xs font-semibold text-gray-400 mt-1">Type: <span role="button" tabindex="0" data-kind
             class="cursor-pointer underline text-indigo-300">${mfEscape((SCHOOL_KINDS.find(([v]) => v === t.kind) || [, 'Other / info'])[1])}</span></div>
         <div class="max-h-[50vh] overflow-y-auto my-3 flex flex-col gap-2">
-            ${t.description ? `<div class="text-sm text-gray-300 leading-snug whitespace-pre-line">${schoolLinkify(t.description)}</div>`
+            ${t.description ? `<div class="text-sm text-gray-300 leading-snug whitespace-pre-line">${linkifyText(t.description, 'text-indigo-300 underline break-all')}</div>`
                             : '<p class="text-xs text-gray-500 italic">No description from the teacher.</p>'}
             ${t.notes ? `<div class="text-sm text-gray-300 whitespace-pre-line">${mfEscape(t.notes)}</div>` : ''}
             ${links ? `<div class="flex flex-col gap-1.5">${links}</div>` : ''}
