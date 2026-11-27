@@ -65,3 +65,39 @@
 #material-library .library-browse-add select { flex:1; min-width:0; }
 #material-library .library-browse-add [data-action=add] { background:#119e50; border-color:#119e50; font-weight:600; }
 #material-library .library-browser>[data-action=browse],#material-library .library-browser>[data-action=import-gltf] { width:100%; margin-top:8px; }
+
+/* Header tab strip (Materials | Models), matching editor.css tablist pills. */
+#material-library .library-tabs { display:flex; align-items:center; gap:6px; }
+#material-library .library-tabs [role=tab][aria-selected=true] { background:#f4f5f7; color:#111318; border-color:#f4f5f7; font-weight:600; }
+
+/* Models tab: Import primary action, materials palette, level switch, size/LOD inputs and slot rows. */
+#material-library [data-action=import-model] { background:#119e50; border-color:#119e50; font-weight:600; width:100%; }
+#material-library [data-model-grid] { max-height:36vh; }
+#material-library .library-palette { border-top:1px solid var(--library-line); margin-top:14px; padding-top:12px; }
+#material-library .library-palette>input { display:block; width:100%; margin-top:8px; }
+#material-library .library-palette-grid { grid-template-columns:repeat(auto-fill,minmax(84px,1fr)); max-height:260px; margin-top:10px; }
+#material-library .library-palette-grid img { height:48px; }
+#material-library .library-palette-grid button { cursor:grab; }
+#material-library .library-level-row { justify-content:space-between; }
+#material-library .library-level-meta { font-variant-numeric:tabular-nums; }
+#material-library .library-fix-row { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+#material-library .library-fix-row input,#material-library .library-lod-grid input { display:block; width:100%; min-width:0; margin-top:4px; font-variant-numeric:tabular-nums; }
+#material-library .library-lod-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+
+/* Shared slot row presentation (editor.css:126-128, 384-391) adapted to Library tokens. */
+#material-library .library-part { border-top:1px solid var(--library-line); padding:10px 0; }
+#material-library .library-part:first-of-type { border-top:0; padding-top:4px; }
+#material-library .editor-material-line { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:4px 0; }
+#material-library .editor-material-line span { display:block; color:var(--library-muted); font-size:12px; }
+#material-library .editor-material-line p { margin:0; }
+#material-library .editor-material-line [aria-disabled=true] { color:var(--library-muted); }
+#material-library .editor-material-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:1 0 100%; }
+#material-library .editor-slot-line { flex-wrap:wrap; }
+#material-library .editor-slot-line>div:first-of-type { flex:1; min-width:0; overflow-wrap:anywhere; }
+#material-library .editor-slot-swatch { flex:0 0 44px; width:44px; height:44px; padding:2px; overflow:hidden; border:1px solid var(--library-muted); border-radius:8px; }
+#material-library .editor-slot-swatch img { width:100%; height:100%; object-fit:cover; border-radius:5px; }
+#material-library .editor-slot-empty { background:repeating-linear-gradient(135deg,transparent 0 4px,var(--library-line) 4px 8px); }
+#material-library .editor-slot-dragover { outline:2px solid #22d3ee; outline-offset:2px; border-radius:8px; }
+#material-library .library-part-texture { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; }
+#material-library .library-part-tiles { display:flex; align-items:center; gap:6px; margin:0 0 0 4px; }
+#material-library .library-part-tiles input { width:72px; font-variant-numeric:tabular-nums; }

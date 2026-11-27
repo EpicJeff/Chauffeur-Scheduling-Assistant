@@ -4,6 +4,7 @@ import { mountProperties, defaults, slots, node, button } from './properties.js'
 import { slotForFilename } from './texture_slots.js';
 import { mountBrowse } from './browse.js';
 import { readGltfMaterials } from './gltf_import.js';
+import { mountModels } from './models.js';
 
 // Nav owns authentication. Every endpoint stays relative to the ingress base.
 export async function libraryApi(path, method = 'GET', body) {
@@ -14,11 +15,20 @@ export async function libraryApi(path, method = 'GET', body) {
       : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
   let data;
   try { data = await response.json(); }
-  catch { throw new Error(`The Library could not answer (HTTP ${response.status}). Try again.`); }
-  if (!response.ok) {
-    // The status rides along so callers can tell offline, busy and gone apart.
-    const error = new Error(typeof data.detail === 'string' ? data.detail : data.error || 'The material could not be saved.');
+  catch {
+    const message = response.status === 401
+      ? 'Home Assistant signed this tab out. Open Chauffeur from the Home Assistant sidebar, then try again.'
+      : response.status === 413 ? 'That upload is larger than Home Assistant lets through. Try a smaller file.'
+        : `The Library could not answer (HTTP ${response.status}). Try again.`;
+    const error = new Error(message);
     error.status = response.status; throw error;
+  }
+  if (!response.ok) {
+    // The status (and 409 record) ride along so callers can tell offline, busy, conflict and gone apart.
+    const error = new Error(typeof data.detail === 'string' ? data.detail : data.error || 'The material could not be saved.');
+    error.status = response.status;
+    if (data && typeof data === 'object' && 'record' in data) error.record = data.record;
+    throw error;
   }
   return data;
 }
@@ -30,22 +40,39 @@ const normalized = entry => ({ ...entry, maps: entry.maps || {}, params: { ...de
 
 export function mountLibraryPage(root, { api = libraryApi } = {}) {
   const abort = new AbortController(), { signal } = abort;
+  const params = new URLSearchParams(location.search);
+  const initialModelId = params.get('model');
+  let activeTab = initialModelId ? 'models' : 'materials', tabTurn = 0;
   let stopped = false, uploading = false, importing = false, rows = [], context, properties, propAbort, gridAbort, selection = 0;
+  let modelsPanel = null, modelsView = null;
   const contexts = new Set(), report = error => { if (!stopped) window.showGlobalAlert(error.message || String(error)); };
   root.replaceChildren();
-  const toolbar = node('header', null, 'library-header'), heading = node('h1', 'Material library');
+  const toolbar = node('header', null, 'library-header'), heading = node('h1', 'Library');
+  const tabs = node('div', null, 'library-tabs');
+  tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Library sections');
+  const tabButtons = {};
+  for (const [id, label] of [['materials', 'Materials'], ['models', 'Models']]) {
+    const tab = node('button', label); tab.type = 'button'; tab.setAttribute('role', 'tab');
+    tab.dataset.libraryTab = id; tab.setAttribute('aria-selected', String(activeTab === id));
+    tab.addEventListener('click', () => switchTab(id), { signal });
+    tabs.append(tab); tabButtons[id] = tab;
+  }
   const back = node('a', 'House editor'); back.href = base() + 'house/editor';
-  toolbar.append(heading, back);
+  toolbar.append(heading, tabs, back);
+  const bodySlot = node('div');
+  root.append(toolbar, bodySlot);
+
+  const materialsPanel = node('div', null, 'library-tab-panel');
   const status = node('output', 'Opening Library…', 'place-muted'); status.setAttribute('role', 'status');
-  root.append(toolbar, node('p', 'Changes here apply everywhere this material is used.', 'place-muted'),
+  materialsPanel.append(node('p', 'Changes here apply everywhere this material is used.', 'place-muted'),
     node('p', 'Undo and redo here affect this material. House history keeps material assignments.', 'place-muted'), status);
   const browsePanel = node('section', null, 'library-browse'); browsePanel.id = 'library-browse';
   browsePanel.dataset.libraryBrowse = ''; browsePanel.setAttribute('aria-label', 'Browse online materials');
-  root.append(browsePanel);
+  materialsPanel.append(browsePanel);
   const layout = node('div', null, 'library-layout'), left = node('section', null, 'library-browser'),
     centre = node('section', null, 'library-preview'), right = node('aside', null, 'library-properties');
   left.setAttribute('aria-label', 'Material catalogue'); centre.setAttribute('aria-label', 'Live material preview'); right.setAttribute('aria-label', 'Material properties');
-  layout.append(left, centre, right); root.append(layout);
+  layout.append(left, centre, right); materialsPanel.append(layout);
   const newButton = button('New material', 'new', async () => {
     if (newButton.disabled) return;
     newButton.disabled = true;
@@ -109,6 +136,15 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
     return uploadTextures(files);
   }, { signal });
   const endpoint = ctx => 'materials/' + encodeURIComponent(ctx.draft.id);
+  function syncManifest(entry) {
+    if (!entry || entry.source === 'builtin' || !entry.maps || !entry.params) return;
+    const known = window.twinManifest ||= {};
+    known[entry.id] = {
+      kind: 'material', household: true, revision: entry.revision, params: entry.params,
+      maps: Object.fromEntries(Object.entries(entry.maps).filter(([, p]) => p)
+        .map(([slot, path]) => [slot, path.startsWith('materials/') ? path : `materials/${entry.id}/${path}`])),
+    };
+  }
   function setStatus(ctx, text) {
     if (!stopped && ctx === context) status.textContent = ctx.uploadStatus || text;
   }
@@ -127,6 +163,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   function accept(ctx, server, rebuild = false) {
     ctx.server = normalized(server); ctx.draft = merge(ctx.queued.reduce(merge, copy(ctx.server)), ctx.pending);
+    syncManifest(ctx.server);
     show(ctx, rebuild); updateRow(ctx.draft);
   }
   function updateRow(entry) {
@@ -134,6 +171,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
     const row = { ...entry, builtin: entry.source === 'builtin', color: entry.params.tint };
     if (index === -1) rows.push(row); else rows[index] = row;
     drawGrid();
+    modelsView?.setMaterials(rows);
   }
   function flush(ctx) {
     if (!ctx) return Promise.resolve();
@@ -173,6 +211,7 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
       const result = await mutate(ctx, name === 'delete' ? '' : '/' + name, name === 'delete' ? 'DELETE' : 'POST');
       if (name === 'delete') {
         rows = rows.filter(row => row.id !== ctx.draft.id); context = null; drawGrid();
+        modelsView?.setMaterials(rows);
         props.replaceChildren(); actions.replaceChildren();
         status.textContent = result.archived ? 'Material archived' : 'Material deleted';
         if (rows.length) await select(rows[0].id);
@@ -372,26 +411,80 @@ export function mountLibraryPage(root, { api = libraryApi } = {}) {
   }
   async function refreshRows() {
     const catalogue = await api('materials');
-    rows = catalogue.materials.map(row => ({ ...rows.find(old => old.id === row.id && old.revision === row.revision), ...row })); drawGrid();
+    rows = catalogue.materials.map(row => ({ ...rows.find(old => old.id === row.id && old.revision === row.revision), ...row }));
+    rows.forEach(syncManifest);
+    drawGrid();
+    modelsView?.setMaterials(rows);
   }
   async function select(id, entry) {
     const turn = ++selection; await flush(context);
     const result = entry || await api('materials/' + encodeURIComponent(id));
     if (stopped || turn !== selection) return;
     const server = normalized(result);
+    syncManifest(server);
     context = { server, draft: copy(server), pending: {}, queued: [], localMaps: {}, chain: Promise.resolve() };
     contexts.add(context); show(context, true); updateRow(server); status.textContent = 'Saved';
   }
+  function ensureModels(modelId = null) {
+    if (!modelsView) {
+      modelsPanel = node('div', null, 'library-tab-panel');
+      modelsView = mountModels(modelsPanel, {
+        api, initialModelId: modelId, materials: rows,
+        onOpenMaterial: id => { switchTab('materials'); select(id).catch(report); },
+      });
+    } else {
+      modelsView.setMaterials(rows);
+      if (modelId) modelsView.select(modelId);
+    }
+    return modelsView;
+  }
+  async function switchTab(next) {
+    if (stopped || activeTab === next && bodySlot.children.length) return;
+    const turn = ++tabTurn;
+    activeTab = next;
+    for (const [id, tab] of Object.entries(tabButtons)) tab.setAttribute('aria-selected', String(id === activeTab));
+    if (activeTab === 'models') {
+      await flush(context);
+      if (stopped || turn !== tabTurn) return;
+      preview.setActive(false);
+      ensureModels(null);
+      bodySlot.replaceChildren(modelsPanel);
+      modelsView.setActive(true);
+    } else {
+      modelsView?.setActive(false);
+      bodySlot.replaceChildren(materialsPanel);
+      preview.setActive(true);
+      if (!context) {
+        if (!rows.length) await refreshRows().catch(report);
+        if (stopped || turn !== tabTurn) return;
+        const id = params.get('material') || rows[0]?.id;
+        if (id) await select(id).catch(report);
+      }
+    }
+  }
   const ready = (async () => {
-    await refreshRows(); if (stopped) return;
-    const id = new URLSearchParams(location.search).get('material') || rows[0]?.id;
+    const turn = ++tabTurn;
+    if (activeTab === 'models') {
+      preview.setActive(false);
+      await refreshRows().catch(() => {});
+      if (stopped || turn !== tabTurn) return;
+      const view = ensureModels(initialModelId);
+      bodySlot.replaceChildren(modelsPanel);
+      view.setActive(true);
+      await view.ready;
+      return;
+    }
+    bodySlot.replaceChildren(materialsPanel);
+    await refreshRows(); if (stopped || turn !== tabTurn) return;
+    const id = params.get('material') || rows[0]?.id;
     if (id) await select(id); else status.textContent = 'Create a material to begin.';
   })().catch(error => { if (!stopped) status.textContent = 'The Library could not open. Reload to try again.'; report(error); });
   const saveOnLeave = () => { flush(context); };
   window.addEventListener('pagehide', saveOnLeave, { signal });
-  return { ready, stop() {
+  return { ready, get modelsView() { return modelsView; }, stop() {
     if (stopped) return;
     contexts.forEach(ctx => { flush(ctx); Object.entries(ctx.localMaps).forEach(([slot, url]) => releaseLocal(ctx, slot, url)); });
-    stopped = true; abort.abort(); propAbort?.abort(); gridAbort?.abort(); preview.dispose();
+    stopped = true; abort.abort(); propAbort?.abort(); gridAbort?.abort();
+    modelsView?.stop(); preview.dispose();
   } };
 }

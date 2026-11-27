@@ -16,6 +16,7 @@
     }
     const imports = {
       'three': window.chfBase + {{ 'static/vendor/three-r187/three.module.js' | ver | tojson }},
+      'three/addons/exporters/GLTFExporter.js': window.chfBase + {{ 'static/vendor/three-r187/addons/exporters/GLTFExporter.js' | ver | tojson }},
       'three/addons/': window.chfBase + 'static/vendor/three-r187/addons/'
     };
     {# Every twin module, so no fresh module meets a stale cached neighbour (main.py _twin_modules). #}
@@ -24,6 +25,11 @@
     {% endfor %}
     imports[new URL(window.chfBase + 'static/vendor/lucide/icons.js', location.href).href] = window.chfBase + {{ 'static/vendor/lucide/icons.js' | ver | tojson }};
     imports[new URL(window.chfBase + 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js', location.href).href] = window.chfBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }};
+    window.chfLodWorker = {
+      worker: new URL(window.chfBase + {{ 'static/twin/lod_worker.js' | ver | tojson }}, location.href).href,
+      simplifier: new URL(window.chfBase + {{ 'static/vendor/meshoptimizer-1.3.0/meshopt_simplifier.js' | ver | tojson }}, location.href).href
+    };
+    imports[new URL(window.chfBase + 'static/vendor/three-r187/three.module.js', location.href).href] = imports.three;
     const map = document.createElement('script'); map.type = 'importmap'; map.textContent = JSON.stringify({ imports }); document.head.appendChild(map);
     document.addEventListener('DOMContentLoaded', () => {
       const script = document.createElement('script'); script.src = window.chfBase + {{ 'static/vendor/alpine.min.js' | ver | tojson }}; document.head.appendChild(script);

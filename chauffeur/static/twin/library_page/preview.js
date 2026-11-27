@@ -1,17 +1,26 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { alphaModeOf, applyMaterialParams, kitMaterial } from '../twin_library.js';
+import { frameThumbnailCamera } from '../model_thumbnails.js';
 import { BUILTIN_LOOKS, builtinMaterial } from '../surface_kinds.js';
 import { sunPosition } from '../sky/ephemeris.js';
 import { resolveSite, previewDate, modelDirection, lookAt } from '../sky/look.js';
 
 // Preview geometry uses feet just like generator UVs. World positions are metres.
 const FT = .3048;
+const FALLBACK_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 const mapProperties = { base_color: ['map'], normal: ['normalMap'], roughness: ['roughnessMap'],
   metalness: ['metalnessMap'], ao: ['aoMap'], orm: ['aoMap', 'roughnessMap', 'metalnessMap'], opacity: ['alphaMap'] };
 
-export function createPreview(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+function meshPartKey(mesh, face) {
+  if (!mesh) return null;
+  if (mesh.userData?.partKey) return mesh.userData.partKey;
+  const mat = Array.isArray(mesh.material) ? mesh.material[face?.materialIndex || 0] : mesh.material;
+  return mat?.userData?.partKey || null;
+}
+
+export function createPreview(canvas, { onPartDrop = null } = {}) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(40, 1, .05, 100);
@@ -36,9 +45,21 @@ export function createPreview(canvas) {
     pmrem = new THREE.PMREMGenerator(renderer); environment = pmrem.fromScene(room); scene.environment = environment.texture;
     room.traverse(object => object.geometry?.dispose()); cardMaterial.dispose();
   }
-  let material = new THREE.MeshStandardMaterial(), signature, generation = 0, stopped = false, currentParams, currentEntry;
+  let material = new THREE.MeshStandardMaterial(), signature, generation = 0, stopped = false, active = true, currentParams, currentEntry;
   const sample = new THREE.Mesh(new THREE.SphereGeometry(2 * FT, 48, 32), material);
   sample.userData.librarySample = true; scene.add(sample);
+
+  // Model preview holder and non-destructive overlays (never mutate shared materials or dispose cached model geometry).
+  const modelHolder = new THREE.Group(); modelHolder.name = 'library-model-holder'; scene.add(modelHolder);
+  const wireGroup = new THREE.Group(); wireGroup.userData.helper = true; scene.add(wireGroup);
+  const highlightGroup = new THREE.Group(); highlightGroup.userData.helper = true; scene.add(highlightGroup);
+  const wireMaterial = new THREE.MeshBasicMaterial({ color: '#38bdf8', wireframe: true, transparent: true, opacity: .55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const highlightFillMat = new THREE.MeshBasicMaterial({ color: '#22d3ee', transparent: true, opacity: .42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const highlightOutlineMat = new THREE.MeshBasicMaterial({ color: '#00f0ff', side: THREE.BackSide, depthWrite: false });
+  const highlightEdgeMat = new THREE.MeshBasicMaterial({ color: '#a5f3fc', wireframe: true, transparent: true, opacity: .45, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  const raycaster = new THREE.Raycaster();
+  let currentModel = null, wireframe = false, activeHighlight = null, dropHandler = onPartDrop;
+
   // Simple neutral human silhouette: exactly six feet from soles to crown.
   const figure = new THREE.Group(), figureMaterial = new THREE.MeshStandardMaterial({ color: '#a3a9b6', roughness: .8 });
   for (const [geometry, x, y] of [
@@ -52,6 +73,162 @@ export function createPreview(canvas) {
   figure.name = '6 ft scale figure'; figure.position.x = -2; scene.add(figure);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshStandardMaterial({ color: '#525866', roughness: 1 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = -.01; scene.add(floor);
+
+  function syncWireframe() {
+    wireGroup.clear();
+    if (!wireframe || !currentModel) return;
+    modelHolder.updateMatrixWorld(true);
+    currentModel.traverse(mesh => {
+      if (!mesh.isMesh || !mesh.geometry) return;
+      const overlay = new THREE.Mesh(mesh.geometry, wireMaterial);
+      overlay.matrixAutoUpdate = false;
+      overlay.matrix.copy(mesh.matrixWorld);
+      overlay.userData.helper = true;
+      wireGroup.add(overlay);
+    });
+  }
+  function syncHighlight() {
+    highlightGroup.clear();
+    if (!activeHighlight || !currentModel) return;
+    modelHolder.updateMatrixWorld(true);
+    const center = new THREE.Vector3(), toCenter = new THREE.Matrix4(), scaleM = new THREE.Matrix4(), fromCenter = new THREE.Matrix4();
+    currentModel.traverse(mesh => {
+      if (!mesh.isMesh || !mesh.geometry || meshPartKey(mesh) !== activeHighlight) return;
+      const fill = new THREE.Mesh(mesh.geometry, highlightFillMat);
+      fill.matrixAutoUpdate = false; fill.matrix.copy(mesh.matrixWorld); fill.renderOrder = 10;
+      highlightGroup.add(fill);
+      const edge = new THREE.Mesh(mesh.geometry, highlightEdgeMat);
+      edge.matrixAutoUpdate = false; edge.matrix.copy(mesh.matrixWorld); edge.renderOrder = 11;
+      highlightGroup.add(edge);
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      mesh.geometry.boundingBox?.getCenter(center);
+      toCenter.makeTranslation(center.x, center.y, center.z);
+      scaleM.makeScale(1.14, 1.14, 1.14);
+      fromCenter.makeTranslation(-center.x, -center.y, -center.z);
+      const outline = new THREE.Mesh(mesh.geometry, highlightOutlineMat);
+      outline.matrixAutoUpdate = false;
+      outline.matrix.copy(mesh.matrixWorld).multiply(toCenter).multiply(scaleM).multiply(fromCenter);
+      outline.renderOrder = 9;
+      highlightGroup.add(outline);
+    });
+  }
+  function setModel(object3d, { refit = false } = {}) {
+    activeHighlight = null;
+    highlightGroup.clear();
+    wireGroup.clear();
+    modelHolder.clear();
+    currentModel = object3d || null;
+    sample.visible = !currentModel;
+    if (currentModel) {
+      modelHolder.add(currentModel);
+      modelHolder.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(currentModel);
+      if (!box.isEmpty()) {
+        figure.position.x = Math.min(-1.2, box.min.x - .85);
+        if (refit) {
+          const centre = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
+          const span = Math.max(size.x, size.y, size.z, .7);
+          controls.target.set(centre.x, Math.max(centre.y, .25), centre.z);
+          camera.position.set(centre.x + span * 1.4, Math.max(centre.y + span * .7, .85), centre.z + span * 1.75);
+          controls.minDistance = Math.max(.35, span * .3);
+          controls.maxDistance = Math.max(15, span * 8);
+          controls.update();
+        }
+      }
+      syncWireframe();
+    } else {
+      figure.position.x = -2;
+      controls.minDistance = 1; controls.maxDistance = 15;
+    }
+  }
+  function setWireframe(on) { wireframe = !!on; syncWireframe(); }
+  function partAt(x, y) {
+    if (!currentModel) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) return null;
+    const ndc = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+    camera.updateMatrixWorld(true);
+    modelHolder.updateMatrixWorld(true);
+    raycaster.setFromCamera(ndc, camera);
+    const meshes = [];
+    currentModel.traverse(o => { if (o.isMesh && o.visible && o.geometry) meshes.push(o); });
+    for (const hit of raycaster.intersectObjects(meshes, false)) {
+      const key = meshPartKey(hit.object, hit.face);
+      if (key) return key;
+    }
+    return null;
+  }
+  function highlightPart(partKey) {
+    const next = partKey || null;
+    if (next === activeHighlight && (!next || highlightGroup.children.length)) return;
+    activeHighlight = next;
+    syncHighlight();
+  }
+  function partScreenPoint(partKey) {
+    if (!currentModel || !partKey) return null;
+    modelHolder.updateMatrixWorld(true);
+    camera.updateMatrixWorld(true);
+    const box = new THREE.Box3();
+    currentModel.traverse(o => {
+      if (o.isMesh && meshPartKey(o) === partKey) box.expandByObject(o);
+    });
+    if (box.isEmpty()) return null;
+    const point = box.getCenter(new THREE.Vector3()).project(camera);
+    const rect = canvas.getBoundingClientRect();
+    return { x: rect.left + (point.x * .5 + .5) * rect.width, y: rect.top + (-point.y * .5 + .5) * rect.height };
+  }
+  function captureThumbnail() {
+    if (!currentModel) return null;
+    modelHolder.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(modelHolder);
+    if (box.isEmpty()) return FALLBACK_PNG;
+    const thumbCamera = new THREE.PerspectiveCamera(36, 160 / 128, .01, 100);
+    frameThumbnailCamera(box, thumbCamera);
+    const prevBg = scene.background, prevRatio = renderer.getPixelRatio();
+    const prevFigure = figure.visible, prevFloor = floor.visible, prevWire = wireGroup.visible, prevHi = highlightGroup.visible;
+    figure.visible = floor.visible = wireGroup.visible = highlightGroup.visible = false;
+    scene.background = null;
+    let url = FALLBACK_PNG;
+    try {
+      renderer.setClearAlpha(0);
+      renderer.setPixelRatio(1);
+      renderer.setSize(160, 128, false);
+      renderer.render(scene, thumbCamera);
+      if (typeof canvas.toDataURL === 'function') url = canvas.toDataURL('image/png') || FALLBACK_PNG;
+    } finally {
+      figure.visible = prevFigure; floor.visible = prevFloor; wireGroup.visible = prevWire; highlightGroup.visible = prevHi;
+      scene.background = prevBg;
+      renderer.setClearAlpha(1);
+      renderer.setPixelRatio(prevRatio);
+      resize();
+      renderer.render(scene, camera);
+    }
+    return url;
+  }
+
+  const canvasAbort = new AbortController();
+  const isMaterialDrag = event => {
+    const types = Array.from(event.dataTransfer?.types || []);
+    return types.includes('application/x-chauffeur-material') || !!window.__chfDragMaterial;
+  };
+  canvas.addEventListener('dragover', event => {
+    if (!currentModel || !dropHandler || !isMaterialDrag(event)) return;
+    event.preventDefault();
+    const key = partAt(event.clientX, event.clientY);
+    highlightPart(key);
+    if (event.dataTransfer) event.dataTransfer.dropEffect = key ? 'copy' : 'none';
+  }, { signal: canvasAbort.signal });
+  canvas.addEventListener('dragleave', () => { highlightPart(null); }, { signal: canvasAbort.signal });
+  canvas.addEventListener('drop', event => {
+    if (!currentModel || !dropHandler) return;
+    const materialId = event.dataTransfer?.getData?.('application/x-chauffeur-material') || window.__chfDragMaterial;
+    if (!materialId) return;
+    event.preventDefault();
+    const key = partAt(event.clientX, event.clientY);
+    highlightPart(null);
+    if (key) dropHandler(key, materialId);
+  }, { signal: canvasAbort.signal });
 
   function updateParams() {
     if (!currentParams || currentEntry.source === 'builtin') return;
@@ -69,6 +246,7 @@ export function createPreview(canvas) {
     }
   }
   function setMaterial(entry, params = entry.params || {}) {
+    if (currentModel) setModel(null);
     currentEntry = entry; currentParams = params;
     const key = JSON.stringify([entry.id, entry.source, entry.maps, entry.previewMaps, alphaModeOf({ ...entry, params })]);
     if (signature !== key) {
@@ -87,19 +265,19 @@ export function createPreview(canvas) {
         }, { id: entry.id }, 'preview', 'high');
       }
       sample.material = material;
-      const active = material;
+      const activeMat = material;
       const local = Object.entries(entry.previewMaps || {}).filter(([slot]) => mapProperties[slot]
-        && (slot !== 'opacity' || active.userData.alphaMode !== 'opaque')
+        && (slot !== 'opacity' || activeMat.userData.alphaMode !== 'opaque')
         && !((entry.previewMaps?.orm || entry.maps?.orm) && ['ao', 'roughness', 'metalness'].includes(slot))).map(([slot, url]) => new Promise(resolve => {
         new THREE.TextureLoader().load(url, texture => {
           if (stopped || generation !== turn) { texture.dispose(); resolve(); return; }
           texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
           texture.colorSpace = slot === 'base_color' ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-          for (const property of mapProperties[slot]) active[property] = texture;
-          active.addEventListener('dispose', () => texture.dispose()); active.needsUpdate = true; updateParams(); resolve();
+          for (const property of mapProperties[slot]) activeMat[property] = texture;
+          activeMat.addEventListener('dispose', () => texture.dispose()); activeMat.needsUpdate = true; updateParams(); resolve();
         }, undefined, () => resolve());
       }));
-      Promise.all([active.userData.ready, ...local]).then(() => { if (!stopped && generation === turn) updateParams(); });
+      Promise.all([activeMat.userData.ready, ...local]).then(() => { if (!stopped && generation === turn) updateParams(); });
     }
     updateParams();
   }
@@ -136,19 +314,35 @@ export function createPreview(canvas) {
     renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix();
   }
   const observer = new ResizeObserver(resize); observer.observe(canvas); resize();
-  let frame;
+  let frame = null;
   function draw() {
-    if (stopped) return;
+    if (stopped || !active) { frame = null; return; }
     // A late map attachment can restore the initial Auto multiplier. Always
     // draw with the latest draft, including maps arriving after ready's budget.
-    updateParams(); controls.update(); renderer.render(scene, camera); frame = requestAnimationFrame(draw);
+    if (!currentModel) updateParams();
+    controls.update(); renderer.render(scene, camera); frame = requestAnimationFrame(draw);
+  }
+  function setActive(on) {
+    active = !!on;
+    if (active && !stopped && frame === null) { resize(); draw(); }
+    else if (!active && frame !== null) { cancelAnimationFrame(frame); frame = null; }
   }
   setShape('sphere'); setLight('studio'); draw();
-  return { setMaterial, setShape, setLight, dispose() {
-    stopped = true; ++generation; cancelAnimationFrame(frame); observer.disconnect(); controls.dispose();
-    material.dispose(); const geometries = new Set();
-    scene.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
-    geometries.forEach(g => g.dispose()); figureMaterial.dispose(); floor.material.dispose();
-    environment?.dispose(); pmrem?.dispose(); renderer.dispose();
-  } };
+  return {
+    setMaterial, setShape, setLight, setModel, setWireframe, isWireframe: () => wireframe,
+    partAt, highlightPart, highlightedPart: () => activeHighlight, partScreenPoint,
+    captureThumbnail, setDropHandler: fn => { dropHandler = fn; }, setActive, resize,
+    get currentModel() { return currentModel; },
+    dispose() {
+      stopped = true; ++generation; cancelAnimationFrame(frame); frame = null;
+      canvasAbort.abort(); observer.disconnect(); controls.dispose();
+      // Detach borrowed model & overlays before disposing preview-owned geometries.
+      modelHolder.clear(); wireGroup.clear(); highlightGroup.clear(); currentModel = null;
+      material.dispose(); wireMaterial.dispose(); highlightFillMat.dispose(); highlightOutlineMat.dispose(); highlightEdgeMat.dispose();
+      const geometries = new Set();
+      scene.traverse(object => { if (object.geometry) geometries.add(object.geometry); });
+      geometries.forEach(g => g.dispose()); figureMaterial.dispose(); floor.material.dispose();
+      environment?.dispose(); pmrem?.dispose(); renderer.dispose();
+    },
+  };
 }
