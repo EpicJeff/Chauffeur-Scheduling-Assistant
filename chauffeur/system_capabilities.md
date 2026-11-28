@@ -1,6 +1,29 @@
 # Chauffeur shipped capabilities
 
-**Living specification. Current through v2.499.1015 (2026-11-27).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+**Living specification. Current through v2.499.1016 (2026-11-28).** This is the canonical detailed record of shipped behavior and invariants. Product overview and document status live in [`../README.md`](../README.md) and [`../docs/README.md`](../docs/README.md).
+
+**v2.499.1016 (2026-11-28): look-ups refuse bot walls; a search button with a dropdown no longer asks for approval.**
+
+Found on device: a "band concert outfit" mission never reached a board. Claude reproduced both failures against the live sites.
+
+- **Browse gate (`services/browse.py`, `_CONTROL_JS`).** A control's scope text, which feeds `prices`, `COMMIT_CONTEXT`, `text_sha` and the approval display, no longer includes the content of `select`, `option`, `optgroup` or `datalist`.
+  - Amazon's search form holds a department dropdown with the option "Under $10". That made the search button "Go" a priced submit, so a parent was asked to approve a search. It now classifies as `run`.
+  - The money in chosen options and selected or checked ARIA items (`selected`) still goes into `prices`. A form whose only price is its chosen option ("2 adult tickets, $50") with a `Continue` button is still gated.
+  - The reader never changes the page. SVG nodes add their text content, never the word `undefined`.
+- **Page look-ups (`services/page_lookup.py`).**
+  - A bot wall is never stored as a product. A wall is any one of:
+    - a challenge title;
+    - a challenge phrase on a page with no product data and no price (for example "Click the button below to continue shopping", "enable cookies");
+    - a path segment `captcha`, `validatecaptcha` or `cookiefailure.do`.
+  - A raw wall always tries the Chromium render. The render wins when it is usable and not a wall. Otherwise the planner is told: "That store blocks automated readers; try another store."
+  - A generic raw title (just the store or host name) loses to a usable render with a different title.
+  - A generic page with no product data, price or image, whose render failed, is refused with "That page shows no product."
+  - The planner's compact result gains `missing` (`price`, `image`). The prompt tells the planner to prefer stores that give both, and to try another store when one blocks readers.
+- Live checks (2026-11-28):
+  - Amazon search "Go": `prices == []`, `run`.
+  - An Amazon product page records its real title in place of the wall.
+  - An Old Navy cookie-failure page gives the blocked note.
+- Tests: `test_page_lookup.py` (new wall, generic-title, cookie-banner, slug and missing scenarios) and `test_browse_runner.py` (`/shop-search`, `/select-checkout`, a chosen-option price; 67/67 in Chromium).
 
 **v2.499.1015 (2026-11-27): presentation boards, slice 1 (boards that show).**
 

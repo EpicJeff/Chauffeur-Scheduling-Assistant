@@ -34,6 +34,135 @@ def _fresh():
     storage.lookups_table.truncate()
     storage.get_settings = lambda: {}
 
+WALL_HTML = '<title>Amazon.com</title><p>Click the button below to continue shopping</p><button>Continue shopping</button>'
+BLOCKED_NOTE = 'That store blocks automated readers; try another store.'
+
+
+def scenario_amazon_wall_render_wins():
+    _fresh()
+    final = 'https://www.amazon.com/dp/B0H39PXN9K?th=1&psc=1'
+    with patch.object(p.requests, 'get', return_value=Response(body=WALL_HTML)), \
+         patch.object(browse, 'render_page', return_value=(final, '<title>Amazon.com: Velvet midi dress</title>')):
+        r = p.look_up_page('https://www.amazon.com/dp/B0H39PXN9K', 'm')
+    check(r['status'] == 'ok', r)
+    check(r['lookup']['title'] == 'Amazon.com: Velvet midi dress' and r['lookup']['missing'] == ['price', 'image'], r)
+    check(p.get(r['lookup']['lookup'])['final_url'] == final, r)
+
+
+def scenario_wall_both_ways_is_an_error():
+    for rendered in (('https://www.amazon.com/dp/item', WALL_HTML), None):
+        _fresh()
+        with patch.object(p.requests, 'get', return_value=Response(body=WALL_HTML)), \
+             patch.object(browse, 'render_page', return_value=rendered):
+            r = p.look_up_page('https://www.amazon.com/dp/item', 'm')
+        check(r == {'status': 'error', 'note': BLOCKED_NOTE} and not p.for_mission('m'), r)
+
+
+def scenario_cookie_failure_url_is_a_wall():
+    _fresh()
+    with patch.object(p.requests, 'get', return_value=Response(body='<title>Old Navy</title>')), \
+         patch.object(browse, 'render_page', return_value=(
+             'https://oldnavy.gap.com/CookieFailure.do?pid=1', '<title>Old Navy</title>')):
+        r = p.look_up_page('https://www.oldnavy.com/browse/product.do?pid=1', 'm')
+    check(r == {'status': 'error', 'note': BLOCKED_NOTE} and not p.for_mission('m'), r)
+
+
+def scenario_generic_title_loses_to_render():
+    _fresh()
+    html = ('<title>Ribbed midi dress | Old Navy</title><script type="application/ld+json">'
+            '{"@type":"Product","offers":{"price":30,"priceCurrency":"USD"}}</script>')
+    with patch.object(p.requests, 'get', return_value=Response(body='<title>Old Navy</title>')), \
+         patch.object(browse, 'render_page', return_value=('https://oldnavy.gap.com/item', html)):
+        r = p.look_up_page('https://www.oldnavy.com/item', 'm')
+    check(r['status'] == 'ok' and r['lookup']['title'] == 'Ribbed midi dress | Old Navy' and
+          r['lookup']['price'] == 30 and r['lookup']['missing'] == ['image'], r)
+
+
+def scenario_generic_title_without_product_tags_loses_to_render():
+    for title, url in (('www.Amazon.com!', 'https://www.amazon.com/item'),
+                       ('Old Navy', 'https://www.oldnavy.com/item')):
+        _fresh()
+        raw = f'<title>{title}</title>'
+        with patch.object(p.requests, 'get', return_value=Response(body=raw)), \
+             patch.object(browse, 'render_page', return_value=(url + '?render=1', '<title>Velvet midi dress</title>')):
+            r = p.look_up_page(url, 'm')
+        check(r['status'] == 'ok' and r['lookup']['title'] == 'Velvet midi dress', r)
+
+
+def scenario_wall_markers_are_case_insensitive():
+    for phrase in ('click the button below to continue shopping', 'enter the characters you see below',
+                   "sorry, we just need to make sure you're not a robot", 'to discuss automated access to amazon data',
+                   'press & hold to confirm you are a human', 'please enable cookies', 'cookies are disabled'):
+        check(p._is_wall(p.extract('<title>Store</title><p>' + phrase.upper() + '</p>', 'https://store.test'),
+                         'https://store.test/item'), phrase)
+    for path in ('/CAPTCHA', '/CookieFailure.do', '/errors/ValidateCaptcha'):
+        check(p._is_wall(p.extract('<title>Store</title>', 'https://store.test'), 'https://store.test' + path), path)
+    check(not p._is_wall(p.extract('<title>Dress</title>', 'https://store.test'),
+                         'https://store.test/item?next=captcha'), 'only the URL path marks a wall')
+
+
+def scenario_wall_with_product_tags_still_renders():
+    _fresh()
+    # Challenge titles remain walls even when product data is present.
+    challenge = HTML.replace('Party shoes', 'Access Denied')
+    with patch.object(p.requests, 'get', return_value=Response(body=challenge)), \
+         patch.object(browse, 'render_page', return_value=('https://store.test/render', '<title>Real dress</title>')) as render:
+        r = p.look_up_page('https://store.test/item', 'm')
+    check(render.called and r['status'] == 'ok' and r['lookup']['title'] == 'Real dress', r)
+
+
+def scenario_product_data_ignores_cookie_banner():
+    for banner in ('<noscript>Please enable cookies to continue</noscript>',
+                   '<div style="display:none">It looks like cookies are disabled</div>'):
+        _fresh()
+        with patch.object(p.requests, 'get', return_value=Response(body=banner + HTML)), \
+             patch.object(browse, 'render_page') as render:
+            r = p.look_up_page('https://store.test/item', 'm')
+        check(r['status'] == 'ok' and r['lookup']['price'] == 79 and not render.called, r)
+
+
+def scenario_recaptcha_product_slug_is_not_a_wall():
+    _fresh()
+    with patch.object(p.requests, 'get', return_value=Response()), patch.object(browse, 'render_page') as render:
+        r = p.look_up_page('https://store.test/p/recaptcha-escape-room-game', 'm')
+    check(r['status'] == 'ok' and r['lookup']['price'] == 79 and not render.called, r)
+
+
+def scenario_wall_paths_match_whole_segments_only():
+    data = p.extract('<title>Escape room game</title>', 'https://store.test')
+    for segment in ('recaptcha-escape-room-game', 'captcha-game', 'cookiefailure.doormat', 'validatecaptcha-game'):
+        check(not p._is_wall(data, 'https://store.test/p/' + segment), segment)
+    for path in ('/CAPTCHA', '/CookieFailure.do', '/errors/validateCaptcha', '/captcha/item'):
+        check(p._is_wall(data, 'https://store.test' + path), path)
+
+
+def scenario_generic_empty_record_after_render_timeout_is_an_error():
+    for failure in (None, TimeoutError('render timeout')):
+        _fresh()
+        kwargs = {'side_effect': failure} if isinstance(failure, Exception) else {'return_value': failure}
+        with patch.object(p.requests, 'get', return_value=Response(body='<title>Old Navy</title>')), \
+             patch.object(browse, 'render_page', **kwargs):
+            r = p.look_up_page('https://www.oldnavy.com/item', 'm')
+        check(r == {'status': 'error', 'note': 'That page shows no product.'} and not p.for_mission('m'), r)
+
+
+def scenario_generic_same_title_keeps_existing_image():
+    _fresh()
+    raw = '<title>Old Navy</title><meta property="og:image" content="/dress.png">'
+    with patch.object(p.requests, 'get', return_value=Response(body=raw)), \
+         patch.object(browse, 'render_page', return_value=('https://www.oldnavy.com/render', '<title>Old Navy</title>')):
+        r = p.look_up_page('https://www.oldnavy.com/item', 'm')
+    check(r['status'] == 'ok' and r['lookup']['missing'] == ['price'], r)
+    check(p.get(r['lookup']['lookup'])['image_url'] == 'https://www.oldnavy.com/dress.png', r)
+
+
+def scenario_missing_field_lists():
+    _fresh()
+    with patch.object(p.requests, 'get', return_value=Response()):
+        r = p.look_up_page('https://store.test/item', 'm')
+    check(r['status'] == 'ok' and r['lookup']['missing'] == [], r)
+
+
 def scenario_extracts_jsonld_product():
     d = p.extract(HTML, 'https://store.test/item')
     check((d['title'], d['store'], d['image_url'], d['price'], d['currency'], d['available']) ==

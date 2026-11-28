@@ -585,6 +585,64 @@ def scenario_word_lists_split_pay_from_submit():
         check(browse._keys_of(k) == want, f"{k}: {browse._keys_of(k)}")
 
 
+def scenario_shop_search_ignores_dropdown_prices():
+    from browse_pages import PAGES
+    PAGES['/shop-search'] = (
+        '<form><div><svg width="20" height="20"><circle cx="10" cy="10" r="5"/></svg>'
+        '<select name="department"><option>All Departments</option><option>Toys &amp; Games</option>'
+        '<option>Under $10</option><option>Video Games</option></select></div>'
+        '<input name="field-keywords" value="band concert outfit"><input id="go" type="submit" value="Go"></form>')
+    c = _control('/shop-search', '#go')
+    check(c['state']['prices'] == [] and 'Under $10' not in c['state']['text'], c)
+    check('undefined' not in c['state']['text'], c)
+    check(c['state']['selected'] == ['All Departments'], c)
+    check(browse._classify(c, 'search for band concert outfit') == 'run' and browse._search_control(c), c)
+
+
+def scenario_select_chosen_price_reaches_gate():
+    from browse_pages import PAGES
+    PAGES['/select-chosen-price'] = (
+        '<form><select><option selected>2 adult tickets, $50</option><option>1 adult ticket, $25</option></select>'
+        '<input id="cont" type="submit" value="Continue"></form>')
+    c = _control('/select-chosen-price', '#cont')
+    check('$50' in c['state']['prices'] and '$25' not in c['state']['prices'], c)
+    check(browse._classify(c, 'continue') == 'submit', c)
+
+
+def scenario_select_checkout_keeps_visible_prices():
+    from browse_pages import PAGES
+    PAGES['/select-checkout'] = (
+        '<form><p>Total: $42.00</p><select name="shipping"><option selected>Standard shipping</option>'
+        '<option>Express $10</option></select><input id="cont" type="submit" value="Continue"></form>')
+    c = _control('/select-checkout', '#cont')
+    check(c['state']['prices'] == ['$42.00'] and 'Express $10' not in c['state']['text'], c)
+    check(c['state']['selected'] == ['Standard shipping'] and browse._classify(c, '') == 'submit', c)
+
+
+def scenario_scope_text_keeps_rendered_text_without_mutation():
+    from browse_pages import PAGES
+    PAGES['/scope-text'] = (
+        '<form><p>Total: <span>$</span><b>42</b><i>.00</i></p><div>Visible<br>words</div>'
+        '<select><optgroup label="Prices"><option selected>Under $10</option></optgroup></select>'
+        '<datalist><option>Suggestion $20</option></datalist><script type="application/json">"$30"</script>'
+        '<style>/* $40 */</style><noscript>$50</noscript><template>$60</template>'
+        '<span hidden>$70</span><span style="display:none">$80</span>'
+        '<span style="visibility:hidden">$90</span><input id="cont" type="submit" value="Continue"></form>')
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        pg = b.new_page(viewport={'width': 1440, 'height': 900})
+        try:
+            pg.goto(f'{URL}/scope-text')
+            before = pg.content()
+            c = browse._read_control(pg, pg.locator('#cont').element_handle())
+            check(c['state']['text'] == 'Total: $42.00 Visible words' and c['state']['prices'] == ['$42.00', '$10'], c)
+            check(c['state']['selected'] == ['Under $10'], c)
+            check(pg.content() == before, 'reading the control must not mutate the page')
+        finally:
+            b.close()
+
+
 def scenario_control_record_reads_the_scope():
     c = _control('/booking', '#book')
     check(c['text'] == 'Book appointment' and c['is_submit_control'] and c['sole_submit'] and not c['only_button'] and not c['disabled'], f"the Book control: {c}")
@@ -1381,7 +1439,10 @@ def scenario_model_step_dispatches_on_the_cu_pool():
         browse._model_step_live, browse._model_step_anthropic, browse._model_step_openai = reals
     check(seen == ['anthropic', 'openai', 'gemini', 'gemini'], f'dispatch follows the cu pool first model: {seen}')
 
-SCENARIOS = [scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
+SCENARIOS = [scenario_shop_search_ignores_dropdown_prices, scenario_select_checkout_keeps_visible_prices,
+             scenario_select_chosen_price_reaches_gate,
+             scenario_scope_text_keeps_rendered_text_without_mutation,
+             scenario_done_report_shape,scenario_submit_stop_by_words_not_by_type, scenario_domain_allowlist_learns_redirects_only,
              scenario_payment_field_stops_before_typing, scenario_required_contact_fields_pause_for_release,
              scenario_typing_guard_refuses_any_unreleased_personal_shape, scenario_captcha_consent_off_stops_untouched,
              scenario_captcha_consent_on_is_capped, scenario_caps_and_availability,

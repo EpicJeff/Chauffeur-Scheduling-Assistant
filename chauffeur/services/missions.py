@@ -195,6 +195,7 @@ def _system_prompt(now: datetime.datetime, settings: dict = None, mission: dict 
         '{"action":"give_up","reason":"<honest blocker>"}\n\n'
         "When the goal is to find, choose or compare things, end with present, not finish. "
         "Look up every item you will show. Never type a URL or price you did not get from a tool. "
+        "A look_up whose missing lists price or image shows without it; prefer stores whose pages give both, and when a store blocks automated readers, try another store. "
         "options: alternatives a person chooses among; with several slots an option is a set that goes together and the total shows; with one slot each option is one thing. "
         "compare: a few things judged on the same attributes, as a table with an item per column. "
         "list: things to gather or do, not to choose among, as a checklist. "

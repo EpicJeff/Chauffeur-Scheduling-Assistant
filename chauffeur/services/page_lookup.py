@@ -13,6 +13,10 @@ from services import storage, net_guard, browse
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
 CHALLENGE_TITLES = ('just a moment', 'attention required', 'access denied', 'are you a robot',
                     'please verify you are a human', 'checking your browser', 'pardon our interruption')
+CHALLENGE_TEXT = ('click the button below to continue shopping', 'enter the characters you see below',
+                  "sorry, we just need to make sure you're not a robot", 'to discuss automated access to amazon data',
+                  'press & hold to confirm you are a human', 'please enable cookies', 'cookies are disabled')
+BLOCKED_NOTE = 'That store blocks automated readers; try another store.'
 
 def http_url(value, base=''):
     if not isinstance(value, str) or not value.strip():
@@ -71,6 +75,23 @@ def _has_product_data(html):
 def _usable(data):
     return (not data['title'].strip().casefold().startswith(CHALLENGE_TITLES) and
             bool(data['title'] or data['image_url'] or data['price'] is not None))
+
+def _is_wall(data, final_url, *, has_product_data=False):
+    return (data['title'].strip().casefold().startswith(CHALLENGE_TITLES) or
+            (not has_product_data and data['price'] is None and (
+                any(phrase in data['excerpt'].casefold() for phrase in CHALLENGE_TEXT) or
+                any(segment in ('captcha', 'validatecaptcha', 'cookiefailure.do')
+                    for segment in urlsplit(final_url).path.casefold().split('/')))))
+
+
+def _generic_title(data, final_url):
+    def normalize(value):
+        return ''.join(c for c in value.casefold().strip().removeprefix('www.') if c.isalnum())
+    title = normalize(data['title'])
+    host = (urlsplit(final_url).hostname or '').removeprefix('www.')
+    # With no og:site_name, extract's store is the host (Old Navy -> oldnavy.com).
+    return bool(title) and title in (normalize(data['store']), normalize(host), normalize(host.split('.')[0]))
+
 
 def extract(html: str, base_url: str) -> dict:
     p = _Page(html); m = p.meta; product = _product(p.jsonld) or {}
@@ -154,7 +175,10 @@ def look_up_page(url: str, mission_id: str) -> dict:
         html = body.decode('utf-8', errors='replace')
         data = extract(html, final)
         has_product_data = _has_product_data(html)
-        if status in (401, 403, 429) or (status == 200 and not has_product_data):
+        raw_wall = _is_wall(data, final, has_product_data=has_product_data)
+        generic = not has_product_data and _generic_title(data, final)
+        if raw_wall or status in (401, 403, 429) or (status == 200 and not has_product_data):
+            rendered_wall = False
             try:
                 rendered = browse.render_page(final)
                 if not rendered: raise ValueError('The page could not be read.')
@@ -163,19 +187,25 @@ def look_up_page(url: str, mission_id: str) -> dict:
                 if len(rendered_html.encode('utf-8')) > 2 * 1024 * 1024: raise ValueError('That page is too large.')
                 candidate = extract(rendered_html, rendered_url)
                 product_data = _has_product_data(rendered_html)
-                if not _usable(candidate) or (status != 200 and not (
+                rendered_wall = _is_wall(candidate, rendered_url, has_product_data=product_data)
+                if rendered_wall or not _usable(candidate) or (not raw_wall and status != 200 and not (
                         product_data or (candidate['title'] and (candidate['image_url'] or candidate['price'] is not None)))):
                     raise ValueError('The page could not be read.')
-                better = (product_data and not has_product_data) or (
+                better = raw_wall or (generic and candidate['title'] != data['title']) or (product_data and not has_product_data) or (
                     (not data['title'] or candidate['title'] == data['title']) and (
                         (data['price'] is None and candidate['price'] is not None) or
                         (not data['image_url'] and bool(candidate['image_url']))))
                 if status != 200 or better:
-                    final, data = rendered_url, candidate
+                    final, data, has_product_data = rendered_url, candidate, product_data
             except Exception:
+                if raw_wall or (generic and rendered_wall): raise ValueError(BLOCKED_NOTE)
                 if status != 200: raise
+                if generic and data['price'] is None and not data['image_url']:
+                    raise ValueError('That page shows no product.')
         elif status != 200:
             raise ValueError('The page could not be read.')
+        if _is_wall(data, final, has_product_data=has_product_data):
+            raise ValueError(BLOCKED_NOTE)
         if not _usable(data):
             raise ValueError('The page could not be read.')
         record = {k: data[k] for k in ('title', 'store', 'image_url', 'price', 'currency', 'available')}
@@ -183,7 +213,9 @@ def look_up_page(url: str, mission_id: str) -> dict:
                       final_url=final, fetched_at=time.time())
         with storage.db_lock: storage.lookups_table.insert(record)
         compact = {k: record[k] for k in ('title', 'store', 'price', 'currency', 'available')}
-        compact.update(lookup=record['id'], excerpt=data['excerpt'])
+        compact.update(lookup=record['id'], excerpt=data['excerpt'],
+                       missing=[name for name, absent in (('price', record['price'] is None),
+                                                         ('image', not record['image_url'])) if absent])
         return {'status': 'ok', 'lookup': compact}
     except Exception as exc:
         return {'status': 'error', 'note': str(exc)[:250] or 'The page could not be read.'}

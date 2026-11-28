@@ -1107,8 +1107,32 @@ _CONTROL_JS = """
   try { external = realHref && new URL(hrefAttr, location.href).host !== location.host; } catch (_) { external = false; }
   const chrome = !!b.closest('nav, header, [role=navigation], [role=banner]');
   const navigation = b.tagName === 'A' && !form && realHref && (external || chrome);
-  const text = (scope.innerText || '').replace(/\\s+/g, ' ').trim();
-  const prices = (text.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
+  // Read rendered text without dropdown suggestions, and without changing the page.
+  // Preserve inline adjacency and block/BR boundaries before the usual whitespace collapse.
+  const scopeText = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const cs = getComputedStyle(node.parentElement);
+      if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return '';
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return range.getClientRects().length ? node.textContent : '';
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE ||
+        node.matches('select, option, optgroup, datalist, script, style, noscript, template')) return '';
+    const cs = getComputedStyle(node);
+    if (cs.display === 'none' || cs.contentVisibility === 'hidden') return '';
+    if (node.tagName === 'BR') return ' ';
+    const boundary = /^(block|flow-root|flex|grid|list-item|table|table-row|table-cell|table-caption)$/.test(cs.display);
+    // Let the browser retain innerText's formatting for unaffected rendered branches.
+    const content = !node.querySelector('select, option, optgroup, datalist') && node.getClientRects().length
+      ? (node.innerText ?? node.textContent ?? '') : [...node.childNodes].map(scopeText).join('');
+    return boundary ? ' ' + content + ' ' : content;
+  };
+  const text = scopeText(scope).replace(/\\s+/g, ' ').trim();
+  const money = (value) => (value.match(/(\\$\\s?\\d[\\d,]*(?:\\.\\d{2})?|\\d[\\d,]*(?:\\.\\d{2})?\\s?(?:USD|dollars))/gi) || []);
+  const prices = money(text);
+  // Chosen prices are transaction evidence; unchosen dropdown suggestions stay out.
+  selected.forEach(value => money(value).forEach(price => { if (!prices.includes(price)) prices.push(price); }));
   return ({
     text: label(b), type: (b.getAttribute('type') || ''), tag: b.tagName, disabled: !!b.disabled, iframe: false, editable,
     href: hrefAttr, navigation,
